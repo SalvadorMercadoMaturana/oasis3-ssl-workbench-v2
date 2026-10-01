@@ -15,6 +15,12 @@ own recipe (TorchIO's elastic stands in for the GPU elastic). Written to
   two views of the same / different subjects;
 - ``view_matching_top1``: fraction of first views whose nearest second view is the
   same subject (chance = 1 / subjects).
+
+For BYOL it also records the objective itself (symmetric ``2 - 2 cos`` between
+the online prediction of one view and the EMA target of the other, every module
+in eval mode) on the held-out subjects and on as many training subjects with the
+same kind of fixed views (``objective`` rows): a held-out loss that rises while
+the training one falls is the objective overfitting the training subjects.
 """
 
 from __future__ import annotations
@@ -92,6 +98,20 @@ class CollapseMonitor(L.Callback):
         self.inputs = {"clean": torch.stack([clean(c) for c in cubes]),
                        "a": torch.stack([p[0] for p in pairs]),
                        "b": torch.stack([p[1] for p in pairs])}
+        self.train_views: dict[str, torch.Tensor] = {}
+        if hasattr(pl_module, "predictor") and hasattr(pl_module, "target_backbone"):
+            by_subject: dict[str, str] = {}
+            for record in dm.train_dataset.records:
+                by_subject.setdefault(record["subject"], record["idx"])
+            subjects = sorted(by_subject)
+            random.Random(self.seed).shuffle(subjects)
+            train_cubes = [torch.from_numpy(np.asarray(dm.cubes[by_subject[s]], dtype=np.float32))
+                           for s in subjects[:len(cubes)]]
+            random.seed(self.seed + 1), np.random.seed(self.seed + 1), torch.manual_seed(self.seed + 1)
+            train_pairs = [transform(cube)[:2] for cube in train_cubes]
+            random.setstate(state[0]), np.random.set_state(state[1]), torch.set_rng_state(state[2])
+            self.train_views = {"a": torch.stack([p[0] for p in train_pairs]),
+                                "b": torch.stack([p[1] for p in train_pairs])}
         self.out_path = Path(trainer.log_dir or ".") / "collapse.json"
 
     def on_train_start(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
@@ -130,4 +150,36 @@ class CollapseMonitor(L.Callback):
             encoder.train(was_training)
             self.history.append({"epoch": epoch, "role": role,
                                  **collapse_scores(emb["clean"], emb["a"], emb["b"])})
+        if self.train_views:
+            self.history.append({"epoch": epoch, "role": "objective",
+                                 "byol_loss_heldout": self._byol_loss(pl_module, self.inputs,
+                                                                      device, memory_format),
+                                 "byol_loss_train": self._byol_loss(pl_module, self.train_views,
+                                                                    device, memory_format)})
         self.out_path.write_text(json.dumps(self.history, indent=1) + "\n", encoding="utf-8")
+
+    @torch.no_grad()
+    def _byol_loss(self, pl_module: L.LightningModule, views: dict[str, torch.Tensor],
+                   device: torch.device, memory_format: torch.memory_format | None) -> float:
+        modules = [pl_module.backbone, pl_module.projector, pl_module.predictor,
+                   pl_module.target_backbone, pl_module.target_projector]
+        modes = [m.training for m in modules]
+        for m in modules:
+            m.eval()
+        total, count = 0.0, 0
+        with torch.autocast(device_type=device.type, enabled=False):
+            for i in range(0, len(views["a"]), 32):
+                a = views["a"][i:i + 32].to(device)
+                b = views["b"][i:i + 32].to(device)
+                if memory_format is not None:
+                    a, b = (t.contiguous(memory_format=memory_format) for t in (a, b))
+                pa = F.normalize(pl_module.predictor(pl_module.projector(pl_module.backbone(a))), dim=-1)
+                pb = F.normalize(pl_module.predictor(pl_module.projector(pl_module.backbone(b))), dim=-1)
+                ta = F.normalize(pl_module.target_projector(pl_module.target_backbone(a)), dim=-1)
+                tb = F.normalize(pl_module.target_projector(pl_module.target_backbone(b)), dim=-1)
+                loss = (2 - 2 * (pa * tb).sum(-1) + 2 - 2 * (pb * ta).sum(-1)) / 2
+                total += float(loss.sum())
+                count += len(loss)
+        for m, mode in zip(modules, modes, strict=True):
+            m.train(mode)
+        return total / max(count, 1)

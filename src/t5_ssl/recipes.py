@@ -64,6 +64,8 @@ VARIANTS: dict[str, dict[str, list[str]]] = {
         "wide_dpred0.1": BORDER + WIDE + _dropout(predictor=0.1),
         "wide_dpred0.3": BORDER + WIDE + _dropout(predictor=0.3),
         "wide_dboth0.2": BORDER + WIDE + _dropout(projector=0.2, predictor=0.2),
+        # the current BYOL (wide_dproj0.1) with GroupNorm instead of BatchNorm in the heads
+        "wide_dproj0.1_gn": BORDER + WIDE + _dropout(projector=0.1) + GROUP_NORM,
     },
     "vicreg": {"campaign": [], "border": BORDER},
     "dinov2": {"campaign": []},
