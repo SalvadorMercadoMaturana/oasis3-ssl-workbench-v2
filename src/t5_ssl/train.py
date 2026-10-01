@@ -511,6 +511,9 @@ def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> d
     else:
         model = SSLLightningModule(**module_kwargs)
 
+    if aug_cfg.get("gpu_elastic"):
+        model.gpu_elastic = dict(OmegaConf.to_container(aug_cfg.gpu_elastic, resolve=True))
+
     # 6. Logger & Callbacks inside the same experiment directory
     csv_logger = CSVLogger(
         save_dir=str(exp_dir.parent),

@@ -250,7 +250,11 @@ def identity_scores(encoder: Any, dm: Any, cfg: Any) -> dict[str, Any]:
     reference = OmegaConf.create({"data": {"roi_size": size},
                                   "augmentation": recipes.aug_spec("campaign_border", size)})
     out: dict[str, Any] = {"subjects": len(cubes)}
-    for name, transform in (("own", build_roi3d_transforms(cfg)[0]),
+    own_cfg = cfg
+    if cfg.augmentation.get("gpu_elastic"):  # same deformation, CPU (TorchIO) version
+        own_cfg = OmegaConf.create({"data": {"roi_size": size},
+                                    "augmentation": recipes.aug_spec("elastic", size)})
+    for name, transform in (("own", build_roi3d_transforms(own_cfg)[0]),
                             ("reference", build_roi3d_transforms(reference)[0])):
         first, second = enc.views(transform, cubes, seed=0)
         out[name] = enc.scores(clean, enc.embed(encoder, first), enc.embed(encoder, second))

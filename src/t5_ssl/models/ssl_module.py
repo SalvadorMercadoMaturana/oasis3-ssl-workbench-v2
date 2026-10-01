@@ -62,6 +62,9 @@ class SSLLightningModule(L.LightningModule):
 
     fused_optimizer: bool = False
     input_memory_format: torch.memory_format | None = None
+    # {"max_displacement": ..., "control_points": ...}: elastic deformation of every
+    # training view on the GPU (t5_ssl.data.gpu_augment); None = off.
+    gpu_elastic: dict | None = None
 
     def __init__(
         self,
@@ -204,7 +207,18 @@ class SSLLightningModule(L.LightningModule):
         return [{"params": self.trainable_parameters(), "weight_decay": self.weight_decay}]
 
     def on_after_batch_transfer(self, batch: Any, dataloader_idx: int) -> Any:
-        """Put the image views in ``input_memory_format`` (no-op by default)."""
+        """Apply the GPU elastic deformation (training only), then ``input_memory_format``."""
+        if self.gpu_elastic and self.training and isinstance(batch, dict) and "image" in batch:
+            from t5_ssl.data.gpu_augment import elastic_deform
+
+            def deform(image: Any) -> Any:
+                if isinstance(image, torch.Tensor) and image.ndim == 5:
+                    return elastic_deform(image, **self.gpu_elastic)
+                if isinstance(image, list | tuple):
+                    return type(image)(deform(view) for view in image)
+                return image
+
+            batch["image"] = deform(batch["image"])
         memory_format = self.input_memory_format
         if memory_format is None or not isinstance(batch, dict) or "image" not in batch:
             return batch

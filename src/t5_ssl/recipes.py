@@ -94,7 +94,7 @@ EVAL = "eval"  # side of the probe's central cube in the cache: size / round(1.2
 _NONE = {"side_range": [EVAL, EVAL], "centered_crop": True, "lr_swap_p": 0.5,
          "ap_flip_p": 0.0, "affine_degrees": 0.0, "rotation_padding": "border", "blur_p": 0.0,
          "blur_sigma": [0.1, 1.5], "noise_std": 0.0, "intensity_scale": [1.0, 1.0],
-         "torchio": [], "n_local_crops": 0}
+         "torchio": [], "n_local_crops": 0, "gpu_elastic": None}
 _TIO = {  # calibrated to RMSE 0.080 (3D campaign strength)
     "bias": {"name": "RandomBiasField", "coefficients": 0.18391731957276947, "order": 2},
     "noise": {"name": "RandomNoise", "std": [0, 0.2153708703252311]},
@@ -134,6 +134,9 @@ AUG_RECIPES: dict[str, dict] = {
     "ghosting": {"torchio": _tio("ghosting")},
     "spike": {"torchio": _tio("spike")},
     "elastic": {"torchio": _tio("elastic")},
+    # The same deformation on the GPU (t5_ssl.data.gpu_augment.elastic_deform), calibrated
+    # to the same RMSE (0.080): TorchIO's costs ~0.75 s per 64-voxel sample on one core.
+    "elastic_gpu": {"gpu_elastic": {"max_displacement": 1.5042, "control_points": 7}},
     # combinations
     "geo": dict(_GEO),
     "artifacts": {"torchio": _one_of(*_ARTIFACTS)},
@@ -167,6 +170,8 @@ def _hydra(value: object) -> str:
         return "[" + ",".join(_hydra(v) for v in value) + "]"
     if isinstance(value, bool):
         return "true" if value else "false"
+    if value is None:
+        return "null"
     return str(value)
 
 

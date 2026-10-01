@@ -277,3 +277,26 @@ def test_vit3d_takes_larger_and_multichannel_rois():
                         num_heads=3)
     cls, patches = vit.forward_tokens(torch.rand(2, 6, 48, 48, 48))
     assert cls.shape == (2, 48) and patches.shape == (2, 216, 48)
+
+
+def test_gpu_elastic_deforms_only_training_batches():
+    from t5_ssl.data.gpu_augment import elastic_deform
+    x = torch.rand(2, 2, 16, 16, 16)
+    assert torch.allclose(elastic_deform(x, max_displacement=0.0), x, atol=1e-5)
+    moved = elastic_deform(x, max_displacement=1.5, generator=torch.Generator().manual_seed(0))
+    assert moved.shape == x.shape and not torch.allclose(moved, x)
+    model = byol()
+    model.gpu_elastic = {"max_displacement": 1.5, "control_points": 7}
+    batch = {"image": (x.clone(), x.clone())}
+    model.eval()
+    assert all(torch.equal(v, x) for v in model.on_after_batch_transfer(batch, 0)["image"])
+    model.train()
+    out = model.on_after_batch_transfer({"image": (x.clone(), x.clone())}, 0)["image"]
+    assert not torch.allclose(out[0], out[1])  # independent fields per view
+
+
+def test_elastic_gpu_recipe_composes():
+    cfg = compose(recipes.overrides("dinov2", aug_recipe="elastic_gpu", roi="48"))
+    assert cfg.augmentation.gpu_elastic.max_displacement == pytest.approx(1.5042)
+    assert list(cfg.augmentation.torchio) == []
+    assert compose(recipes.overrides("vicreg", aug_recipe="geo")).augmentation.gpu_elastic is None
