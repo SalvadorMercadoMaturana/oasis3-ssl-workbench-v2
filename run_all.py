@@ -55,6 +55,24 @@ MPS_DIRS = {"CUDA_MPS_PIPE_DIRECTORY": "/tmp/nvidia-mps",
             "CUDA_MPS_LOG_DIRECTORY": "/tmp/nvidia-mps-log"}
 
 
+def effective_cpus() -> int:
+    """CPUs this container may use: the cgroup quota (containers report the host's count)."""
+    count = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else (os.cpu_count() or 1)
+    for path, parse in (("/sys/fs/cgroup/cpu.max", lambda t: t.split()),
+                        ("/sys/fs/cgroup/cpu/cpu.cfs_quota_us", None)):
+        try:
+            if parse is not None:
+                quota, period = parse(Path(path).read_text())
+            else:
+                quota = Path(path).read_text().strip()
+                period = Path("/sys/fs/cgroup/cpu/cpu.cfs_period_us").read_text().strip()
+            if quota not in ("max", "-1"):
+                return max(1, min(count, int(int(quota) / int(period))))
+        except (OSError, ValueError):
+            continue
+    return count
+
+
 # ---------------------------------------------------------------- child process
 def _child(argv: list[str], log_path: str) -> None:
     """Spawned process: run train.py's main with stdout/stderr redirected to the log."""
@@ -372,7 +390,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if args.parallel == "sequential":
         args.max_procs = 1
     if args.workers is None:
-        args.workers = max(2, min(8, (os.cpu_count() or 4) // max(1, args.max_procs) - 1))
+        args.workers = max(2, min(8, effective_cpus() // max(1, args.max_procs) - 1))
     return args
 
 

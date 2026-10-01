@@ -109,7 +109,8 @@ def main(argv: list[str] | None = None) -> int:
             check(f"import_{module}", True, getattr(mod, "__version__", "ok"))
         except Exception as exc:
             check(f"import_{module}", False, f"{type(exc).__name__}: {exc}")
-    cpus = os.cpu_count() or 1
+    from run_all import effective_cpus
+    cpus = effective_cpus()
     check("cpus", cpus >= 8, cpus, critical=False)
     with open("/proc/meminfo", encoding="utf-8") if Path("/proc/meminfo").exists() else \
             open(os.devnull, encoding="utf-8") as stream:
