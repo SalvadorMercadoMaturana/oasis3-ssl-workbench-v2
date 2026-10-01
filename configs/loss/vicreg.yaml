@@ -1,0 +1,11 @@
+# @package loss
+
+name: "vicreg"
+sim_coeff: 25.0
+var_coeff: 25.0
+cov_coeff: 1.0
+gamma: 1.0
+eps: 1.0e-4
+# Bank of past projected embeddings concatenated only into the variance/covariance
+# terms, so batch_size-1 no longer caps the covariance rank. 0 disables it.
+queue_size: 0

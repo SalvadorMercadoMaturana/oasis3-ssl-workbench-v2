@@ -1,0 +1,19 @@
+# @package data
+# All 981 original OASIS3 subjects; train visits any of 1,226 sessions,
+# whereas val/test use one fixed session per held-out subject.
+source: lmdb
+csv_path: ${oc.env:OASIS3_CSV,data/dementia/mni-dataset.csv}
+lmdb_path: ${oc.env:OASIS3_LMDB,data/dementia/mni-dataset.lmdb}
+manifest_path: ${oc.env:OASIS3_FULL50_MANIFEST,campaign_full50/train_sessions_eval_primary.csv}
+primary_only: false
+one_session_per_subject_train: true
+train_cache_capacity: 1300
+batch_size: 16
+num_workers: 0
+pin_memory: false
+channels: 1
+slices_per_volume: 1
+slice_range: [0.30, 0.70]
+train_ratio: 0.70
+val_ratio: 0.15
+seed: 42

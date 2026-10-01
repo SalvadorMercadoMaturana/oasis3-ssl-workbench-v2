@@ -1,0 +1,10 @@
+# @package augmentation
+# Preserve the whole axial anatomy; vary acquisition intensity and head angle mildly.
+image_size: [96, 96]
+crop_scale: [1.0, 1.0]
+horizontal_flip_p: 0.0
+vertical_flip_p: 0.0
+affine_degrees: 5.0
+blur_p: 0.0
+noise_std: 0.01
+intensity_scale: [0.95, 1.05]

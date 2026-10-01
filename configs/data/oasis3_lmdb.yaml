@@ -1,0 +1,15 @@
+# @package data
+source: lmdb
+csv_path: ${oc.env:OASIS3_CSV,data/dementia/mni-dataset.csv}
+lmdb_path: ${oc.env:OASIS3_LMDB,data/dementia/mni-dataset.lmdb}
+manifest_path: ${oc.env:OASIS3_MANIFEST,representative_oasis3.csv}
+primary_only: true
+batch_size: 16
+num_workers: 0
+pin_memory: false
+channels: 1
+slices_per_volume: 1
+slice_range: [0.30, 0.70]
+train_ratio: 0.70
+val_ratio: 0.15
+seed: 42

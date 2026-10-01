@@ -1,0 +1,34 @@
+# @package loss
+name: dinov2
+# Teacher EMA momentum, cosine-scheduled to 1. DINOv2 uses 0.992 over ~1e5
+# steps; the short campaigns here have a few hundred (30 epochs x 23 steps), and
+# 0.996 left 25% of the teacher's initial weights in place at the end. 0.99
+# lets the teacher follow the student.
+ema_base: 0.99
+student_temp: 0.1
+# Teacher temperature, held constant at 0.01 (DINO/DINOv2 use 0.04 -> 0.07 on
+# natural images). Sinkhorn-Knopp removes what the whole batch shares, and with
+# cubes this alike across subjects what is left starts almost flat. In short
+# runs of the 3D recipe (2026-09-30) the student fell to a uniform output
+# (loss ~ ln K) at 0.04 -> 0.07, 0.04, 0.02 and 0.01 as long as the views had
+# the campaign geometry (see augmentation/roi3d_dinov2.yaml); with
+# geometry-free views its loss fell below ln K, with a stable teacher entropy
+# at 0.01 (0.67 of ln K) and a slowly rising one at 0.04. The EL7006 report
+# also needed 0.01-0.02; there it could not work because the head was
+# unnormalized, while the cosine prototypes of DINOHead bound the logits.
+teacher_temp: 0.01
+teacher_temp_final: 0.01
+teacher_temp_warmup_epochs: 30
+# DINOv2 balances the teacher targets with Sinkhorn-Knopp over the batch;
+# `softmax` restores DINO's EMA centering (center_momentum).
+centering: sinkhorn_knopp
+sinkhorn_iterations: 3
+center_momentum: 0.9
+ibot_weight: 1.0
+koleo_weight: 0.1
+# iBOT block masking, DINOv2 rule: half of the global views are masked, each
+# with a ratio in [0.1, 0.5]; the others are not masked.
+mask_probability: 0.5
+mask_ratio_min_max: [0.1, 0.5]
+min_mask_block: 4
+freeze_last_layer_epochs: 1

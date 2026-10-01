@@ -1,0 +1,37 @@
+# @package augmentation
+# Domain-appropriate augmentation for coronal hippocampal-band slices (see
+# configs/data/oasis3_full50_hippo.yaml and backup_pre_hippo_pipeline_2026-09-21/
+# for the generic ImageNet-style config this replaces for the hippo pipeline).
+#
+# Changes from ssl_multiview.yaml and why:
+# - horizontal_flip_p and vertical_flip_p 0.5 -> 0.0 (both): of a coronal
+#   slice's two image axes, only left-right is a true anatomical symmetry
+#   axis - superior-inferior is not, and flipping it produces an anatomically
+#   impossible brain. Confirmed empirically that F.hflip/F.vflip do NOT
+#   trivially map to (left-right)/(superior-inferior) in stored-array order
+#   (see scratchpad/flip_check.png from this session) - rather than assume
+#   which one is anatomically safe, both are disabled. AD atrophy can also be
+#   hemisphere-asymmetric, so even the true L-R flip is questionable for this
+#   task unless that asymmetry is modeled explicitly elsewhere.
+# - affine_degrees 15.0 -> 5.0: 15 degrees is a much larger rotation than
+#   realistic inter-scan head-registration jitter for already MNI-registered
+#   volumes; large rotations mostly just make the invariance objective easier
+#   to satisfy by ignoring fine anatomy.
+# - crop_scale [0.3, 1.0] -> [0.7, 1.0]: the source slice is now already a
+#   tightly-targeted hippocampal-region crop, not a full head with the ROI
+#   somewhere inside a large field of view - cropping down to 30% area risks
+#   cropping the temporal horns/hippocampal region out of the view entirely.
+# - bias_field_p 0.0 -> 0.3 and gamma_range enabled: models real scanner
+#   intensity inhomogeneity / protocol contrast differences instead of only
+#   generic photometric jitter (the mechanism already existed in
+#   SSLViewTransform, just left disabled by default).
+image_size: [96, 96]
+crop_scale: [0.7, 1.0]
+horizontal_flip_p: 0.0
+vertical_flip_p: 0.0
+affine_degrees: 5.0
+blur_p: 0.5
+noise_std: 0.02
+bias_field_p: 0.3
+bias_field_alpha: 0.15
+gamma_range: [0.9, 1.1]

@@ -1,0 +1,30 @@
+# @package data
+# Fast GPU screening variant of oasis3_2p5d.yaml: same 2.5D axial stack and
+# slice band, but over the small representative_oasis3.csv pilot cohort
+# (68 train / 14 val / 16 test subjects, 128 train sessions) instead of the
+# full 685/146/150 manifest. On this machine (~7.4GB RAM, often under 1GB
+# actually free) the full manifest thrashes any cache small enough to be
+# memory-safe, so screening trades population coverage for cache-fits-in-RAM
+# speed; the eventual concluding run for the winning method should use
+# oasis3_2p5d.yaml (or the full manifest with primary_only=false) instead.
+source: lmdb
+csv_path: ${oc.env:OASIS3_CSV,../dementia/mni-dataset.csv}
+lmdb_path: ${oc.env:OASIS3_LMDB,../dementia/mni-dataset.lmdb}
+manifest_path: ${oc.env:OASIS3_MANIFEST,representative_oasis3.csv}
+primary_only: false
+plane: axial
+channels: 5
+one_session_per_subject_train: true
+views_per_subject_epoch: 4
+# 128 train records at ~4.1MB each (normalized float32 volume) is ~525MB;
+# leaves headroom given free RAM has been observed as low as ~0.7GB.
+train_cache_capacity: 150
+eval_cache_capacity: 48
+batch_size: 32
+num_workers: 0
+pin_memory: false
+slices_per_volume: 1
+slice_range: [0.32, 0.65]
+train_ratio: 0.70
+val_ratio: 0.15
+seed: 42

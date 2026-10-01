@@ -1,0 +1,18 @@
+# @package augmentation
+# Intermediate-strength anatomy-preserving views for the 2.5D axial stack.
+# Targets a between-view correlation around 0.75-0.90 (ssl_multiview sits at
+# ~0.42, mri_fullview20 at ~0.97 -- see outputs/diagnostics/ssl_input_diagnostic.json).
+# Tuned empirically with scripts/measure_view_agreement.py.
+image_size: [108, 128]
+crop_scale: [0.86, 1.0]
+crop_ratio: [1.10, 1.27]
+horizontal_flip_p: 0.0
+vertical_flip_p: 0.0
+affine_degrees: 5.0
+translate_frac: [0.025, 0.025]
+blur_p: 0.1
+noise_std: 0.015
+intensity_scale: [0.95, 1.05]
+gamma_range: [0.92, 1.08]
+bias_field_p: 0.5
+bias_field_alpha: 0.1

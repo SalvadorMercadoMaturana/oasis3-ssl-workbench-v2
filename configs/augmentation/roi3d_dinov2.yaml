@@ -1,0 +1,29 @@
+# @package augmentation
+# DINOv2 views of the hippocampal ROI pair: the two global views keep the full
+# central cube (no crop jitter, no rotation) and differ only photometrically
+# (the campaign adds the calibrated bias field as a TorchIO transform) and by
+# the iBOT masks; no local crops.
+#
+# Why no geometry (measured 2026-09-30 on 48 subjects): with the ViT-S (DeiT-S
+# inflated, 8-voxel patches), two views of the same subject under the campaign
+# geometry (84-100% crops, +/-10 deg) are no more alike than two different
+# subjects (centered cosine -0.007 vs -0.007; view matching 6%, chance 2%);
+# even 95-100% crops and +/-3 deg leave 8%, while bias-field-only views keep
+# the subject (0.44 vs -0.01; 50%). A sub-cube local crop changes geometry even
+# more. With nothing predictable across views the DINO/iBOT student falls to a
+# uniform output (loss ~ ln K) whatever the head or temperature; with these
+# views its loss drops below ln K and keeps falling. The CNNs of VICReg/BYOL
+# keep identity under the campaign geometry (0.18-0.19 vs -0.01) and use
+# roi3d.yaml.
+side_range: [1.0, 1.0]
+lr_swap_p: 0.5
+ap_flip_p: 0.0
+affine_degrees: 0.0
+blur_p: 0.0
+blur_sigma: [0.1, 1.5]
+noise_std: 0.0
+intensity_scale: [1.0, 1.0]
+torchio: []
+n_local_crops: 0
+local_size: 16
+local_side_range: [0.4, 0.6]

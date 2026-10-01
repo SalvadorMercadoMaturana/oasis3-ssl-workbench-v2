@@ -1,0 +1,79 @@
+% Generado por scripts/build_report_ssl3d_v2.py; no editar a mano.
+\newcommand{\TablaIdentidad}{%
+\begin{tabular}{llrrrrr}
+\toprule
+Encoder & Vistas & Coseno mismo & Coseno distintos & Emparejar & Entre/por aug. & CKA \\
+\midrule
+ConvNeXt-T ImageNet & campaña & 0.159 & -0.004 & 4.2\,\% & 0.29 & --- \\
+ConvNeXt-T ImageNet & solo sesgo & 0.488 & -0.002 & 19.0\,\% & 1.67 & --- \\
+ResNet-18 ImageNet & campaña & 0.179 & -0.002 & 5.6\,\% & 0.63 & --- \\
+ResNet-18 ImageNet & solo sesgo & 0.389 & 0.011 & 15.5\,\% & 2.15 & --- \\
+ViT-S DeiT & campaña & 0.015 & -0.004 & 5.6\,\% & 0.69 & --- \\
+ViT-S DeiT & solo sesgo & 0.423 & -0.002 & 31.7\,\% & 2.02 & --- \\
+\midrule
+BYOL entrenado (online) & campaña & 0.840 & 0.745 & 2.8\,\% & $4.4\times10^{-5}$ & 0.65 \\
+BYOL entrenado (target) & campaña & 0.085 & -0.002 & 0.7\,\% & 0.25 & 0.69 \\
+VICReg entrenado & campaña & 0.742 & 0.008 & 14.8\,\% & 3.83 & 0.41 \\
+\bottomrule
+\end{tabular}}
+
+\newcommand{\TablaSensibilidad}{%
+\begin{tabular}{lrrrrrr}
+\toprule
+Componente & \multicolumn{2}{c}{inicio ImageNet} & \multicolumn{2}{c}{BYOL online} & \multicolumn{2}{c}{BYOL target} \\
+ & sensib. & emparejar & sensib. & emparejar & sensib. & emparejar \\
+\midrule
+traslación (sub-cubo de 32, sin reescalar) & 0.63 & 12.0\,\% & 1.32 & 10.6\,\% & 1.09 & 12.7\,\% \\
+recorte 84-100 \% + reescalado & 0.39 & 29.6\,\% & 0.80 & 15.5\,\% & 0.87 & 16.9\,\% \\
+rotación ±10° (relleno con ceros) & 1.17 & 7.0\,\% & 6\,746 & 2.8\,\% & 2.29 & 4.2\,\% \\
+rotación ±10° (relleno con borde) & 0.52 & 16.9\,\% & 0.62 & 16.2\,\% & 0.26 & 16.2\,\% \\
+campo de sesgo & 0.45 & 21.1\,\% & 1.05 & 12.0\,\% & 0.48 & 7.7\,\% \\
+intercambio izquierda-derecha & $1.4\times10^{-12}$ & 100.0\,\% & $3.8\times10^{-3}$ & 100.0\,\% & $4.6\times10^{-4}$ & 100.0\,\% \\
+vistas completas de la campaña & 1.73 & 4.9\,\% & 17\,399 & 1.4\,\% & 4.49 & 1.4\,\% \\
+\bottomrule
+\end{tabular}}
+
+\newcommand{\TablaSplit}{%
+\begin{tabular}{lrrrrr}
+\toprule
+Split & Sujetos & HC & AD & Otros & Sesiones \\
+\midrule
+train & 366 & 158 & 145 & 63 & 452 \\
+val & 71 & 31 & 31 & 9 & 71 \\
+test & 71 & 25 & 31 & 15 & 71 \\
+\bottomrule
+\end{tabular}}
+
+\newcommand{\TablaResultados}{%
+\begin{tabular}{llrrrr}
+\toprule
+Método & Encoder & CV & Test & Semillas & Rango ef. \\
+\midrule
+VICReg & SSL (ConvNeXt-T) & 0.834 & 0.865 & 3 & 3.8 \\
+ & inicio ImageNet & 0.811 & 0.826 & 1 & 10.1 \\
+ & aleatorio & 0.777 & 0.775 & 3 & 84.3 \\
+\midrule
+BYOL & SSL, EMA 0.996 & 0.810 & 0.821 & 3 & 6.5 \\
+ & SSL, EMA 0.99 & 0.812 & 0.736 & 3 & 17.7 \\
+ & inicio ImageNet & 0.810 & 0.843 & 1 & 10.3 \\
+ & aleatorio & 0.813 & 0.814 & 3 & 1.5 \\
+\midrule
+DINOv2 & SSL, receta final & 0.800 & 0.778 & 3 & 43.9 \\
+ & SSL, anterior & 0.765 & 0.749 & 3 & 3.3 \\
+ & inicio DeiT & 0.749 & 0.805 & 1 & 41.6 \\
+ & aleatorio & 0.776 & 0.757 & 3 & 8.0 \\
+\bottomrule
+\end{tabular}}
+
+\newcommand{\TablaDeltas}{%
+\begin{tabular}{lll}
+\toprule
+Comparación & $\Delta$ CV [IC 95\,\%] & $\Delta$ test [IC 95\,\%] \\
+\midrule
+VICReg $-$ inicio ImageNet & $+0.023$ [$+0.005$, $+0.042$] & $+0.039$ [$-0.018$, $+0.100$] \\
+BYOL EMA 0.996 $-$ inicio ImageNet & $+0.001$ [$-0.027$, $+0.034$] & $-0.022$ [$-0.099$, $+0.052$] \\
+BYOL EMA 0.99 $-$ inicio ImageNet & $+0.002$ [$-0.029$, $+0.029$] & $-0.106$ [$-0.196$, $-0.005$] \\
+DINOv2 (receta final) $-$ inicio DeiT & $+0.051$ [$+0.015$, $+0.095$] & $-0.027$ [$-0.140$, $+0.070$] \\
+DINOv2 anterior $-$ ViT aleatorio & $+0.003$ [$-0.021$, $+0.030$] & $+0.006$ [$-0.073$, $+0.078$] \\
+\bottomrule
+\end{tabular}}

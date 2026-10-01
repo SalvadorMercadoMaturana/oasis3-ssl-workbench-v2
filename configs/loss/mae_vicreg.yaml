@@ -1,0 +1,13 @@
+# @package loss
+# Per-view SimMIM reconstruction (local anatomy) plus VICReg on CLS tokens
+# (non-redundant global code), jointly optimized on a shared ViT encoder.
+name: "mae_vicreg"
+mask_ratio: 0.6
+mae_weight: 1.0
+vicreg_weight: 1.0
+sim_coeff: 25.0
+var_coeff: 25.0
+cov_coeff: 1.0
+gamma: 1.0
+eps: 1.0e-4
+queue_size: 0

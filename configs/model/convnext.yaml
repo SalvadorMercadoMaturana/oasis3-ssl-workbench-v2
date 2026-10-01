@@ -1,0 +1,19 @@
+# @package model
+
+backbone:
+  variant: "convnext_tiny"
+  in_channels: 1
+  pretrained: false
+
+projector:
+  hidden_dim: 2048
+  out_dim: 2048
+  num_layers: 3
+  use_bn: true
+  activation: "relu"
+  # val/loss diverged from train/loss with an accelerating gap once the backbone
+  # was ImageNet-pretrained. Tried 0.3 first (upper end of 0.1-0.3): by epoch 10
+  # it pushed mean_cosine_similarity_diff_samples to 0.97 and mean_feature_std
+  # down to 0.058, i.e. collapse getting worse, not overfitting getting better
+  # (0.3 interferes with VICReg's variance/covariance terms). Dropped to 0.1.
+  dropout: 0.1

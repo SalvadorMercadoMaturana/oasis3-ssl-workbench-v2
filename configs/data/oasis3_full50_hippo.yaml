@@ -1,0 +1,35 @@
+# @package data
+# Same 981-subject cohort and split as oasis3_full50.yaml, but the slice
+# extraction targets the medial temporal lobe / hippocampal band instead of
+# a generic axial mid-height cut.
+#
+# Rationale (see backup_pre_hippo_pipeline_2026-09-21/ for the prior config):
+# the LMDB volumes are already MNI-registered ((97,115,97), docstring in
+# OASIS3LMDBSliceDataset), so a coronal-axis fraction corresponds to the same
+# anatomical location across subjects. Direct visual inspection of coronal
+# slices at fractions 0.28-0.70 across multiple subjects showed the temporal
+# horns of the lateral ventricles, medial temporal lobe and cerebellum
+# consistently visible in the 0.31-0.42 band, and only basal ganglia/frontal
+# structures beyond ~0.45 - i.e. the original axial pipeline (random height
+# in [0.30, 0.70]) frequently sampled slices with no hippocampal-region
+# content at all. Coronal slices here are also natively square (97x97)
+# instead of axial's 97x115, so `EvalTransform`/`RandomResizedCrop` no longer
+# anisotropically distort the source image when resizing to a square input.
+plane: coronal
+slice_range: [0.32, 0.42]
+
+source: lmdb
+csv_path: ${oc.env:OASIS3_CSV,data/dementia/mni-dataset.csv}
+lmdb_path: ${oc.env:OASIS3_LMDB,data/dementia/mni-dataset.lmdb}
+manifest_path: ${oc.env:OASIS3_FULL50_MANIFEST,campaign_full50/train_sessions_eval_primary.csv}
+primary_only: false
+one_session_per_subject_train: true
+train_cache_capacity: 1300
+batch_size: 16
+num_workers: 0
+pin_memory: false
+channels: 1
+slices_per_volume: 1
+train_ratio: 0.70
+val_ratio: 0.15
+seed: 42

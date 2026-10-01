@@ -1,0 +1,14 @@
+# @package data
+source: nifti
+csv_path: ${oc.env:OASIS3_CSV,data/dementia/mni-dataset.csv}
+image_root: ${oc.env:OASIS3_IMAGE_ROOT,data/dementia/oasis3}
+batch_size: 16
+num_workers: 4
+pin_memory: false
+channels: 1
+slices_per_volume: 5
+slice_range: [0.35, 0.65]
+train_ratio: 0.70
+val_ratio: 0.15
+seed: 42
+max_volumes: null

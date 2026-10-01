@@ -1,0 +1,32 @@
+# @package model
+# DINOv2 on the 3D hippocampal ROI pair (2 channels: left, right mirrored).
+# ViT-Small starting from DeiT-S/16 ImageNet-1k weights inflated to 3D — the ViT
+# analogue of the torchvision ImageNet-1k weights that VICReg and BYOL start
+# from (`pretrained: false` gives the random-init control). 8-voxel patches:
+# 4x4x4 = 64 tokens per 32-voxel global view and 2x2x2 = 8 per 16-voxel local
+# crop. (Until 2026-09-30: from scratch with 16-voxel patches, i.e. 8 tokens per
+# global view and a single token per local crop.)
+backbone:
+  variant: vit_small_3d
+  in_channels: 2
+  pretrained: deit_small_in1k   # or dinov2_vits14, or false
+  image_size: 32
+  patch_size: 8
+  embed_dim: 384
+  depth: 12
+  num_heads: 6
+  drop_path: 0.1
+
+# DINO/DINOv2 head, one for the CLS token and an untied copy for the iBOT patch
+# tokens: 3-layer MLP (GELU) -> L2-normalized 256-d bottleneck -> cosine scores
+# against `out_dim` unit-norm prototypes (bounded logits, so the temperatures
+# keep their meaning; the old Linear-GELU-Linear head let the loss sit at ln(K)).
+# use_bn (DINO's `use_bn_in_head`): without it the teacher collapsed to uniform
+# targets within 8 epochs here (entropy 0.99 ln K, KL -> 0), because the cubes
+# are nearly identical across subjects and centering leaves little to predict.
+projector:
+  hidden_dim: 2048
+  bottleneck_dim: 256
+  out_dim: 4096
+  num_layers: 3
+  use_bn: true

@@ -1,0 +1,16 @@
+# @package augmentation
+# roi3d.yaml plus DINOv2 local crops, mirroring dinov2_multicrop.yaml (60 px
+# local crops of 120 px globals): 16-voxel crops of 40-60% of the cached side.
+# Four crops (DINOv2 uses eight; each costs ~17 ms of CPU per sample here).
+side_range: [0.84, 1.0]
+lr_swap_p: 0.5
+ap_flip_p: 0.0
+affine_degrees: 10.0
+blur_p: 0.0
+blur_sigma: [0.1, 1.5]
+noise_std: 0.0
+intensity_scale: [1.0, 1.0]
+torchio: []
+n_local_crops: 4
+local_size: 16
+local_side_range: [0.4, 0.6]

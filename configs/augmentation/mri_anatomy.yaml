@@ -1,0 +1,9 @@
+# @package augmentation
+# Keep the registered MNI anatomy visible in both SSL views.
+image_size: [96, 96]
+crop_scale: [0.8, 1.0]
+horizontal_flip_p: 0.0
+vertical_flip_p: 0.0
+affine_degrees: 5.0
+blur_p: 0.1
+noise_std: 0.01

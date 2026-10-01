@@ -1,0 +1,13 @@
+# @package augmentation
+# Same anatomy-preserving views at the native 64-pixel DINOv2 input size.
+image_size: [64, 64]
+crop_scale: [1.0, 1.0]
+local_size: [32, 32]
+local_crop_scale: [1.0, 1.0]
+n_local_crops: 0
+horizontal_flip_p: 0.0
+vertical_flip_p: 0.0
+affine_degrees: 5.0
+blur_p: 0.0
+noise_std: 0.01
+intensity_scale: [0.95, 1.05]

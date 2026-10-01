@@ -1,0 +1,17 @@
+# @package model
+# BYOLv4 configuration from the EL7006 project report: ResNet-18 backbone with
+# ImageNet1K pretrained weights (chosen there over ViT-Tiny16 for stability).
+backbone:
+  variant: resnet18
+  in_channels: 1
+  pretrained: true
+projector:
+  hidden_dim: 512
+  out_dim: 256
+  num_layers: 2
+  use_bn: true
+  activation: relu
+predictor:
+  hidden_dim: 256
+  num_layers: 2
+  use_bn: true

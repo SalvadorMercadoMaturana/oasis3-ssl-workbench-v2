@@ -1,0 +1,15 @@
+# @package model
+# VICReg's campaign backbone (convnext.yaml: ConvNeXt-tiny ImageNet + projector
+# dropout 0.1) inflated to 3D for the hippocampal ROI pair (2 channels).
+backbone:
+  variant: convnext_tiny_3d
+  in_channels: 2
+  pretrained: true
+
+projector:
+  hidden_dim: 2048
+  out_dim: 2048
+  num_layers: 3
+  use_bn: true
+  activation: relu
+  dropout: 0.1

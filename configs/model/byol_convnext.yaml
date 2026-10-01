@@ -1,0 +1,15 @@
+# @package model
+backbone:
+  variant: convnext_tiny
+  in_channels: 1
+  pretrained: false
+projector:
+  hidden_dim: 512
+  out_dim: 256
+  num_layers: 2
+  use_bn: true
+  activation: relu
+predictor:
+  hidden_dim: 256
+  num_layers: 2
+  use_bn: true

@@ -1,0 +1,6 @@
+# @package optimizer
+
+lr: 1.0e-4
+weight_decay: 1.0e-6
+warmup_epochs: 10
+min_lr: 1.0e-6

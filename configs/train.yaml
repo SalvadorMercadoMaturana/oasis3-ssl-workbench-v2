@@ -1,0 +1,13 @@
+# @package _global_
+
+defaults:
+  - _self_
+  - data: oasis3
+  - model: convnext
+  - loss: vicreg
+  - augmentation: ssl_multiview
+  - optimizer: adamw
+  - trainer: default
+
+seed: 42
+output_dir: ${hydra:runtime.output_dir}

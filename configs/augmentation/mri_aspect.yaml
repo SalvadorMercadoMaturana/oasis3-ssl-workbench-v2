@@ -1,0 +1,12 @@
+# @package augmentation
+# Anatomy-preserving axial MRI views. Native slices are 97x115 (W/H ~= 1.186),
+# so both the sampled crop and output retain a near-native rectangular aspect.
+image_size: [96, 112]
+crop_scale: [0.8, 1.0]
+crop_ratio: [1.12, 1.22]
+horizontal_flip_p: 0.0
+vertical_flip_p: 0.0
+affine_degrees: 5.0
+blur_p: 0.1
+noise_std: 0.01
+intensity_scale: [0.95, 1.05]

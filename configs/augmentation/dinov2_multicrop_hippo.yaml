@@ -1,0 +1,21 @@
+# @package augmentation
+# Hippocampal-band coronal counterpart to dinov2_multicrop.yaml (see
+# ssl_multiview_hippo.yaml for the per-change rationale: no flips, smaller
+# affine jitter, tighter global crop_scale, scanner-realistic intensity
+# augmentation). Local crops keep DINOv2's own designed part-whole scale
+# range (local_crop_scale) unchanged - that is the method's own mechanism,
+# not a data-ingestion choice, and shrinking it further would change what
+# the loss itself is testing rather than fixing how slices are sampled.
+image_size: [120, 120]
+crop_scale: [0.7, 1.0]
+local_size: [60, 60]
+local_crop_scale: [0.1, 0.4]
+n_local_crops: 2
+horizontal_flip_p: 0.0
+vertical_flip_p: 0.0
+affine_degrees: 5.0
+blur_p: 0.5
+noise_std: 0.02
+bias_field_p: 0.3
+bias_field_alpha: 0.15
+gamma_range: [0.9, 1.1]

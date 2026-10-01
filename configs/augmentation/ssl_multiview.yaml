@@ -1,0 +1,9 @@
+# @package augmentation
+
+image_size: [96, 96]
+crop_scale: [0.3, 1.0]
+horizontal_flip_p: 0.5
+vertical_flip_p: 0.5
+affine_degrees: 15.0
+blur_p: 0.5
+noise_std: 0.03

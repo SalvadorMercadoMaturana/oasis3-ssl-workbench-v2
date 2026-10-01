@@ -1,0 +1,922 @@
+\documentclass[11pt,a4paper]{article}
+
+% ============================================================
+%  Informe: campaña SSL 3D (v2) en OASIS3
+%  Arquitecturas, hiperparámetros, augmentations, split,
+%  curvas de pérdida y diagnóstico de BYOL
+%  Figuras y tablas: python scripts/build_report_ssl3d_v2.py
+% ============================================================
+
+\usepackage[a4paper,margin=2.2cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[spanish,es-noshorthands]{babel}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage[most]{tcolorbox}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,backgrounds,calc}
+
+% ------------------------------------------------------------
+% Paleta (la misma del informe anterior; series de las figuras:
+% VICReg azul, BYOL naranja, DINOv2 aqua)
+% ------------------------------------------------------------
+\definecolor{primaryblue}{HTML}{1B4F72}
+\definecolor{steelblue}{HTML}{2E86AB}
+\definecolor{accentorange}{HTML}{E67E22}
+\definecolor{hcgreen}{HTML}{1E8449}
+\definecolor{adred}{HTML}{B03A2E}
+\definecolor{softgray}{HTML}{85929E}
+\definecolor{panelbg}{HTML}{EAF2F8}
+\definecolor{warnbg}{HTML}{FDEBD0}
+\definecolor{tldrbg}{HTML}{EBF5FB}
+\definecolor{vicregc}{HTML}{2A78D6}
+\definecolor{byolc}{HTML}{EB6834}
+\definecolor{dinoc}{HTML}{1BAF7A}
+\definecolor{diagbg}{HTML}{FEF5E7}
+
+\usepackage[colorlinks=true,linkcolor=primaryblue,citecolor=primaryblue,
+            urlcolor=steelblue,linktoc=all]{hyperref}
+
+% ------------------------------------------------------------
+% Cajas
+% ------------------------------------------------------------
+\newtcolorbox{tldrbox}{colback=tldrbg,colframe=primaryblue,coltitle=white,
+  colbacktitle=primaryblue,fonttitle=\bfseries,boxrule=0.9pt,arc=3pt,
+  left=8pt,right=8pt,top=5pt,bottom=5pt,title=En pocas palabras}
+\newtcolorbox{ideabox}[1][Idea clave]{colback=panelbg,colframe=steelblue,coltitle=white,
+  colbacktitle=steelblue,fonttitle=\bfseries,boxrule=0.8pt,arc=2pt,
+  left=8pt,right=8pt,top=5pt,bottom=5pt,title=#1}
+\newtcolorbox{warnbox}[1][Ojo con esto]{colback=warnbg,colframe=accentorange,coltitle=white,
+  colbacktitle=accentorange,fonttitle=\bfseries,boxrule=0.8pt,arc=2pt,
+  left=8pt,right=8pt,top=5pt,bottom=5pt,title=#1}
+\newtcolorbox{byolbox}[1][Pista para el diagnóstico de BYOL]{colback=diagbg,colframe=byolc,
+  coltitle=white,colbacktitle=byolc,fonttitle=\bfseries,boxrule=0.8pt,arc=2pt,
+  left=8pt,right=8pt,top=5pt,bottom=5pt,title=#1}
+
+% ------------------------------------------------------------
+% Encabezados y secciones
+% ------------------------------------------------------------
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.5pt}
+\fancyhead[L]{\small\color{softgray}Campaña SSL 3D (v2) · OASIS3}
+\fancyhead[R]{\small\color{softgray}VICReg / BYOL / DINOv2}
+\fancyfoot[C]{\small\thepage}
+\setlength{\headheight}{14pt}
+
+\titleformat{\section}{\normalfont\Large\bfseries\color{primaryblue}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalfont\large\bfseries\color{steelblue}}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\normalfont\bfseries\color{primaryblue!80!black}}{\thesubsubsection}{0.6em}{}
+
+\graphicspath{{figures_ssl3d_v2/}}
+\setlength{\parskip}{4pt}
+\setlength{\parindent}{0pt}
+\setlength{\emergencystretch}{3em}
+\setlist[itemize]{topsep=2pt,itemsep=2pt}
+\setlist[enumerate]{topsep=2pt,itemsep=2pt}
+\captionsetup{font=small,labelfont={bf,color=primaryblue}}
+\renewcommand{\arraystretch}{1.15}
+
+% ------------------------------------------------------------
+% Estilos TikZ
+% ------------------------------------------------------------
+\tikzset{
+  viewbox/.style={rectangle, rounded corners=1pt, draw=softgray, thick, fill=white,
+    text width=2.5cm, align=center, minimum height=0.85cm, inner sep=3pt, font=\scriptsize},
+  netbox/.style={rectangle, rounded corners=2pt, draw=#1, thick, fill=#1!8,
+    text width=2.9cm, align=center, minimum height=0.9cm, inner sep=3pt, font=\scriptsize},
+  targetbox/.style={rectangle, rounded corners=2pt, draw=softgray, thick, dashed,
+    fill=softgray!10, text width=2.9cm, align=center, minimum height=0.9cm, inner sep=3pt,
+    font=\scriptsize},
+  lossbox/.style={rectangle, rounded corners=2pt, draw=accentorange, thick,
+    fill=accentorange!8, text width=8.6cm, align=left, inner sep=5pt, font=\scriptsize},
+  arr/.style={-{Latex[length=2mm]}, thick, primaryblue},
+  arrg/.style={-{Latex[length=2mm]}, thin, softgray},
+  emaarr/.style={-{Latex[length=2mm]}, thin, dashed, accentorange},
+}
+
+\input{informe_ssl3d_v2_tablas.tex}
+
+\begin{document}
+
+% ============================================================
+% PORTADA
+% ============================================================
+\begin{titlepage}
+\centering
+\vspace*{1.0cm}
+{\Huge\bfseries\color{primaryblue} Campaña SSL 3D en OASIS3}\\[8pt]
+{\Large\color{steelblue} Arquitecturas, hiperparámetros, augmentations, split\\
+y curvas de pérdida de VICReg, BYOL y DINOv2}\\[22pt]
+
+\begin{tikzpicture}
+\draw[primaryblue, thick] (0,0) -- (11,0);
+\end{tikzpicture}
+
+\vspace{16pt}
+{\large \textit{Una radiografía de lo que está corriendo hoy, con un capítulo dedicado\\
+a una pregunta concreta: ¿por qué BYOL no aprende nada útil aquí?}}
+
+\vspace{30pt}
+\includegraphics[width=0.78\textwidth]{brain_cubes.png}
+
+\vspace{18pt}
+\begin{tcolorbox}[colback=panelbg,colframe=primaryblue,arc=4pt,width=0.86\textwidth,
+  boxrule=1pt, left=14pt,right=14pt,top=8pt,bottom=8pt]
+\begin{center}
+\textbf{oasis3-ssl-workbench · \texttt{campaign\_ssl3d\_v2}}\\[4pt]
+\small Par de cubos hipocampales 3D (2$\times$32$^3$ vóxeles de 2\,mm) · 508 sujetos con split por sujeto\\
+3 métodos autosupervisados · 30 épocas · 3 semillas · probe lineal sobre encoder congelado
+\end{center}
+\end{tcolorbox}
+
+\vfill
+{\small Generado a partir de las corridas de \texttt{campaign\_ssl3d} y \texttt{campaign\_ssl3d\_v2}
+(figuras y tablas: \texttt{scripts/build\_report\_ssl3d\_v2.py}).}\\[4pt]
+{\small 1 de octubre de 2026}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ============================================================
+\section{En pocas palabras}
+% ============================================================
+
+Este informe describe, con el detalle necesario para reproducirlo o criticarlo, todo
+lo que hoy define la comparación de los tres métodos autosupervisados del proyecto
+sobre la región hipocampal de OASIS3: qué datos entran y cómo se reparten
+(Sección~\ref{sec:data}), qué transformaciones ve cada método (Sección~\ref{sec:aug}),
+las tres arquitecturas (Sección~\ref{sec:arch}), todos los hiperparámetros
+(Sección~\ref{sec:hparams}), los resultados (Sección~\ref{sec:results}) y las curvas de
+pérdida con su desglose término a término (Sección~\ref{sec:losses}). La
+Sección~\ref{sec:byol} reúne la evidencia sobre BYOL y la ordena en hipótesis con un
+experimento concreto para cada una.
+
+\begin{tldrbox}
+\begin{itemize}[leftmargin=12pt]
+\item \textbf{VICReg} es el único método que mejora de forma consistente sobre su propio
+  punto de partida (ConvNeXt-T con pesos ImageNet): $+0.023$ en CV y $+0.039$ en test.
+\item \textbf{DINOv2}, tras corregir su implementación, por fin aprende: mejora $+0.051$
+  en CV sobre su inicio (ViT-S con pesos DeiT), pero no en test ($-0.027$), y su pérdida de
+  validación no baja; puede estar aprendiendo a reconocer a los sujetos de entrenamiento.
+\item \textbf{BYOL} no mejora sobre su inicio en ninguna de las cinco campañas en que se
+  probó, y hacer que su target EMA siga más rápido al online (0.996 $\rightarrow$ 0.99) no
+  cambia el CV y empeora el test. La Sección~\ref{sec:byol} muestra por qué: tras entrenar,
+  su encoder concentra casi toda la varianza en una sola dirección (colapso dimensional) que
+  codifica \textbf{las esquinas negras que deja la rotación de las vistas al rellenar con
+  ceros}, un artefacto que no depende del sujeto, y deja a los sujetos casi superpuestos.
+  VICReg, con las mismas vistas, hace lo contrario: los separa. El arreglo a probar primero
+  es de una línea (rellenar con el borde).
+\end{itemize}
+\end{tldrbox}
+
+\begin{table}[H]
+\centering
+\small
+\TablaResultados
+\caption{Media de AUROC, F1-macro y AUPR del probe lineal (CV 5$\times$5 sobre 357 sujetos
+AD/HC de train+val; test: 56 sujetos nunca vistos), promediada sobre semillas. ``Rango ef.'':
+rango efectivo de los embeddings de train (espectro de varianza; ver
+Sección~\ref{sec:byol-evidence}). ``Inicio'': el mismo encoder antes del entrenamiento SSL.}
+\label{tab:results}
+\end{table}
+
+% ============================================================
+\section{Los datos: de la resonancia al cubo hipocampal}
+\label{sec:data}
+% ============================================================
+
+\subsection{Del volumen MNI al par de cubos}
+
+Cada sesión de OASIS3 es una resonancia T1 registrada al espacio MNI con vóxeles de
+2\,mm (97$\times$115$\times$97), guardada en un LMDB junto con una segmentación
+anatómica. Sobre ese volumen se recortan, una sola vez, \textbf{dos cubos}: uno centrado
+en el hipocampo izquierdo y otro en el derecho (Figura~\ref{fig:brain}).
+
+\begin{itemize}
+\item \textbf{Dónde:} en el centroide \emph{poblacional} de cada hipocampo (etiquetas 17 y
+  53 de la segmentación), promediado sobre las 429 sesiones de entrenamiento que la
+  traen, y desplazado para quedar dentro del cerebro de todas las sesiones. Los centros
+  quedan en los vóxeles (35.37; 54.87; 32.18) y (61.15; 55.42; 32.29).
+\item \textbf{Cuánto:} se guarda un cubo de \textbf{38 vóxeles} por lado (76\,mm, punteado
+  en la figura) para tener margen en recortes y rotaciones; la red de evaluación ve el
+  cubo central de \textbf{32 vóxeles} (64\,mm, sólido).
+\item \textbf{Cómo se apilan:} los dos cubos forman los \textbf{2 canales} de una sola
+  entrada, \texttt{[izquierdo, derecho espejado]}. Al espejar el derecho, ambos hipocampos
+  quedan con la misma orientación, y un volteo izquierda-derecha de la cabeza equivale
+  exactamente a intercambiar los canales.
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.86\textwidth]{brain_cubes.png}
+\caption{Ubicación de los cubos sobre una sesión de ejemplo. Los dos cubos se solapan en
+la línea media porque cada uno mide 76\,mm.}
+\label{fig:brain}
+\end{figure}
+
+\subsection{Cómo se ve la entrada}
+
+La Figura~\ref{fig:hcad} muestra los cortes centrales del cubo de 32 en ambos canales
+para un control sano y un paciente con Alzheimer del split de test. La atrofia
+hipocampal típica de la enfermedad aparece como hipocampos más delgados y más líquido
+(oscuro) alrededor. Es una señal \emph{sutil y localizada}: la mayor parte del cubo
+(sustancia blanca, cerebelo, ventrículo) es casi igual entre personas. Esa homogeneidad
+reaparece varias veces en este informe.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{hc_vs_ad.png}
+\caption{Cortes centrales del cubo evaluado (32$^3$). Ejemplos elegidos para ilustrar
+(el AD con más líquido y el HC con menos del split de test); en la mayoría de los
+sujetos la diferencia es mucho menos evidente.}
+\label{fig:hcad}
+\end{figure}
+
+\subsection{El split}
+
+La partición es \textbf{por sujeto} (ningún sujeto aparece en dos conjuntos) y viene del
+manifiesto balanceado de las campañas
+(\texttt{campaign\_full50\_pretrained\_balanced/...\_balanced.csv}).
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.82\textwidth]{split.png}
+\caption{Sujetos por split y diagnóstico. ``Otros'' (demencia frontotemporal, por cuerpos de
+Lewy, vascular o sin diagnóstico) solo participan del entrenamiento SSL, que no usa
+etiquetas; el probe usa únicamente sujetos AD y HC.}
+\label{fig:split}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\TablaSplit
+\caption{Composición del split (un sujeto cuenta con su diagnóstico más reciente).}
+\label{tab:split}
+\end{table}
+
+\begin{itemize}
+\item \textbf{Entrenamiento SSL:} los 366 sujetos de train. En cada época se toma
+  \emph{una sesión al azar por sujeto}, así que una época son 366 muestras, es decir 23
+  lotes de 16. En 30 épocas, cada método da \textbf{690 pasos de optimización}.
+\item \textbf{Validación SSL:} los 71 sujetos de val (una sesión cada uno), solo para
+  monitorear la pérdida.
+\item \textbf{Test:} 71 sujetos (56 AD/HC) que no se usan para nada salvo la evaluación final.
+\end{itemize}
+
+\subsection{Cómo se evalúa: el probe lineal}
+\label{sec:probe}
+
+El encoder entrenado se \textbf{congela}; para cada sujeto se promedia el embedding de
+todas sus sesiones (cubo central limpio, sin augmentation). Encima va una regresión
+logística con estandarización y pesos balanceados por clase:
+
+\begin{itemize}
+\item \textbf{CV 5$\times$5:} validación cruzada estratificada repetida sobre los 357
+  sujetos AD/HC de train+val (172 AD), con $C$ elegido por CV interna.
+\item \textbf{Test:} probe ajustado en train con $C\in\{0.01;\,0.1;\,1;\,10\}$ elegido
+  por AUROC de validación, evaluado una sola vez en los 56 sujetos AD/HC de test (31 AD).
+\item \textbf{Métrica:} la media de AUROC, F1-macro y AUPR. Las diferencias entre
+  corridas llevan un intervalo de confianza del 95\,\% por \emph{bootstrap} pareado sobre
+  sujetos, promediando semillas.
+\end{itemize}
+
+\begin{warnbox}
+\textbf{El CV y el test no miden lo mismo.} De los 357 sujetos del CV, 296 son de
+\emph{train}: el método SSL los vio (sin etiquetas) durante 30 épocas. El test son
+sujetos que el encoder nunca vio. Un método que aprende a \emph{reconocer} a sus sujetos
+de entrenamiento puede subir en CV sin generalizar. El test es más honesto, pero con 56
+sujetos sus intervalos son anchos (del orden de $\pm0.1$).
+\end{warnbox}
+
+% ============================================================
+\section{Augmentations: qué ve cada método}
+\label{sec:aug}
+% ============================================================
+
+Los tres métodos aprenden comparando \emph{vistas} distintas del mismo par de cubos.
+VICReg y BYOL usan las vistas de la campaña, cuya parte fotométrica (un campo de sesgo,
+\emph{bias field}) fue la ganadora del \emph{screen} de augmentations y se recalibró en 3D.
+DINOv2 usa vistas propias, sin geometría: la Sección~\ref{sec:byol-identity} muestra por qué.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{views.png}
+\caption{Corte coronal central (canal izquierdo) de un sujeto de validación: el cubo
+limpio que ve el probe, cuatro vistas de VICReg/BYOL, dos vistas de DINOv2 y una máscara
+de iBOT (parches de 8$^3$ ocultos al estudiante, en verde).}
+\label{fig:views}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{3.3cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X}
+\toprule
+Paso & VICReg y BYOL (\texttt{roi3d} + \texttt{bias}) & DINOv2 (\texttt{roi3d\_dinov2}) \\
+\midrule
+Campo de sesgo (TorchIO) & \texttt{RandomBiasField}, coeficientes 0.184, orden 2, $p=1$ (sobre el cubo de 38) & igual \\
+Sub-cubo & lado aleatorio del 84--100\,\% de los 38 vóxeles (32--38), en posición aleatoria & cubo completo de 38 \\
+Reescalado & a 32$^3$ (trilineal): escala 0.84--1.0 & a 32$^3$: escala 0.84 \\
+Volteo izquierda-derecha & intercambio de canales, $p=0.5$ & igual \\
+Volteo anteroposterior & no & no \\
+Rotación & $\pm10^\circ$ en cada eje (muestreo bilineal) & no \\
+Desenfoque, ruido, intensidad & no & no \\
+Recortes locales & no & no \\
+Enmascarado & no & iBOT: 50\,\% de las vistas, 10--50\,\% de los parches en bloques \\
+\midrule
+Par de \emph{validación} SSL & cubo central de 32 y su volteo izquierda-derecha & igual \\
+Entrada del probe & cubo central de 32 sin augmentation & igual \\
+\bottomrule
+\end{tabularx}
+\caption{Pipeline de vistas. Los parámetros salen de la configuración guardada de cada corrida.}
+\label{tab:aug}
+\end{table}
+
+\begin{warnbox}[Tres detalles que importan]
+\begin{enumerate}[leftmargin=14pt]
+\item \textbf{El volteo izquierda-derecha es invisible para las redes con pesos ImageNet.}
+  Al inflar un filtro RGB a 2 canales, ambos canales reciben el mismo núcleo, así que la
+  red ve la \emph{suma} de los dos hipocampos y responde idéntico a $[L,R]$ y $[R,L]$
+  (diferencia medida: $2\times10^{-7}$). Por lo tanto el par de validación (cubo y su
+  volteo) es el \emph{mismo} input para el encoder, y la pérdida de validación de VICReg y
+  BYOL mide solo lo que hacen las cabezas.
+\item \textbf{El cubo de evaluación está en el borde del rango de escalas de
+  entrenamiento.} Las vistas son sub-cubos de 32--38 vóxeles reescalados a 32 (escala
+  0.84--1); el probe ve el cubo de 32 a escala 1, el extremo más ``ampliado''.
+\item \textbf{La rotación rellena con ceros.} Al rotar, las esquinas que quedan fuera del cubo
+  se llenan de negro; su forma depende solo del ángulo. Es el atajo que termina explotando BYOL
+  (Sección~\ref{sec:byol-sensitivity}). DINOv2 no rota, así que no lo ve.
+\end{enumerate}
+\end{warnbox}
+
+% ============================================================
+\section{Arquitecturas}
+\label{sec:arch}
+% ============================================================
+
+\subsection{De pesos 2D a una red 3D}
+
+Las tres redes parten de pesos entrenados en ImageNet-1k, en 2D, y se \emph{inflan} a 3D:
+
+\begin{itemize}
+\item \textbf{Convoluciones (VICReg, BYOL), estilo I3D:} cada filtro $k\times k$ se
+  repite $k$ veces en profundidad y se divide por $k$, de modo que un volumen constante en
+  profundidad reproduce la respuesta 2D de sus cortes. El primer filtro RGB se suma
+  sobre los colores y se reparte en partes iguales entre los 2 canales (de ahí la
+  simetría izquierda-derecha de la sección anterior).
+\item \textbf{ViT (DINOv2):} los bloques transformer se cargan tal cual. El
+  \emph{patch-embedding} de 16$\times$16 se reduce a 8$\times$8 de forma exacta (un parche
+  pequeño da el mismo token que su versión ampliada a 16$\times$16), se infla a 8$^3$ como
+  arriba y absorbe la normalización de ImageNet. Las posiciones 2D se reescalan a la
+  grilla 4$\times$4 y se extienden a 4$\times$4$\times$4 con un desplazamiento por
+  profundidad.
+\end{itemize}
+
+\begin{table}[H]
+\centering
+\footnotesize
+\begin{tabularx}{\textwidth}{l>{\raggedright\arraybackslash}p{2.6cm}>{\raggedright\arraybackslash}Xlr}
+\toprule
+Método & Encoder & Mapas de activación para una entrada 2$\times$32$^3$ & Salida & Parám. \\
+\midrule
+VICReg & ConvNeXt-T 3D & 96$\times$8$^3$ $\rightarrow$ 192$\times$4$^3$ $\rightarrow$ 384$\times$2$^3$ $\rightarrow$ 768$\times$1$^3$ & 768 (GAP) & 31.3\,M \\
+BYOL & ResNet-18 3D sin max-pool & 64$\times$16$^3$ $\rightarrow$ 128$\times$8$^3$ $\rightarrow$ 256$\times$4$^3$ $\rightarrow$ 512$\times$2$^3$ & 512 (GAP) & 33.2\,M \\
+DINOv2 & ViT-S 3D, parche 8$^3$ & 64 tokens de 384 + CLS; 12 bloques, 6 cabezas de atención & 384 (CLS) & 21.7\,M \\
+\midrule
+\multicolumn{3}{l}{Proyector de VICReg: 768$\rightarrow$2048$\rightarrow$2048$\rightarrow$2048 (BN, ReLU, dropout 0.1)} & & 10.0\,M \\
+\multicolumn{3}{l}{Proyector de BYOL: 512$\rightarrow$512$\rightarrow$256 (BN, ReLU)} & & 0.39\,M \\
+\multicolumn{3}{l}{Predictor de BYOL: 256$\rightarrow$256$\rightarrow$256 (BN, ReLU)} & & 0.13\,M \\
+\multicolumn{3}{l}{Cabezas DINO de DINOv2 (CLS e iBOT, cada una): 384$\rightarrow$2048$\rightarrow$2048$\rightarrow$256$\rightarrow$4096} & & 6.6\,M \\
+\bottomrule
+\end{tabularx}
+\caption{Encoders y cabezas. En la ConvNeXt-T 3D la última etapa opera sobre un único
+vóxel (1$^3$): sus convoluciones de 7$^3$ solo usan su peso central. Las cabezas de BYOL son
+diminutas comparadas con las del paper original (capas ocultas de 4096).}
+\label{tab:arch}
+\end{table}
+
+\subsection{VICReg: una red, dos vistas y tres términos}
+
+VICReg es el más simple de los tres: una sola red procesa las dos vistas y la pérdida tiene
+tres términos que tiran en direcciones distintas. La \emph{invarianza} acerca las dos vistas
+del mismo sujeto. La \emph{varianza} exige que, a lo largo del lote, cada una de las 2048
+dimensiones del proyector tenga desviación estándar de al menos 1, así que nada puede colapsar
+a una constante. La \emph{covarianza} pide que las dimensiones no repitan información. Las dos
+últimas funcionan como un ``blanqueo'' que obliga a separar a los sujetos entre sí.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm]
+\node[viewbox] (x) at (0,0) {\textbf{Par de cubos}\\2$\times$38$^3$};
+\node[viewbox] (v1) at (-3.3,-1.3) {Vista 1 (2$\times$32$^3$)};
+\node[viewbox] (v2) at (3.3,-1.3) {Vista 2 (2$\times$32$^3$)};
+\node[netbox=vicregc, text width=3.4cm] (e1) at (-3.3,-2.8) {\textbf{ConvNeXt-T 3D}\\$h_1\in\mathbb{R}^{768}$};
+\node[netbox=vicregc, text width=3.4cm] (e2) at (3.3,-2.8) {\textbf{ConvNeXt-T 3D}\\mismos pesos $\Rightarrow h_2$};
+\node[netbox=vicregc, text width=3.4cm] (p1) at (-3.3,-4.5) {\textbf{Proyector}: 3 capas de 2048 (BN, ReLU, dropout 0.1)\\$\Rightarrow z_1\in\mathbb{R}^{2048}$};
+\node[netbox=vicregc, text width=3.4cm] (p2) at (3.3,-4.5) {\textbf{Proyector}\\mismos pesos $\Rightarrow z_2$};
+\node[lossbox] (loss) at (0,-6.8) {\textbf{Pérdida} $=25\cdot\mathrm{inv}(z_1,z_2)+25\cdot[\mathrm{var}(z_1)+\mathrm{var}(z_2)]+1\cdot[\mathrm{cov}(z_1)+\mathrm{cov}(z_2)]$\\[3pt]
+\textbf{inv}: error cuadrático medio entre $z_1$ y $z_2$.\\
+\textbf{var}: media, sobre las 2048 dimensiones, de $\max(0,\,1-\mathrm{std}_{\text{lote}}(z_d))$.\\
+\textbf{cov}: suma de las covarianzas fuera de la diagonal al cuadrado, dividida por 2048.};
+\draw[arr] (x) -- (v1); \draw[arr] (x) -- (v2);
+\draw[arr] (v1) -- (e1); \draw[arr] (v2) -- (e2);
+\draw[arr] (e1) -- (p1); \draw[arr] (e2) -- (p2);
+\draw[arr] (p1) -- (p1 |- loss.north); \draw[arr] (p2) -- (p2 |- loss.north);
+\node[font=\scriptsize\itshape, text=softgray, align=center] at (0,-3.65) {el probe usa $h$\\(antes del proyector)};
+\end{tikzpicture}
+\caption{VICReg. No hay rama objetivo: el colapso se evita porque el término de varianza
+obliga a que cada dimensión de $z$ varíe a lo largo del lote, y el de covarianza a que las
+dimensiones no se repitan.}
+\label{fig:vicreg}
+\end{figure}
+
+\subsection{BYOL: predecir al gemelo lento}
+
+BYOL tiene dos copias de la red. La \emph{online} ve una vista y, pasando por proyector y
+predictor, intenta adivinar la proyección que la \emph{target} produce para la otra vista. La
+target no se entrena con gradiente: sus pesos son un promedio móvil (EMA) de los de la online.
+Ningún término de la pérdida separa a los sujetos. Lo que impide que todo colapse a una
+constante es la asimetría (predictor solo en la online y gradiente cortado en la target) y,
+en la práctica, la batch norm.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm]
+\node[viewbox] (v1) at (-3.3,0) {Vista 1};
+\node[viewbox] (v2) at (3.3,0) {Vista 2};
+\node[netbox=byolc, text width=3.4cm] (e1) at (-3.3,-1.4) {\textbf{ResNet-18 3D (online)}\\$h_1\in\mathbb{R}^{512}$};
+\node[netbox=byolc, text width=3.4cm] (pr1) at (-3.3,-2.9) {\textbf{Proyector}\\512$\rightarrow$512$\rightarrow$256 (BN)};
+\node[netbox=byolc, text width=3.4cm] (pd1) at (-3.3,-4.4) {\textbf{Predictor}\\256$\rightarrow$256$\rightarrow$256 (BN) $\Rightarrow p_1$};
+\node[targetbox, text width=3.4cm] (e2) at (3.3,-1.4) {\textbf{ResNet-18 3D (target)}\\promedio EMA del online};
+\node[targetbox, text width=3.4cm] (pr2) at (3.3,-2.9) {\textbf{Proyector target}\\$\Rightarrow \bar z_2$ (sin gradiente)};
+\node[lossbox] (loss) at (0,-6.3) {\textbf{Pérdida} $=\tfrac12\big[(2-2\cos(p_1,\bar z_2))+(2-2\cos(p_2,\bar z_1))\big]$;
+el segundo término sale de intercambiar las vistas.\\[3pt]
+\textbf{EMA}: tras cada paso, $\theta_{\text{target}}\leftarrow\tau\,\theta_{\text{target}}+(1-\tau)\,\theta_{\text{online}}$,
+con $\tau$ subiendo de 0.996 a 1 en coseno (v2: de 0.99 a 1).};
+\draw[arr] (v1) -- (e1); \draw[arr] (e1) -- (pr1); \draw[arr] (pr1) -- (pd1);
+\draw[arrg] (v2) -- (e2); \draw[arrg] (e2) -- (pr2);
+\draw[arr] (pd1) -- (pd1 |- loss.north); \draw[arrg] (pr2) -- (pr2 |- loss.north);
+\draw[emaarr] (e1) -- node[above, font=\scriptsize, text=accentorange] {EMA} (e2);
+\draw[emaarr] (pr1) -- node[above, font=\scriptsize, text=accentorange] {EMA} (pr2);
+\end{tikzpicture}
+\caption{BYOL. Solo la rama online recibe gradiente; el target es un promedio móvil de sus
+pesos. Para el probe se usa el encoder online.}
+\label{fig:byol}
+\end{figure}
+
+\subsection{DINOv2: estudiante, profesor y prototipos}
+
+DINOv2 también usa un estudiante y un profesor EMA, pero en lugar de comparar vectores
+compara \emph{distribuciones sobre 4096 prototipos}: cada imagen se ``reparte'' entre
+prototipos y el estudiante debe reproducir el reparto del profesor. Lo hace en dos niveles: el
+token CLS (la imagen completa, pérdida DINO) y los parches enmascarados (pérdida iBOT, una
+forma de \emph{masked image modeling}). Sinkhorn-Knopp reparte los prototipos de forma pareja
+dentro del lote para que no colapsen en uno solo, y KoLeo evita que los CLS del estudiante se
+amontonen.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm]
+\node[viewbox] (v1) at (-3.3,0) {Vista global 1\\(con máscara iBOT)};
+\node[viewbox] (v2) at (3.3,0) {Vista global 2\\(completa)};
+\node[netbox=dinoc, text width=3.4cm] (s) at (-3.3,-1.5) {\textbf{ViT-S 3D (estudiante)}\\64 parches + CLS};
+\node[targetbox, text width=3.4cm] (t) at (3.3,-1.5) {\textbf{ViT-S 3D (profesor)}\\promedio EMA, $\tau$ 0.99$\rightarrow$1};
+\node[netbox=dinoc, text width=3.4cm] (hs) at (-3.3,-3.2) {\textbf{Cabezas DINO e iBOT}\\MLP+BN $\rightarrow$ 256 (L2) $\rightarrow$ 4096 prototipos (coseno)};
+\node[targetbox, text width=3.4cm] (ht) at (3.3,-3.2) {\textbf{Cabezas del profesor}\\Sinkhorn-Knopp, $\tau_t=0.01$};
+\node[lossbox] (loss) at (0,-5.7) {\textbf{Pérdida} $=\mathrm{DINO}+1.0\cdot\mathrm{iBOT}+0.1\cdot\mathrm{KoLeo}$\\[3pt]
+\textbf{DINO}: el CLS del estudiante predice la distribución del profesor para la \emph{otra} vista.\\
+\textbf{iBOT}: los parches enmascarados predicen los del profesor en la misma vista.\\
+\textbf{KoLeo}: separa entre sí los CLS del estudiante dentro del lote. Estudiante: softmax con $\tau_s=0.1$.};
+\draw[arr] (v1) -- (s); \draw[arr] (s) -- (hs);
+\draw[arrg] (v2) -- (t); \draw[arrg] (t) -- (ht);
+\draw[arr] (hs) -- (hs |- loss.north); \draw[arrg] (ht) -- (ht |- loss.north);
+\draw[emaarr] (s) -- node[above, font=\scriptsize, text=accentorange] {EMA} (t);
+\node[font=\scriptsize\itshape, text=softgray, align=center] at (0,-2.35) {(y lo mismo con\\las vistas cruzadas)};
+\end{tikzpicture}
+\caption{DINOv2 tal como corre hoy. Para el probe se usa el CLS del \emph{profesor}, como en
+DINO y DINOv2.}
+\label{fig:dinov2}
+\end{figure}
+
+% ============================================================
+\section{Hiperparámetros}
+\label{sec:hparams}
+% ============================================================
+
+Todas las corridas comparten el protocolo: 30 épocas, lote de 16, 690 pasos, AdamW con
+\emph{warmup} lineal de 6 épocas y decaimiento coseno por época hasta $10^{-6}$, fp32, sin
+\emph{early stopping} ni selección de \emph{checkpoint} (se evalúa el estado final) y 3
+semillas. Lo que cambia por método:
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{3.0cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X}
+\toprule
+ & \textcolor{vicregc}{\textbf{VICReg}} & \textcolor{byolc}{\textbf{BYOL}} & \textcolor{dinoc}{\textbf{DINOv2}} \\
+\midrule
+Inicialización & ConvNeXt-T ImageNet-1k (torchvision), inflada & ResNet-18 ImageNet-1k (torchvision), inflada & ViT-S DeiT-S ImageNet-1k, inflado; drop path 0.1 \\
+Tasa de aprendizaje & $10^{-4}$ & $10^{-4}$ & $10^{-4}$ \\
+Weight decay & $10^{-6}$ & $10^{-6}$ & 0.04 $\rightarrow$ 0.2 (coseno); no en sesgos, normas ni LayerScale \\
+Pesos de la pérdida & inv 25 · var 25 · cov 1 ($\gamma=1$) & --- & DINO 1 · iBOT 1 · KoLeo 0.1 \\
+Rama objetivo & --- & EMA $\tau$ 0.996 $\rightarrow$ 1 (v2: 0.99) & EMA $\tau$ 0.99 $\rightarrow$ 1 \\
+Temperaturas & --- & --- & estudiante 0.1 · profesor 0.01 (constante) \\
+Centrado del profesor & --- & --- & Sinkhorn-Knopp, 3 iteraciones, 4096 prototipos \\
+Enmascarado & --- & --- & 50\,\% de las vistas, 10--50\,\% de los parches, bloques $\geq4$ \\
+Recorte de gradiente & no & no & norma 3.0 \\
+Otros & dropout 0.1 en el proyector & BN en proyector y predictor & prototipos congelados en la época 1 \\
+Representación evaluada & encoder $h$ (768) & encoder online $h$ (512) & CLS del profesor (384) \\
+\bottomrule
+\end{tabularx}
+\caption{Hiperparámetros que difieren entre métodos (tomados de las configuraciones
+guardadas: \texttt{logs/<corrida>/config.yaml}).}
+\label{tab:hparams}
+\end{table}
+
+\begin{byolbox}
+Frente al BYOL original hay tres diferencias grandes: \textbf{(i)} cabezas diminutas
+(proyector con capa oculta de 512 y predictor de 256, contra 4096 en el paper);
+\textbf{(ii)} lotes de 16 con batch norm en proyector y predictor (el paper reporta que
+BYOL pierde rendimiento con lotes pequeños y lo atribuye en parte a la batch norm);
+\textbf{(iii)} 690 pasos con una EMA
+pensada para cien mil. La tercera ya se probó y no es la causa (Sección~\ref{sec:byol}).
+\end{byolbox}
+
+% ============================================================
+\section{Resultados}
+\label{sec:results}
+% ============================================================
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{forest.png}
+\caption{Aporte del entrenamiento SSL: diferencia entre cada método y su propio punto de
+partida (el mismo encoder sin SSL), con IC del 95\,\% por bootstrap pareado.}
+\label{fig:forest}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\TablaDeltas
+\caption{Las mismas diferencias en números (media de AUROC, F1-macro y AUPR).}
+\label{tab:deltas}
+\end{table}
+
+\begin{ideabox}[Cómo leerlo]
+Solo VICReg tiene un intervalo de CV completamente a la derecha de cero \emph{y} un test
+coherente. DINOv2 corregido sube claramente en CV pero no en test: con la advertencia de la
+Sección~\ref{sec:probe}, es compatible con que su ganancia se concentre en los sujetos que
+vio al entrenar. BYOL queda en cero en CV en todas sus variantes, y en test con EMA 0.99 su
+intervalo queda entero por debajo de cero.
+\end{ideabox}
+
+% ============================================================
+\section{Curvas de pérdida y su desglose}
+\label{sec:losses}
+% ============================================================
+
+Cada figura muestra la media de las 3 semillas (línea) y su rango (banda); en color, la
+pérdida de entrenamiento; en gris discontinuo, la de validación (par fijo de la
+Tabla~\ref{tab:aug}). Los términos se dibujan \emph{con su peso}, así que suman el total.
+
+\subsection{VICReg}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{loss_vicreg.png}
+\caption{VICReg: total y sus tres términos ponderados.}
+\label{fig:loss-vicreg}
+\end{figure}
+
+\begin{itemize}
+\item \textbf{El término de varianza es casi toda la pérdida} (unos 37 de 41.4 en train). Que
+  no llegue a cero significa que la mayoría de las 2048 dimensiones de $z$ tienen
+  desviación estándar por debajo de 1 en el lote: VICReg pasa las 30 épocas
+  \emph{empujando a separar a los sujetos}. En las primeras épocas sube mientras la
+  invarianza y la covarianza caen: al principio la red gana acercando las vistas y
+  decorrelacionando dimensiones a costa de dispersión, y después mantiene ese equilibrio.
+\item \textbf{La invarianza} baja de 5.8 a 2.5: las vistas se acercan, pero sin colapsar.
+\item \textbf{La covarianza} cae de 6 a 2 en dos épocas y luego sube lentamente: las
+  dimensiones de $z$ se decorrelacionan rápido y después ceden un poco frente a la varianza.
+\item \textbf{Validación:} la invarianza vale exactamente 0 (el par de validación es el
+  mismo input, Tabla~\ref{tab:aug}), así que la pérdida de validación solo refleja la
+  varianza y la covarianza con batch norm en modo evaluación.
+\end{itemize}
+
+\subsection{BYOL}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.86\textwidth]{loss_byol_v1.png}\\[4pt]
+\includegraphics[width=0.86\textwidth]{loss_byol_v2.png}
+\caption{BYOL con la receta por defecto (EMA 0.996, arriba) y con EMA 0.99 (abajo). Los dos
+sentidos de la pérdida son simétricos y casi idénticos.}
+\label{fig:loss-byol}
+\end{figure}
+
+\begin{itemize}
+\item La pérdida cae de $\approx2$ (cosenos al azar) a $\approx0.28$ en unas 12 épocas y
+  se estanca: el online predice al target con coseno $\approx0.86$.
+\item El desglose $d_{12}$ / $d_{21}$ no aporta información: las dos direcciones son
+  simétricas por construcción.
+\item \textbf{La validación baja más que el entrenamiento} (hasta $\approx0.03$) porque su
+  par es el mismo input: solo mide si predictor y proyector online reproducen al target.
+\item Con EMA 0.99 la curva baja antes y más (0.23 frente a 0.28 al final): el target se parece más
+  al online, así que predecirlo es más fácil. Una tarea más fácil no produjo mejores rasgos
+  (Figura~\ref{fig:forest}).
+\end{itemize}
+
+\subsection{DINOv2}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{loss_dinov2.png}
+\caption{DINOv2 (receta final): total, los tres términos y los monitores de colapso
+(entropía del profesor sobre $\ln K$, KL del profesor al estudiante y fracción de
+prototipos distintos).}
+\label{fig:loss-dinov2}
+\end{figure}
+
+\begin{itemize}
+\item \textbf{DINO} baja de 8.44 a 6.75 en train ($0.81\cdot\ln K$; antes de las
+  correcciones quedaba en $0.97\cdot\ln K$, plana): el estudiante sí aprende a predecir
+  al profesor. \textbf{iBOT} baja de 4.24 a 3.38.
+\item \textbf{Sin colapso:} la entropía del profesor se mantiene estable ($0.67$--$0.69\,\ln K$),
+  la KL baja pero no llega a cero y todos los prototipos argmax son distintos.
+\item \textbf{Pero la validación no acompaña:} la pérdida DINO de validación (sujetos que no
+  entrenan) queda en $\approx8.2$. Junto con un CV que mejora y un test que no, sugiere que
+  DINOv2 aprende sobre todo a \emph{distinguir a sus 366 sujetos de entrenamiento}.
+\end{itemize}
+
+% ============================================================
+\section{Diagnóstico de BYOL}
+\label{sec:byol}
+% ============================================================
+
+\subsection{La evidencia}
+\label{sec:byol-evidence}
+
+\paragraph{1. BYOL nunca supera a su punto de partida.} No es un resultado aislado de esta
+campaña:
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{3.7cm}>{\raggedright\arraybackslash}p{4.3cm}}
+\toprule
+Campaña & Comparación & $\Delta$ (media de 3 métricas) \\
+\midrule
+\texttt{campaign\_full50} (2D, ConvNeXt sin preentrenar) & BYOL $-$ pesos aleatorios & sin mejora; rango efectivo 2.5 \\
+\texttt{campaign\_aug\_screen2} (2D, ResNet ImageNet) & BYOL (\texttt{bias}) $-$ inicio & CV $-0.004$ (0.716 frente a 0.720) \\
+\texttt{campaign\_roi3d} (3D, 2 semillas) & BYOL $-$ inicio & CV $-0.010$; test $-0.018$ \\
+\texttt{campaign\_ssl3d} (3D, EMA 0.996) & BYOL $-$ inicio & CV $+0.001$; test $-0.022$ \\
+\texttt{campaign\_ssl3d\_v2} (3D, EMA 0.99) & BYOL $-$ inicio & CV $+0.002$; test $-0.106$ \\
+\bottomrule
+\end{tabularx}
+\caption{BYOL frente a su inicialización, en todas las campañas del proyecto.}
+\end{table}
+
+\paragraph{2. El CV de BYOL es indistinguible del de su inicio, semilla a semilla.}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\textwidth]{byol_seeds.png}
+\caption{Cada punto es una semilla; la barra negra, la media. En CV, BYOL (con cualquier
+EMA) cae exactamente donde está la ResNet sin entrenar.}
+\label{fig:byol-seeds}
+\end{figure}
+
+\paragraph{3. La EMA no era el problema.} Con $\tau=0.996$ y 690 pasos, el target conserva
+al final el 25\,\% de los pesos iniciales; con 0.99, el 3\,\% (Figura~\ref{fig:ema}).
+Cambiar eso no movió el CV ($+0.001$) y empeoró el test ($-0.084$ [$-0.135$, $-0.030$]).
+Dejar que el target siga al online aleja a la red de ImageNet sin ganar señal de atrofia.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.52\textwidth]{ema.png}
+\caption{Fracción de los pesos iniciales que conserva el target a lo largo del
+entrenamiento, según $\tau$ base (calendario coseno hacia 1).}
+\label{fig:ema}
+\end{figure}
+
+\paragraph{4. Los embeddings de BYOL son inestables.} El rango efectivo (cuántas
+direcciones concentran la varianza) de la ResNet con ImageNet es 10; tras BYOL con EMA
+0.996 queda en 1.0 y 1.2 en dos semillas y en 17 en la tercera. En otras palabras, dos de
+cada tres veces casi toda la varianza se concentra en una sola dirección: es la firma de
+un colapso parcial, aunque el probe estandariza cada dimensión y lo amortigua.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\textwidth]{rank.png}
+\caption{Rango efectivo de los embeddings de train (exponencial de la entropía del espectro
+de varianza; escala logarítmica). El valor por sí solo no predice el AUROC (VICReg tiene
+rango 4), pero su dispersión entre semillas sí delata inestabilidad.}
+\label{fig:rank}
+\end{figure}
+
+\subsection{Augmentation contra identidad: el dato central}
+\label{sec:byol-identity}
+
+Para que dos vistas puedan predecirse entre sí, la identidad del sujeto tiene que
+sobrevivir a la augmentation. Se midió en 142 sujetos retenidos (val y test), con dos
+vistas por sujeto:
+
+\begin{itemize}
+\item \textbf{coseno centrado} entre las dos vistas del mismo sujeto y entre sujetos
+  distintos;
+\item \textbf{emparejamiento}: qué fracción de las vistas A encuentra a su propia vista B
+  como la más parecida (azar: 0.7\,\%);
+\item \textbf{varianza entre sujetos / varianza por augmentation}: si es menor que 1, las
+  vistas de un mismo sujeto difieren más entre sí que dos sujetos distintos en el cubo limpio.
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{identity.png}
+\caption{Retención de la identidad bajo augmentation, para los encoders de partida y para
+los encoders tras el entrenamiento SSL.}
+\label{fig:identity}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\TablaIdentidad
+\caption{Retención de la identidad en 142 sujetos retenidos. ``Emparejar'': top-1 (azar
+0.7\,\%). ``Entre/por aug.'': varianza entre sujetos del cubo limpio sobre la varianza entre
+dos vistas del mismo sujeto. CKA: similitud lineal con el encoder antes del SSL (1 = misma
+representación).}
+\label{tab:identity}
+\end{table}
+
+La Tabla~\ref{tab:identity} y la Figura~\ref{fig:identity} cuentan tres cosas:
+
+\begin{enumerate}[leftmargin=16pt]
+\item \textbf{Las vistas de la campaña ya borran buena parte de la identidad en los encoders
+  de partida.} Con recorte, rotación y campo de sesgo, dos vistas del mismo sujeto se
+  parecen poco (coseno 0.16--0.18 en las CNN y 0.02 en el ViT), y la variación que introduce
+  la augmentation supera a la diferencia entre sujetos: el cociente queda entre 0.29 y 0.69,
+  por debajo de 1. Con vistas que solo cambian el campo de sesgo sube a 1.7--2.2. Por eso
+  DINOv2 necesitó vistas sin geometría.
+\item \textbf{VICReg aprende exactamente lo deseable.} Tras el entrenamiento, las vistas del
+  mismo sujeto se parecen mucho (coseno 0.74), los sujetos distintos siguen siendo distintos
+  (0.01), el emparejamiento sube de 4.2\,\% a 14.8\,\% y el cociente pasa de 0.29 a 3.83:
+  ahora los sujetos difieren más entre sí que las vistas de un mismo sujeto. La
+  representación cambió mucho (CKA 0.41).
+\item \textbf{BYOL hace lo contrario.} Su encoder online también cambió bastante (CKA
+  0.65), pero hacia un \emph{colapso dimensional}: casi toda la varianza se concentra en una
+  dirección que sigue a la augmentation. Dos sujetos distintos quedan casi tan alineados como
+  dos vistas del mismo sujeto (coseno 0.75 frente a 0.84) y el emparejamiento cae por debajo
+  del de partida (2.8\,\% frente a 5.6\,\%). En el cubo limpio, la diferencia entre sujetos es
+  unas 23\,000 veces menor que la variación por augmentation. El target EMA conserva más
+  estructura (cociente 0.25), pero tampoco reconoce a los sujetos: su emparejamiento está al
+  nivel del azar.
+\end{enumerate}
+
+\begin{byolbox}[El diagnóstico en una frase]
+BYOL no ``deja de aprender'': aprende una representación dominada por un eje que codifica la
+augmentation, no al sujeto. El probe lineal probablemente sobrevive porque estandariza cada
+dimensión y aprovecha lo que queda de ImageNet en las direcciones de poca varianza; eso
+alcanza para igualar al encoder sin entrenar, pero no para superarlo.
+\end{byolbox}
+
+\subsection{¿Qué componente de la augmentation domina a BYOL?}
+\label{sec:byol-sensitivity}
+
+Para saber qué es exactamente ese eje, se reentrenó BYOL con otra semilla (la 2, que
+reproduce el colapso) y se midió, componente por componente, cuánto mueve cada
+transformación al encoder comparado con cuánto difieren los sujetos. La \emph{sensibilidad} es
+la varianza entre dos aplicaciones independientes del componente sobre la varianza entre
+sujetos en el cubo limpio: por encima de 1, la transformación pesa más que la identidad.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{sensitivity.png}
+\caption{Sensibilidad (escala logarítmica; ``$\approx0$'' marca valores menores que
+$10^{-5}$) y retención de identidad por componente, para el encoder de partida y para los
+encoders online y target de BYOL tras el entrenamiento.}
+\label{fig:sensitivity}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\TablaSensibilidad
+\caption{Sensibilidad y emparejamiento por componente (142 sujetos; azar 0.7\,\%).}
+\label{tab:sensitivity}
+\end{table}
+
+El colapso se reproduce con esta segunda semilla: con las vistas completas de la campaña, la
+sensibilidad del encoder online es de unas 17\,400 (con la semilla 1, el cociente equivalente
+fue de unas 23\,000).
+
+\begin{byolbox}[Causa encontrada: el relleno con ceros de la rotación]
+\raggedright
+La rotación de las vistas (\texttt{F.grid\_sample} con \texttt{padding\_mode="zeros"} en
+\texttt{ROIView3DTransform}) deja \emph{esquinas negras} cuyo tamaño y forma dependen solo del
+ángulo sorteado, no del sujeto, y que nunca aparecen en el cubo limpio del probe. Ya en el
+encoder de partida es la transformación que más mueve la representación (1.17, frente a 0.52
+con la misma rotación rellenando con el borde). Tras BYOL, el encoder online se vuelve
+\textbf{unas 6\,700 veces} más sensible a esas esquinas que a la diferencia entre sujetos;
+con relleno de borde sigue en 0.62, casi igual que al inicio, y los demás componentes apenas
+se duplican. El eje del colapso es, entonces, \emph{dónde está y cuánto mide el relleno negro}.
+\end{byolbox}
+
+\textbf{Por qué le pasa a BYOL y no a VICReg (explicación plausible).} La pérdida de BYOL
+compara \emph{cosenos} después de un predictor. Si el predictor aprende a ignorar la dirección
+de las esquinas, nada en la pérdida impide que el encoder la amplifique: el coseno no mira
+normas y no hay término de varianza. VICReg no tiene predictor: su invarianza es un error
+cuadrático directo entre las vistas, que castiga cualquier diferencia (también la de las
+esquinas), y sus términos de varianza y covarianza le impiden concentrar la varianza en una
+sola dirección. Con las mismas vistas, VICReg aprende igual.
+
+\subsection{Hipótesis, de más a menos probable}
+
+\begin{enumerate}[leftmargin=16pt]
+\item \textbf{Un artefacto de la augmentation, el relleno con ceros de la rotación
+  (confirmado).} BYOL concentra su varianza en el eje de las esquinas negras
+  (Sección~\ref{sec:byol-sensitivity}). \emph{Prueba directa:} rotar con
+  \texttt{padding\_mode="border"} (o \texttt{"reflection"}), o rotar el cubo guardado de 38 y
+  recortar después el centro de 32, de modo que el relleno nunca entre en la vista. Es un
+  cambio de una línea en \texttt{src/t5\_ssl/data/roi3d.py}. Si la hipótesis es correcta, el
+  cociente entre sujetos y augmentation del BYOL entrenado debería parecerse al de VICReg y el
+  probe debería superar al inicio. Como VICReg usa las mismas vistas, conviene repetirlo
+  también para él.
+\item \textbf{No hay freno al colapso dimensional.} Aunque se quite el artefacto, BYOL sigue
+  sin ningún término que mantenga la varianza entre sujetos: si otra transformación ofrece un
+  atajo parecido, puede volver a colapsar. Los rangos efectivos de 1--1.2 en dos de tres
+  semillas lo sugieren. \emph{Prueba:} añadir a BYOL los términos de varianza y covarianza de
+  VICReg sobre $z$, el arreglo mínimo para este modo de falla.
+\item \textbf{Cabezas y normalización alejadas de BYOL.} Capas ocultas de 512/256 (en vez de
+  4096) y batch norm con lotes de 16 facilitan que el predictor ``esconda'' una dirección y
+  vuelven más ruidosa la dinámica. \emph{Prueba:} cabezas de 4096, GroupNorm en proyector y
+  predictor, y una tasa de aprendizaje mayor para el predictor (los trabajos sobre la
+  dinámica de BYOL y SimSiam la señalan como decisiva).
+\item \textbf{Techo del probe.} La ResNet-18 3D sin entrenar ya rinde lo mismo que con
+  ImageNet (CV 0.813 frente a 0.810), y VICReg sube solo $+0.023$: aun sin colapso, el margen
+  de un probe lineal sobre el GAP de 2$^3$ vóxeles es pequeño. \emph{Prueba:} un probe sobre el
+  mapa de 4$^3$ antes del GAP, o uno no lineal.
+\item \textbf{Descartadas.} La EMA lenta (cambiarla no movió el CV) y ``las cabezas absorben
+  la tarea y el encoder no cambia'' (el encoder online sí cambió mucho: CKA 0.65).
+\end{enumerate}
+
+\subsection{Experimentos sugeridos}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{5.2cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.2cm}}
+\toprule
+Experimento & Qué responde & Costo \\
+\midrule
+Rotación con relleno de borde (o rotar y luego recortar), para BYOL y VICReg & ¿desaparece el colapso de BYOL sin el artefacto? (H1) & 6 corridas de 12--25 min \\
+Repetir los análisis de identidad y sensibilidad sobre esas corridas & ¿qué eje domina ahora? (H1, H2) & minutos \\
+BYOL + términos de varianza y covarianza de VICReg & ¿basta con frenar el colapso? (H2) & 3 $\times$ 12 min \\
+Cabezas de 4096, GroupNorm y lr del predictor mayor & ¿dinámica de BYOL mal configurada? (H3) & 3 $\times$ 15 min \\
+Probe sobre el mapa de 4$^3$ o probe no lineal & ¿techo del probe? (H4) & minutos, sin reentrenar \\
+\bottomrule
+\end{tabularx}
+\caption{Experimentos para confirmar el arreglo y descartar el resto, en orden de prioridad.}
+\end{table}
+
+% ============================================================
+\appendix
+\section{Reproducir este informe}
+\label{sec:repro}
+% ============================================================
+
+\begin{itemize}
+\item Resultados de la campaña (escribe \texttt{campaign\_ssl3d\_v2/RESULTADOS.md}):\\
+  \texttt{python scripts/run\_ssl3d\_v2.py report}
+\item Análisis de identidad, CKA y sensibilidad (reentrenan BYOL y VICReg):\\
+  \texttt{python scripts/analyze\_ssl3d\_encoders.py}\\
+  \texttt{python scripts/analyze\_byol\_sensitivity.py}
+\item Figuras y tablas: \texttt{python scripts/build\_report\_ssl3d\_v2.py}; luego, desde
+  \texttt{docs/}, dos veces \texttt{pdflatex informe\_ssl3d\_v2.tex}.
+\item Configuraciones, dentro de \texttt{configs/}:
+  \begin{itemize}
+  \item modelos: \texttt{model/vicreg\_convnext\_3d.yaml}, \texttt{model/byol\_resnet18\_3d.yaml},
+    \texttt{model/dinov2\_vit3d.yaml};
+  \item pérdidas: \texttt{loss/vicreg.yaml}, \texttt{loss/byol.yaml}, \texttt{loss/dinov2.yaml};
+  \item vistas: \texttt{augmentation/roi3d.yaml}, \texttt{augmentation/roi3d\_dinov2.yaml};
+  \item optimizador y datos: \texttt{optimizer/adamw.yaml}, \texttt{optimizer/adamw\_dinov2.yaml},
+    \texttt{data/oasis3\_roi3d.yaml}.
+  \end{itemize}
+\end{itemize}
+
+\end{document}

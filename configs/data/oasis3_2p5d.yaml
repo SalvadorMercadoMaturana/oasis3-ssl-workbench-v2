@@ -1,0 +1,30 @@
+# @package data
+# 2.5D axial stacks (5 neighboring slices as channels) over the same 685/146/150
+# full50 manifest, favoring the higher-foreground central band and visiting
+# several stacks per subject per epoch instead of one.
+source: lmdb
+csv_path: ${oc.env:OASIS3_CSV,../dementia/mni-dataset.csv}
+lmdb_path: ${oc.env:OASIS3_LMDB,../dementia/mni-dataset.lmdb}
+manifest_path: ${oc.env:OASIS3_FULL50_MANIFEST,campaign_full50/train_sessions_eval_primary.csv}
+primary_only: false
+plane: axial
+channels: 5
+one_session_per_subject_train: true
+views_per_subject_epoch: 4
+# Kept small deliberately: this machine has ~7.4GB RAM total and, in
+# practice, well under 2GB actually free at any given time. Each cached
+# volume is ~4.1MB (97x115x97 float32), and every num_workers>0 DataLoader
+# worker holds its OWN copy of this cache (the Dataset is pickled per
+# worker), so resident cache size is roughly train_cache_capacity *
+# max(num_workers, 1). 1300 with 3 workers requested ~17GB and crashed the
+# process; 80 with num_workers=0 stays under ~350MB.
+train_cache_capacity: 80
+eval_cache_capacity: 32
+batch_size: 32
+num_workers: 0
+pin_memory: false
+slices_per_volume: 1
+slice_range: [0.32, 0.65]
+train_ratio: 0.70
+val_ratio: 0.15
+seed: 42

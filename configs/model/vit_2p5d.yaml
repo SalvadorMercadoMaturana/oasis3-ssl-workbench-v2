@@ -1,0 +1,22 @@
+# @package model
+# Compact ViT reading a 2.5D stack of neighboring axial slices, for MAE/SimMIM
+# and the MAE+VICReg hybrid (data=oasis3_2p5d). Same backbone scale as
+# dinov2_vit.yaml so screening runs share an optimizer-step budget.
+backbone:
+  variant: vit_small
+  in_channels: 5
+  pretrained: false
+  image_size: 112
+  patch_size: 8
+  embed_dim: 192
+  depth: 4
+  num_heads: 3
+  # 'mean'-pool patch tokens for plain MAE (CLS is never directly supervised
+  # there); leave 'cls' for mae_vicreg, whose VICReg term does supervise it.
+  pool: cls
+projector:
+  hidden_dim: 512
+  out_dim: 512
+  num_layers: 2
+  use_bn: false
+  activation: gelu

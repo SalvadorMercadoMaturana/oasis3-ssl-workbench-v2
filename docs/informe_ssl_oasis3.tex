@@ -1,0 +1,952 @@
+\documentclass[11pt,a4paper]{article}
+
+% ============================================================
+%  Informe: aprendizaje autosupervisado (SSL) en OASIS3
+%  VICReg / BYOL / DINOv2 para clasificación AD/HC
+% ============================================================
+
+\usepackage[a4paper,margin=2.3cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[spanish]{babel}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{longtable}
+\usepackage[most]{tcolorbox}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,backgrounds}
+
+% ------------------------------------------------------------
+% Paleta de colores
+% ------------------------------------------------------------
+\definecolor{primaryblue}{HTML}{1B4F72}
+\definecolor{steelblue}{HTML}{2E86AB}
+\definecolor{accentorange}{HTML}{E67E22}
+\definecolor{hcgreen}{HTML}{1E8449}
+\definecolor{adred}{HTML}{B03A2E}
+\definecolor{softgray}{HTML}{85929E}
+\definecolor{panelbg}{HTML}{EAF2F8}
+\definecolor{warnbg}{HTML}{FDEBD0}
+\definecolor{tldrbg}{HTML}{EBF5FB}
+
+% ------------------------------------------------------------
+% hyperref al final de la carga de paquetes
+% ------------------------------------------------------------
+\usepackage[colorlinks=true,linkcolor=primaryblue,citecolor=primaryblue,
+            urlcolor=steelblue,linktoc=all]{hyperref}
+
+% ------------------------------------------------------------
+% Cajas de contenido
+% ------------------------------------------------------------
+\newtcolorbox{tldrbox}{colback=tldrbg,colframe=primaryblue,coltitle=white,
+  colbacktitle=primaryblue,fonttitle=\bfseries,boxrule=0.9pt,arc=3pt,
+  left=8pt,right=8pt,top=5pt,bottom=5pt,title=En una frase}
+\newtcolorbox{ideabox}{colback=panelbg,colframe=steelblue,coltitle=white,
+  colbacktitle=steelblue,fonttitle=\bfseries,boxrule=0.8pt,arc=2pt,
+  left=8pt,right=8pt,top=5pt,bottom=5pt,title=Idea clave}
+\newtcolorbox{warnbox}{colback=warnbg,colframe=accentorange,coltitle=white,
+  colbacktitle=accentorange,fonttitle=\bfseries,boxrule=0.8pt,arc=2pt,
+  left=8pt,right=8pt,top=5pt,bottom=5pt,title=Ojo con esto}
+
+% ------------------------------------------------------------
+% Encabezados y secciones
+% ------------------------------------------------------------
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.5pt}
+\fancyhead[L]{\small\color{softgray}Informe SSL · OASIS3}
+\fancyhead[R]{\small\color{softgray}VICReg / BYOL / DINOv2}
+\fancyfoot[C]{\small\thepage}
+
+\titleformat{\section}{\normalfont\Large\bfseries\color{primaryblue}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalfont\large\bfseries\color{steelblue}}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\normalfont\bfseries\color{primaryblue!80!black}}{\thesubsubsection}{0.6em}{}
+
+\graphicspath{{../campaign_full50/figures/}{../campaign_mri_fullview20/figures/}}
+
+\setlength{\parskip}{4pt}
+\setlist[itemize]{topsep=2pt,itemsep=2pt}
+\setlist[enumerate]{topsep=2pt,itemsep=2pt}
+
+% ------------------------------------------------------------
+% Estilos TikZ comunes a todos los diagramas
+% ------------------------------------------------------------
+\tikzset{
+  box/.style={rectangle, rounded corners=2pt, draw=primaryblue, thick,
+    fill=primaryblue!6, text width=3.6cm, align=center, minimum height=1cm,
+    inner sep=5pt, font=\small},
+  wbox/.style={box, text width=7.2cm},
+  splitbox/.style={rectangle, rounded corners=2pt, draw=hcgreen, thick,
+    fill=hcgreen!8, text width=2.9cm, align=center, minimum height=1.1cm,
+    inner sep=4pt, font=\scriptsize},
+  viewbox/.style={rectangle, rounded corners=1pt, draw=softgray, thick,
+    fill=white, text width=2.6cm, align=center, minimum height=0.9cm,
+    inner sep=4pt, font=\scriptsize},
+  onlinebox/.style={rectangle, rounded corners=2pt, draw=steelblue, thick,
+    fill=steelblue!8, text width=3.4cm, align=center, minimum height=1cm,
+    inner sep=4pt, font=\scriptsize},
+  targetbox/.style={rectangle, rounded corners=2pt, draw=softgray, thick,
+    dashed, fill=softgray!10, text width=3.4cm, align=center,
+    minimum height=1cm, inner sep=4pt, font=\scriptsize},
+  lossbox/.style={rectangle, rounded corners=2pt, draw=accentorange, thick,
+    fill=accentorange!8, text width=8.4cm, align=left, inner sep=6pt,
+    font=\scriptsize},
+  notebox/.style={rectangle, rounded corners=2pt, draw=softgray, dashed,
+    fill=softgray!6, text width=8.4cm, align=left, inner sep=5pt,
+    font=\scriptsize\itshape},
+  arr/.style={-{Latex[length=2.2mm]}, thick, primaryblue},
+  arrg/.style={-{Latex[length=2mm]}, thin, softgray},
+  emaarr/.style={-{Latex[length=2mm]}, thin, dashed, accentorange},
+}
+
+\begin{document}
+
+% ============================================================
+% PORTADA
+% ============================================================
+\begin{titlepage}
+\centering
+\vspace*{1.2cm}
+{\Huge\bfseries\color{primaryblue} Aprender sin etiquetas\\[2pt] a partir de resonancias cerebrales}\\[10pt]
+{\Large\color{steelblue} VICReg, BYOL y DINOv2 sobre OASIS3\\ para distinguir Alzheimer de controles sanos}\\[26pt]
+
+\begin{tikzpicture}
+\draw[primaryblue, thick] (0,0) -- (11,0);
+\end{tikzpicture}
+
+\vspace{18pt}
+{\large \textit{Un recorrido visual por los datos, las tres arquitecturas\\
+y lo que sus representaciones sí (y no) capturan sobre la enfermedad.}}
+
+\vspace{40pt}
+\begin{tcolorbox}[colback=panelbg,colframe=primaryblue,arc=4pt,width=0.82\textwidth,
+  boxrule=1pt, left=14pt,right=14pt,top=10pt,bottom=10pt]
+\begin{center}
+\textbf{oasis3-ssl-workbench}\\[4pt]
+\small 981 sujetos OASIS3 · 3 métodos de preentrenamiento autosupervisado\\
+1 protocolo de evaluación común: un \emph{probe} lineal sobre encoder congelado
+\end{center}
+\end{tcolorbox}
+
+\vfill
+{\small Informe generado a partir de la campaña \texttt{campaign\_full50} (981 sujetos,
+hasta 50 épocas) y de la sesión de ajuste del 20 de septiembre de 2026.}\\[4pt]
+{\small 20 de septiembre de 2026}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ============================================================
+\section{Por qué este informe}
+% ============================================================
+
+Este documento explica, de la forma más visual posible, tres cosas:
+
+\begin{enumerate}
+\item cómo un conjunto de resonancias magnéticas cerebrales (OASIS3) se convierte
+  en los tensores que consume una red neuronal;
+\item qué le pasa exactamente a \emph{una} resonancia de \emph{un} paciente al
+  entrar a cada uno de los tres modelos autosupervisados del proyecto —VICReg,
+  BYOL y DINOv2—; y
+\item qué tan bien, al final, esas representaciones aprendidas \emph{sin
+  etiquetas} sirven para distinguir personas con Alzheimer (AD) de controles
+  sanos (HC) cuando se les pega encima un clasificador simple.
+\end{enumerate}
+
+\begin{tldrbox}
+Entrenamos tres redes a "mirar" cortes axiales de resonancias cerebrales sin
+decirles nunca si la persona tiene Alzheimer. Después las congelamos y les
+pedimos, con un clasificador lineal muy simple, que separen AD de HC. VICReg
+es el único que mejora de forma consistente sobre un encoder sin entrenar;
+BYOL y DINOv2 quedan dentro del margen de ruido en la campaña oficial de 50
+épocas, aunque una sesión posterior con otros backbones movió bastante esas
+cifras (Sección~\ref{sec:extension}).
+\end{tldrbox}
+
+Todo el código, configuraciones y figuras de este informe viven en el
+repositorio \texttt{oasis3-ssl-workbench}; al final (Sección~\ref{sec:repro})
+se listan los comandos exactos para reproducir cada número.
+
+% ============================================================
+\section{El dataset: de un sujeto clínico a un tensor 2D}
+\label{sec:data}
+% ============================================================
+
+OASIS3 aporta volúmenes de resonancia magnética estructural (T1) registrados
+a un espacio estándar (MNI), junto con metadatos clínicos por sesión: sujeto,
+edad, y grupo diagnóstico (entre otros, \texttt{AD}, \texttt{HC}, y
+diagnósticos intermedios que aquí tratamos como ``otro''). Un mismo sujeto
+puede tener \emph{varias} sesiones (visitas) a lo largo de los años.
+
+\subsection{El recorrido completo, de arriba a abajo}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=6mm]
+
+\node[wbox] (csv) at (0,15) {\textbf{CSV clínico OASIS3}\\981 sujetos · columna \texttt{group} (AD / HC / otro)};
+\node[wbox] (lmdb) at (8.6,15) {\textbf{LMDB de volúmenes MNI}\\intensidad \texttt{int16}, ya registrados};
+
+\node[wbox, fill=hcgreen!8, draw=hcgreen] (split) at (4.3,12.6) {\textbf{Split fijo por sujeto}\\un sujeto vive en un único conjunto: nunca hay fuga entre train/val/test};
+
+\node[splitbox] (train) at (0.3,10.1) {\textbf{Train}\\685 sujetos\\1\,226 sesiones disponibles};
+\node[splitbox] (val)   at (4.3,10.1) {\textbf{Val}\\146 sujetos\\1 sesión fija c/u};
+\node[splitbox] (test)  at (8.3,10.1) {\textbf{Test}\\150 sujetos\\1 sesión fija c/u};
+
+\node[wbox, text width=9.5cm] (slice) at (4.3,6.7) {\textbf{Elegir sesión y corte axial}\\[2pt]train: sesión y fracción aleatorias en $[0.30,0.70]$ del eje $z$ (cambian cada época)\\[2pt]val/test: sesión y fracción fijas ($0.50$, el corte central)};
+
+\node[wbox, text width=9.5cm] (norm) at (4.3,3.9) {\textbf{Normalización por percentiles}\\$\rightarrow$ tensor $1\times H\times W$ en $[0,1]$};
+
+\node[onlinebox, text width=3.6cm] (augtr) at (1.2,1.2) {\texttt{SSLViewTransform}\\crop aleatorio + flips + rotación + blur + ruido\\$\Rightarrow$ \textbf{2 vistas} independientes (solo \emph{train})};
+\node[targetbox, text width=3.6cm] (augev) at (7.4,1.2) {\texttt{EvalTransform}\\solo \emph{resize} determinista\\$\Rightarrow$ 1 vista reproducible (val/test/\emph{probe})};
+
+\node[box, fill=accentorange!10, draw=accentorange, text width=7.6cm] (enc) at (4.3,-1.6)
+  {Entra al \textbf{encoder} de VICReg, BYOL o DINOv2\\(ver Sección~\ref{sec:models})};
+
+\draw[arr] (csv) -- (split);
+\draw[arr] (lmdb) -- (split);
+\draw[arr] (split) -- (train);
+\draw[arr] (split) -- (val);
+\draw[arr] (split) -- (test);
+\draw[arr] (train) -- (slice);
+\draw[arr] (val) -- (slice);
+\draw[arr] (test) -- (slice);
+\draw[arr] (slice) -- (norm);
+\draw[arr] (norm) -- (augtr);
+\draw[arr] (norm) -- (augev);
+\draw[arr] (augtr) -- (enc);
+\draw[arr] (augev) -- (enc);
+\end{tikzpicture}
+\caption{De 981 sujetos clínicos a un tensor 2D listo para el encoder. El
+split por sujeto se decide una sola vez y es el mismo para las tres
+arquitecturas.}
+\label{fig:pipeline}
+\end{figure}
+
+\begin{ideabox}
+El \emph{split} nunca mezcla sesiones de un mismo sujeto entre conjuntos. Si
+no fuera así, el modelo podría ``reconocer'' el cerebro de una persona que ya
+vio en \emph{train} al evaluarlo en \emph{test}, e inflar artificialmente el
+desempeño. El código (\texttt{select\_rows} en
+\texttt{oasis3\_lmdb\_datamodule.py}) verifica activamente que los conjuntos
+de sujetos no se solapen y lanza un error si detecta fuga.
+\end{ideabox}
+
+\subsection{Una sesión, un corte, dos miradas}
+
+Cada volumen 3D se recorta a un único corte axial 2D (plano perpendicular al
+eje cráneo-pies). Durante el preentrenamiento SSL, \emph{train} muestrea en
+cada época una sesión al azar del sujeto y una fracción aleatoria del eje $z$
+dentro de $[0.30, 0.70]$ (evita cortes demasiado periféricos); \emph{val} y
+\emph{test} siempre usan la misma sesión ``primaria'' y el corte central
+($0.50$), para que la evaluación sea reproducible.
+
+A partir de ese corte, \texttt{SSLViewTransform} genera \textbf{dos vistas
+aumentadas independientes} de la misma imagen: recorte aleatorio y reescalado
+(\emph{scale} $\in[0.3,1.0]$), flips horizontal/vertical, rotación
+($\pm15^\circ$), \emph{blur} gaussiano ocasional y ruido gaussiano de baja
+intensidad. Ninguna de las tres arquitecturas ve nunca la etiqueta AD/HC en
+este paso: la única señal es ``estas dos imágenes vienen del mismo cerebro''.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.92\linewidth]{augmentation_examples.png}
+\caption{Dos políticas de aumentación aplicadas al mismo corte axial de
+entrenamiento, generando dos vistas por política (ilustración tomada de la
+campaña \texttt{mri\_fullview20}, que comparte el mismo código de
+aumentación; la campaña de 50 épocas usa una configuración de recorte más
+agresiva, \texttt{scale}$\in[0.3,1.0]$, ver Tabla~\ref{tab:overview}).}
+\label{fig:augmentations}
+\end{figure}
+
+DINOv2 añade una variante propia (\texttt{DINOv2ViewTransform}): además de las
+dos vistas ``globales'' de $120\times120$, genera varios recortes
+\textbf{locales} más pequeños ($60\times60$, tomados de una región mucho más
+acotada del cerebro, \emph{scale}$\in[0.1,0.4]$). La idea, típica de la
+familia DINO, es forzar a que una vista pequeña y local sea consistente con la
+representación global del mismo cerebro.
+
+\subsection{Cuántos sujetos hay realmente en cada paso}
+
+No todos los sujetos con imagen tienen una etiqueta AD/HC inequívoca (algunos
+tienen diagnósticos intermedios, o etiquetas que cambian entre sesiones). El
+preentrenamiento SSL usa \textbf{todos} los sujetos del split, con o sin
+etiqueta; el \emph{probe} lineal posterior (Sección~\ref{sec:probe}) sólo
+puede usar los que sí tienen una etiqueta AD/HC clara.
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+ & \textbf{Train} & \textbf{Val} & \textbf{Test} \\
+\midrule
+Sujetos totales en el split (SSL) & 685 & 146 & 150 \\
+Sesiones disponibles para SSL & 1\,226 & 146 & 150 \\
+Sujetos AD/HC inequívocos (\emph{probe}) & 615 & 131 & 134 \\
+\quad de los cuales AD & --- & --- & 31 \\
+\quad de los cuales HC & --- & --- & 103 \\
+\bottomrule
+\end{tabular}
+\caption{Sujetos disponibles para preentrenamiento SSL frente a los
+realmente usados por el \emph{probe} AD/HC, campaña de 50 épocas.}
+\label{tab:subjects}
+\end{table}
+
+% ============================================================
+\section{Tres formas de aprender sin etiquetas}
+\label{sec:models}
+% ============================================================
+
+Las tres arquitecturas comparten la misma idea de fondo —tomar dos vistas
+aumentadas de la misma imagen y enseñarle a la red que ``vienen de lo
+mismo''— pero difieren en \emph{cómo} evitan la trampa obvia: si sólo
+premiamos que las dos vistas se parezcan, la red puede colapsar a una
+constante y ``ganar'' trivialmente. Cada método tiene su propio antídoto
+contra ese colapso.
+
+\subsection{El ingrediente común: el encoder}
+
+En los tres casos, el \emph{encoder} (o \emph{backbone}) es la pieza que
+después se congela y se reutiliza para clasificar AD/HC —es lo único que nos
+importa conservar del preentrenamiento SSL. Recibe una imagen de un canal
+($1\times H\times W$, un corte axial) y entrega un vector de tamaño fijo.
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+ & \textbf{VICReg} & \textbf{BYOL} & \textbf{DINOv2} \\
+\midrule
+Backbone & ConvNeXt-tiny & ConvNeXt-tiny & ViT-Small (\emph{patch} 60) \\
+Preentrenado en ImageNet & no & no & no \\
+Dimensión de salida & 768 & 768 & 384 \\
+Tamaño de imagen & $96\times96$ & $96\times96$ & $120\times120$ \\
+Vistas por paso & 2 & 2 & 2 globales + 2 locales \\
+\bottomrule
+\end{tabular}
+\caption{Backbones usados en la campaña oficial de 50 épocas
+(\texttt{campaign\_full50}). La sesión exploratoria del 20-09 cambió algunos
+de estos backbones; ver Sección~\ref{sec:extension}.}
+\label{tab:backbones}
+\end{table}
+
+\subsection{VICReg: parecerse sin colapsar, a punta de estadística}
+
+\textbf{Idea:} una sola red procesa las dos vistas (no hay red ``espejo'' ni
+promedio móvil). Para evitar el colapso, no basta con que las dos
+proyecciones se parezcan (\emph{invarianza}): además se exige, \emph{sobre el
+lote}, que cada dimensión del embedding tenga varianza mínima
+(\emph{varianza}) y que las dimensiones no queden correlacionadas entre sí
+(\emph{covarianza}). Son tres términos que tironean en direcciones
+distintas: parecerse, pero sin aplanarse, y sin repetir la misma información
+en varias dimensiones.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\node[viewbox] (v1) at (1.2,10.4) {Vista 1};
+\node[viewbox] (v2) at (9.2,10.4) {Vista 2};
+
+\node[box] (e1) at (1.2,8.6) {Encoder $f_\theta$\\ConvNeXt-tiny\\$h\in\mathbb{R}^{768}$};
+\node[box] (e2) at (9.2,8.6) {Encoder $f_\theta$\\ConvNeXt-tiny\\$h\in\mathbb{R}^{768}$};
+\draw[dashed, softgray] (e1) -- (e2) node[midway, above, font=\tiny, text=softgray] {mismos pesos $\theta$ (no hay red espejo)};
+
+\node[box] (p1) at (1.2,6.6) {Proyector $g_\theta$\\MLP 3 capas, BN+ReLU\\$768\to2048\to2048$};
+\node[box] (p2) at (9.2,6.6) {Proyector $g_\theta$\\MLP 3 capas, BN+ReLU\\$768\to2048\to2048$};
+\draw[dashed, softgray] (p1) -- (p2);
+
+\node[font=\small] (z1) at (1.2,5.2) {$z_1\in\mathbb{R}^{2048}$};
+\node[font=\small] (z2) at (9.2,5.2) {$z_2\in\mathbb{R}^{2048}$};
+
+\node[lossbox] (loss) at (5.2,2.9) {
+  \textbf{Pérdida VICReg} $= 25\cdot\underbrace{\mathrm{MSE}(z_1,z_2)}_{\text{invarianza}}
+  \;+\; 25\cdot\underbrace{\textstyle\sum_j\max(0,\,1-\sigma_j)}_{\text{varianza, por dimensión}}
+  \;+\; 1\cdot\underbrace{\textstyle\sum_{i\ne j} C_{ij}^2}_{\text{covarianza, fuera de la diagonal}}$
+};
+
+\node[notebox] (note) at (5.2,0.6) {Sin red EMA, sin pares negativos. Opcionalmente existe un banco (\emph{queue}) de proyecciones pasadas para estabilizar varianza/covarianza en lotes chicos --- desactivado (\texttt{queue\_size=0}) en estas corridas.};
+
+\draw[arr] (v1) -- (e1);
+\draw[arr] (v2) -- (e2);
+\draw[arr] (e1) -- (p1);
+\draw[arr] (e2) -- (p2);
+\draw[arr] (p1) -- (z1);
+\draw[arr] (p2) -- (z2);
+\draw[arr] (z1) -- (loss.north west);
+\draw[arr] (z2) -- (loss.north east);
+\end{tikzpicture}
+\caption{Un paciente atravesando VICReg: la \emph{misma} red ve las dos
+vistas; el colapso se evita con los términos de varianza y covarianza, no
+con una arquitectura asimétrica.}
+\label{fig:vicreg}
+\end{figure}
+
+\begin{ideabox}
+En VICReg no hay ``profesor'' ni ``alumno'': una única red procesa ambas
+vistas en el mismo paso hacia adelante. Toda la lucha contra el colapso pasa
+por la forma de la pérdida, no por la arquitectura.
+\end{ideabox}
+
+\subsection{BYOL: perseguir un reflejo que se mueve despacio}
+
+\textbf{Idea:} en vez de una pérdida estadística, BYOL usa dos redes: una
+\emph{online} (la que aprende por gradiente) y una \emph{target} (una copia
+cuyos pesos son un promedio móvil exponencial ---EMA--- de la \texttt{online},
+y que \textbf{nunca} recibe gradientes). La red online, además, tiene un
+\emph{predictor} extra que intenta anticipar la proyección que la red target
+produciría para la \emph{otra} vista. Como el objetivo (target) se mueve
+mucho más despacio que el alumno, y nunca es exactamente igual, colapsar a
+una constante deja de ser una solución trivial: el predictor tendría que
+``adivinar'' un blanco que además se sigue moviendo.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\node[viewbox] (v1) at (1.2,11.6) {Vista 1};
+\node[viewbox] (v2) at (9.2,11.6) {Vista 2};
+
+\node[onlinebox] (eo1) at (1.2,9.8) {Encoder \emph{online} $f_\theta$\\ConvNeXt-tiny};
+\node[onlinebox] (eo2) at (9.2,9.8) {Encoder \emph{online} $f_\theta$\\ConvNeXt-tiny};
+\draw[dashed, softgray] (eo1) -- (eo2) node[midway, above, font=\tiny, text=softgray] {mismos pesos $\theta$};
+
+\node[onlinebox] (po1) at (1.2,8.1) {Proyector $g_\theta$\\$768\to512\to256$};
+\node[onlinebox] (po2) at (9.2,8.1) {Proyector $g_\theta$\\$768\to512\to256$};
+
+\node[onlinebox] (pr1) at (1.2,6.4) {Predictor $q_\theta$\\256 (2 capas)\\$\Rightarrow p_1$};
+\node[onlinebox] (pr2) at (9.2,6.4) {Predictor $q_\theta$\\256 (2 capas)\\$\Rightarrow p_2$};
+
+\node[targetbox] (et1) at (1.2,4.0) {Encoder \emph{target} $f_\xi$ (EMA)\\\texttt{sin gradiente}};
+\node[targetbox] (et2) at (9.2,4.0) {Encoder \emph{target} $f_\xi$ (EMA)\\\texttt{sin gradiente}};
+
+\node[targetbox] (pt1) at (1.2,2.3) {Proyector $g_\xi$ (EMA)\\$\Rightarrow t_1$};
+\node[targetbox] (pt2) at (9.2,2.3) {Proyector $g_\xi$ (EMA)\\$\Rightarrow t_2$};
+
+\node[lossbox, text width=9.6cm] (loss) at (5.2,0.2)
+  {\textbf{Pérdida BYOL (simétrica)} $=\tfrac12\big[(2-2\cos(p_1,t_2)) + (2-2\cos(p_2,t_1))\big]$
+  --- cada predicción se compara contra el target de la \emph{otra} vista; $t_1,t_2$ nunca reciben gradiente.};
+
+\draw[arr] (v1) -- (eo1); \draw[arr] (v2) -- (eo2);
+\draw[arr] (eo1) -- (po1); \draw[arr] (eo2) -- (po2);
+\draw[arr] (po1) -- (pr1); \draw[arr] (po2) -- (pr2);
+\draw[arrg] (v1) to[bend right=15] (et1); \draw[arrg] (v2) to[bend left=15] (et2);
+\draw[arrg] (et1) -- (pt1); \draw[arrg] (et2) -- (pt2);
+\draw[emaarr] (eo1.south west) to[bend right=35] node[midway,left,font=\tiny,text=accentorange]{EMA} (et1.north west);
+\draw[emaarr] (eo2.south east) to[bend left=35] node[midway,right,font=\tiny,text=accentorange]{EMA} (et2.north east);
+\draw[arr] (pr1) -- (loss.north west);
+\draw[arr] (pr2) -- (loss.north east);
+\draw[arrg] (pt1) -- (loss.west);
+\draw[arrg] (pt2) -- (loss.east);
+\end{tikzpicture}
+\caption{Un paciente atravesando BYOL: la rama azul (\emph{online}) aprende
+por gradiente; la rama gris punteada (\emph{target}) es una copia EMA que
+sólo se actualiza por interpolación, nunca por \emph{backprop}. La
+actualización EMA usa un coeficiente de momento que sube con \emph{coseno}
+desde $0.996$ hacia $1$ a lo largo del entrenamiento.}
+\label{fig:byol}
+\end{figure}
+
+\begin{warnbox}
+No confundir el ``predictor'' de BYOL con un clasificador de AD/HC: sólo
+predice la proyección de la \emph{otra} vista aumentada de la misma imagen.
+La etiqueta clínica sigue sin aparecer en ningún punto de este diagrama.
+\end{warnbox}
+
+\subsection{DINOv2: un profesor sereno y un alumno que trabaja a ciegas}
+
+\textbf{Idea:} de nuevo hay una red \emph{estudiante} (con gradiente) y una
+\emph{profesora} EMA (sin gradiente), como en BYOL, pero aquí ambas son
+\emph{Vision Transformers} y compiten sobre \emph{tokens}, no sobre un solo
+vector. El estudiante ve las vistas globales con una fracción de sus parches
+\textbf{enmascarados} (ocultos) y también recortes locales mucho más
+pequeños; la profesora siempre ve las vistas globales completas, sin máscara.
+La pérdida combina tres términos:
+
+\begin{itemize}
+\item \textbf{Distilación CLS cruzada} (``dino''): el token de clase (CLS)
+  de cada vista del estudiante debe imitar la distribución de probabilidad
+  que la profesora produce para una vista global \emph{distinta}.
+\item \textbf{iBOT}: el estudiante también debe adivinar, a partir del
+  contexto, qué distribución de parche predijo la profesora exactamente en
+  los parches que el estudiante tuvo \emph{ocultos}.
+\item \textbf{KoLeo}: un término de dispersión que empuja a los embeddings
+  del lote a no amontonarse todos cerca unos de otros.
+\end{itemize}
+
+La profesora no se vuelve un blanco trivial (todo unos, por ejemplo) porque
+sus logits se \emph{centran} (se les resta un promedio móvil de activaciones
+pasadas) y se afinan con una temperatura baja antes del \emph{softmax}; esa
+temperatura, además, sube gradualmente ($0.01\to0.02$ en las primeras 15
+épocas) para no sobre-confiar en un profesor que todavía no sabe nada.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\node[viewbox] (g1) at (1.4,11.2) {Recorte global 1\\$120\times120$};
+\node[viewbox] (g2) at (5.4,11.2) {Recorte global 2\\$120\times120$};
+\node[viewbox] (loc) at (9.4,11.2) {$n$ recortes locales\\$60\times60$ (p.ej.\ 2)};
+
+\node[onlinebox, text width=9.4cm] (stud) at (5.4,9.2)
+ {\textbf{Estudiante} --- ViT-Small, \emph{patch} 60, 384-d\\
+ globales: 30\,\% de los parches \textbf{enmascarados}\ · locales: sin máscara, solo CLS};
+
+\node[onlinebox] (clss) at (2.6,7.1) {Proyector CLS $g_\theta$\\$384\to512\to1024$};
+\node[onlinebox] (patchs) at (8.2,7.1) {Cabezal de parches\\(solo parches enmascarados)};
+
+\node[targetbox, text width=9.4cm] (teach) at (5.4,5.0)
+ {\textbf{Profesora (EMA)} --- ViT-Small, \emph{patch} 60\\
+ ve los 2 recortes globales completos, \texttt{sin máscara}, \texttt{sin gradiente}};
+
+\node[targetbox] (clst) at (2.6,3.0) {Proyector CLS $g_\xi$};
+\node[targetbox] (patcht) at (8.2,3.0) {Cabezal de parches $\xi$};
+
+\node[targetbox, text width=8cm] (center) at (5.4,1.1)
+ {Centrado (EMA de medias) + \emph{softmax} con $\tau_{\text{prof}}$ baja ($0.01\to0.02$, \emph{warm-up} 15 épocas)};
+
+\node[lossbox, text width=10cm] (loss) at (5.4,-1.3)
+ {\textbf{Pérdida DINOv2} $=$ distilación CLS cruzada (todas las vistas del
+ estudiante contra las 2 vistas globales de la profesora, excluyendo la
+ propia) $+\ 1.0\cdot$iBOT (parches enmascarados) $+\ 0.1\cdot$KoLeo
+ (dispersión)};
+
+\draw[arr] (g1) -- (stud); \draw[arr] (g2) -- (stud); \draw[arr] (loc) -- (stud);
+\draw[arr] (stud) -- (clss); \draw[arr] (stud) -- (patchs);
+\draw[arrg] (g1) to[bend right=25] (teach); \draw[arrg] (g2) to[bend left=25] (teach);
+\draw[arrg] (teach) -- (clst); \draw[arrg] (teach) -- (patcht);
+\draw[arrg] (clst) -- (center); \draw[arrg] (patcht) -- (center);
+\draw[emaarr] (stud.south) to[bend right=20] node[midway,left,font=\tiny,text=accentorange]{EMA} (teach.north);
+\draw[arr] (clss) -- (loss.north west);
+\draw[arr] (patchs) -- (loss.north east);
+\draw[arrg] (center) -- (loss.north);
+\end{tikzpicture}
+\caption{Un paciente atravesando DINOv2: el estudiante trabaja con
+información incompleta (parches ocultos, recortes locales pequeños) y debe
+igualar, de todos modos, lo que la profesora --- que sí ve todo, pero nunca
+aprende por gradiente --- observó en las vistas completas.}
+\label{fig:dinov2}
+\end{figure}
+
+\subsection{Las tres arquitecturas, una tabla}
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{p{2.1cm}p{3.4cm}p{3.4cm}p{3.6cm}}
+\toprule
+ & \textbf{VICReg} & \textbf{BYOL} & \textbf{DINOv2} \\
+\midrule
+Nº de redes & 1 & 2 (\emph{online} + EMA) & 2 (estudiante + EMA) \\
+Anti-colapso & varianza + covarianza (estadística) & red target EMA + predictor & \emph{masking} + centrado + KoLeo \\
+Usa negativos & no & no & no \\
+Vistas & 2 globales & 2 globales & 2 globales + locales \\
+Pesos SSL & $\lambda_{inv}{=}25$, $\lambda_{var}{=}25$, $\lambda_{cov}{=}1$ & EMA base $0.996\to1$ (coseno) & EMA base $0.996\to1$, iBOT $=1.0$, KoLeo $=0.1$ \\
+Riesgo típico de colapso & varianza $\to0$ en todas las dimensiones & representación constante si el predictor ``hace trampa'' & profesora sobre-confiada desde el inicio \\
+\bottomrule
+\end{tabular}
+\caption{Comparación estructural de los tres métodos, campaña oficial de 50 épocas.}
+\label{tab:overview}
+\end{table}
+
+% ============================================================
+\section{Cómo se evalúa: el \emph{probe} lineal sobre encoder congelado}
+\label{sec:probe}
+% ============================================================
+
+Preentrenar sin etiquetas es solo la mitad de la historia: para saber si
+sirvió, se \textbf{congela} el encoder (sin más ajuste de sus pesos) y se
+entrena únicamente una regresión logística encima. Este protocolo --- el
+\emph{frozen linear probe} --- es el estándar en la literatura SSL
+precisamente porque aísla qué tan \emph{linealmente separable} quedó la
+información clínicamente relevante en el espacio de embeddings, sin dejar
+que un clasificador no lineal potente disimule una mala representación.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\node[onlinebox] (enc) at (2.6,10.4) {Encoder congelado\\\textbf{pesos SSL entrenados}};
+\node[targetbox] (encr) at (9.4,10.4) {Encoder congelado\\\textbf{pesos aleatorios} (control, misma arquitectura sin entrenar)};
+
+\node[box, text width=3.6cm] (emb) at (2.6,8.5) {Embedding por sesión evaluada\\(1 vista determinista)};
+\node[box, text width=3.6cm, draw=softgray] (embr) at (9.4,8.5) {Embedding por sesión evaluada\\(1 vista determinista)};
+
+\node[box, text width=3.6cm] (avg) at (2.6,6.6) {Promedio por sujeto\\(si tiene varias sesiones evaluadas)};
+\node[box, text width=3.6cm, draw=softgray] (avgr) at (9.4,6.6) {Promedio por sujeto};
+
+\node[box, text width=3.6cm] (fit) at (2.6,4.7) {Ajustar en \emph{train}\\615 sujetos AD/HC\\\texttt{StandardScaler+LogReg}};
+\node[box, text width=3.6cm, draw=softgray] (fitr) at (9.4,4.7) {Ajustar en \emph{train}\\615 sujetos AD/HC};
+
+\node[box, text width=3.6cm] (sel) at (2.6,2.8) {Elegir $C\in\{0.01,0.1,1,10\}$\\por AUROC en \emph{val}\\131 sujetos};
+\node[box, text width=3.6cm, draw=softgray] (selr) at (9.4,2.8) {Elegir $C$\\por AUROC en \emph{val}};
+
+\node[box, fill=accentorange!10, draw=accentorange, text width=3.6cm] (test) at (2.6,0.9) {AUROC en \emph{test}\\134 sujetos\\(31 AD / 103 HC)};
+\node[box, fill=accentorange!10, draw=accentorange, text width=3.6cm] (testr) at (9.4,0.9) {AUROC en \emph{test}\\misma cohorte};
+
+\node[lossbox, text width=9.6cm] (comp) at (6,-1.3)
+ {\textbf{Bootstrap pareado por sujeto} (2\,000 remuestreos)\\
+ $\Delta\text{AUROC} = \text{AUROC}_{\text{SSL}} - \text{AUROC}_{\text{aleatorio}}$ \ $\Rightarrow$ IC 95\,\%};
+
+\draw[arr] (enc) -- (emb); \draw[arrg] (encr) -- (embr);
+\draw[arr] (emb) -- (avg); \draw[arrg] (embr) -- (avgr);
+\draw[arr] (avg) -- (fit); \draw[arrg] (avgr) -- (fitr);
+\draw[arr] (fit) -- (sel); \draw[arrg] (fitr) -- (selr);
+\draw[arr] (sel) -- (test); \draw[arrg] (selr) -- (testr);
+\draw[arr] (test) -- (comp.north west);
+\draw[arr] (testr) -- (comp.north east);
+\end{tikzpicture}
+\caption{Protocolo del \emph{probe} lineal: cada encoder (SSL vs.\ control
+aleatorio) recorre exactamente el mismo camino, con el mismo split y la
+misma cohorte de sujetos, para que la única diferencia posible sea la
+calidad de la representación.}
+\label{fig:probe}
+\end{figure}
+
+\begin{ideabox}
+El control ``aleatorio'' no es un truco menor: un encoder \emph{sin
+entrenar} ya tiene, gracias a su arquitectura, cierta capacidad de separar
+clases cuando se le ajusta encima un clasificador. Comparar contra ese
+control --- y no contra el azar puro (AUROC $=0.5$) --- es lo que permite
+afirmar si el preentrenamiento SSL agregó algo por encima de lo que la
+arquitectura ya regalaba gratis.
+\end{ideabox}
+
+Además del AUROC, el script calcula el \textbf{rango efectivo espectral} de
+los embeddings de \emph{train} (cuántas direcciones del espacio realmente se
+usan, en un sentido continuo) y la \textbf{desviación estándar media por
+dimensión}: dos formas de detectar colapso parcial que un AUROC por sí solo
+no muestra.
+
+% ============================================================
+\section{Resultados: la campaña oficial de 50 épocas}
+\label{sec:results}
+% ============================================================
+
+Protocolo: 981 sujetos OASIS3, split fijo y disjunto por sujeto
+(685/146/150), configuraciones nativas de cada método (sin ajustar
+hiperparámetros mirando las etiquetas), hasta 50 épocas con \emph{early
+stopping} basado únicamente en \texttt{val/loss} SSL (paciencia 10, mejora
+mínima $0.001$) para los modelos que lo activaron.
+
+\subsection{Curvas de pérdida SSL}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.72\linewidth]{ssl_learning_curves.png}
+\caption{Pérdida de entrenamiento y validación por método. Las escalas
+\textbf{no} son comparables entre métodos (cada pérdida se define distinto);
+lo relevante es la forma de cada curva. VICReg y BYOL activaron
+\emph{early stopping} en la época 36 (mejor validación en la época 26);
+DINOv2 completó las 50 épocas sin activarlo.}
+\label{fig:curves}
+\end{figure}
+
+\begin{warnbox}
+La curva de validación de BYOL es muy ruidosa (sube y baja bruscamente entre
+épocas) y la de VICReg apenas se mueve tras las primeras iteraciones: ambas
+son señales de que, aunque la pérdida SSL \emph{funciona} como objetivo de
+optimización, no hay garantía de que decrezca monótonamente ni de que un
+menor valor final implique una mejor representación para AD/HC.
+\end{warnbox}
+
+\subsection{¿El encoder entrenado ve más que uno al azar?}
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Método} & \textbf{Épocas} & \textbf{AUROC SSL} & \textbf{AUROC aleatorio} & \boldmath$\Delta$\textbf{AUROC [IC 95\,\%]} \\
+\midrule
+DINOv2 & 50 (última época) & 0.717 & 0.720 & $-0.003$ [$-0.065$, $+0.056$] \\
+VICReg & 36 (mejor val.\ SSL) & \textbf{0.776} & 0.748 & $\mathbf{+0.028}$ [$-0.029$, $+0.089$] \\
+BYOL & 36 (mejor val.\ SSL) & 0.736 & 0.748 & $-0.012$ [$-0.068$, $+0.042$] \\
+\bottomrule
+\end{tabular}
+\caption{AUROC del \emph{probe} AD/HC por sujeto en \emph{test} (134
+sujetos: 31 AD, 103 HC). Intervalos de confianza por \emph{bootstrap}
+pareado por sujeto, condicionados a un único split y semilla.}
+\label{tab:results}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\linewidth]{probe_vs_baseline_table.png}
+\caption{La misma tabla, en formato visual.}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{subfigure}[t]{0.66\linewidth}
+\includegraphics[width=\linewidth]{ad_hc_subject_auc.png}
+\caption{AUROC absoluto: encoder SSL vs.\ control aleatorio, por método.}
+\end{subfigure}
+\hfill
+\begin{subfigure}[t]{0.30\linewidth}
+\includegraphics[width=\linewidth]{ad_hc_delta_auc.png}
+\caption{$\Delta$AUROC (SSL menos aleatorio) con IC 95\,\%. Solo VICReg
+queda del lado positivo, y con IC amplio.}
+\end{subfigure}
+\caption{Ninguno de los tres intervalos de confianza excluye claramente el
+cero: con 134 sujetos de test, esta campaña no alcanza para declarar una
+mejora \emph{estadísticamente} contundente, aunque VICReg es el único que
+apunta consistentemente en la dirección correcta.}
+\label{fig:auc}
+\end{figure}
+
+\subsection{¿Calibración, o solo ranking?}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.7\linewidth]{ad_hc_probe_log_loss.png}
+\caption{\emph{Log-loss} en test. El \emph{prior} (predecir siempre la
+prevalencia de AD del set de \emph{train}, sin mirar la imagen) logra el
+menor \emph{log-loss} de los cuatro; los tres \emph{probes} usan
+ponderación de clases y eligen $C$ por AUROC, no por calibración, así que
+un buen ranking (AUROC) no implica probabilidades bien calibradas.}
+\label{fig:logloss}
+\end{figure}
+
+\subsection{Dispersión de los embeddings: ¿colapso parcial?}
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{l*{4}{>{\centering\arraybackslash}p{2.35cm}}}
+\toprule
+\textbf{Método} & \textbf{Rango efectivo SSL} & \textbf{Rango efectivo aleatorio} & \textbf{Desv.\ media SSL} & \textbf{Desv.\ media aleatoria} \\
+\midrule
+DINOv2 & 2.0 & 7.8 & 0.0571 & 0.0237 \\
+VICReg & 47.2 & 105.8 & 0.0658 & 0.0241 \\
+BYOL & 2.5 & 105.8 & 0.0532 & 0.0241 \\
+\bottomrule
+\end{tabular}
+\caption{Rango efectivo espectral de los embeddings de \emph{train}
+(cuántas direcciones realmente se usan) y desviación estándar media por
+dimensión.}
+\label{tab:rank}
+\end{table}
+
+\begin{warnbox}
+BYOL y DINOv2 concentran casi toda su varianza en un puñado de direcciones
+(rango efectivo $\approx2$--$2.5$, frente a $\approx8$--$106$ del control
+aleatorio): sus representaciones sí sufren \textbf{colapso parcial}, y no
+superan al control en AUROC. VICReg conserva muchas más direcciones activas
+(47.2), y es el único que mejora sobre su control --- aunque el intervalo de
+confianza de esa mejora todavía incluye el cero. Un rango efectivo bajo no es
+un defecto teórico abstracto: es la explicación mecánica más probable de por
+qué BYOL y DINOv2 no logran superar a un encoder sin entrenar en esta
+campaña.
+\end{warnbox}
+
+\subsection{Síntesis de la campaña oficial}
+
+\begin{itemize}
+\item \textbf{VICReg}: mejora modesta pero consistente (+0.028 AUROC) y es
+  el único método que conserva una representación con buena dispersión
+  (rango efectivo 47.2). Evidencia estadística todavía débil.
+\item \textbf{BYOL}: sin mejora sobre el control aleatorio en esta
+  configuración (ConvNeXt-tiny sin preentrenar); su representación muestra
+  colapso parcial marcado.
+\item \textbf{DINOv2}: esencialmente empatado con el azar; su
+  representación es la más colapsada de las tres (rango efectivo 2.0).
+\end{itemize}
+
+% ============================================================
+\section{Extensión exploratoria: sesión del 20 de septiembre de 2026}
+\label{sec:extension}
+% ============================================================
+
+Después de la campaña oficial, se probó si cambiar el \emph{backbone} de
+VICReg y BYOL --- usando pesos preentrenados en ImageNet en vez de
+inicialización aleatoria --- movía la aguja para OASIS3. Esta sección resume
+esos hallazgos con las salvedades necesarias: \textbf{no están todavía
+persistidos en el repositorio} (viven en \texttt{logs/} y en un directorio
+temporal del sistema) y arrastran un problema metodológico identificado
+durante la propia sesión.
+
+\subsection{Qué cambió respecto a la campaña oficial}
+
+\begin{itemize}
+\item \texttt{MLPProjector} ganó un parámetro \texttt{dropout} (por defecto
+  $0$, no afecta a BYOL ni DINOv2, que no lo usan).
+\item VICReg pasó a usar ConvNeXt-tiny \textbf{preentrenado en ImageNet}
+  (\texttt{model.backbone.\allowbreak pretrained=true}) y, tras detectar
+  sobreajuste, un \texttt{dropout=0.1} en el proyector.
+\item BYOL pasó de ConvNeXt-tiny (config oficial,
+  \texttt{byol\_convnext.yaml}) a \textbf{ResNet-18 preentrenado en
+  ImageNet} (\texttt{byol\_resnet18.yaml}), replicando la configuración de
+  un informe previo del curso EL7006.
+\item DINOv2 mantuvo la misma arquitectura (ViT-Small, \emph{patch} 60) y se
+  reentrenó como control de estabilidad entre sesiones.
+\end{itemize}
+
+\subsection{Resultados preliminares}
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{p{2.9cm}p{3.0cm}cp{4.6cm}}
+\toprule
+\textbf{Modelo} & \textbf{Configuración} & \textbf{AUROC} & \textbf{Nota} \\
+\midrule
+VICReg nativo & ConvNeXt-tiny, sin preentrenar, sin \emph{dropout} & 0.756 & control aleatorio real: 0.748 \\
+VICReg + ImageNet & sin \emph{dropout} & sin evaluar & sobreajuste detectado antes del \emph{probe} \\
+VICReg + ImageNet + \emph{dropout} 0.3 & \emph{dropout}=0.3 & abandonado & colapso progresivo, no regularización \\
+\textbf{VICReg + ImageNet + \emph{dropout} 0.1} & \emph{dropout}=0.1 & \textbf{0.829} & mejor corrida de la sesión \\
+BYOL (ResNet-18 preentrenado) & --- & \textbf{0.822} & mejora consistente (bootstrap $P{=}0.991$) \\
+DINOv2 (ViT-S \emph{patch} 60) & --- & 0.711 & apenas sobre el azar ($P{=}0.659$), consistente con la campaña oficial (0.717) \\
+\bottomrule
+\end{tabular}
+\caption{Resultados exploratorios de la sesión del 20-09-2026, mismo split
+que la campaña oficial (\texttt{campaign\_full50}), 30 épocas. Cifras
+tomadas de \texttt{SESSION\_HANDOFF.md}; no persistidas todavía como
+\texttt{results.json} ni como figuras versionadas.}
+\label{tab:extension}
+\end{table}
+
+\subsection{Una advertencia importante sobre el control ``aleatorio''}
+\label{sec:caveat}
+
+\begin{warnbox}
+El script \texttt{evaluate\_frozen\_probe.py} construye el ``encoder
+aleatorio'' de control reconstruyendo el \emph{backbone} a partir de la
+configuración guardada del propio \emph{checkpoint}
+(\texttt{build\_backbone(cfg)}). Si esa configuración tiene
+\texttt{model.backbone.pretrained=true} --- como ocurre en las corridas de
+VICReg con ImageNet de esta sesión ---, el control ``aleatorio'' \textbf{no
+es en realidad un encoder sin entrenar}: también carga los pesos de
+ImageNet, solo que sin el ajuste SSL posterior. Por eso el $0.811$ de AUROC
+que obtuvo ese control \emph{no es comparable} con los controles
+verdaderamente aleatorios de las otras filas ($0.748$, $0.744$, $0.698$).
+Esta corrección --- forzar siempre inicialización aleatoria real en el
+control, sin importar \texttt{pretrained} --- quedó identificada pero
+\textbf{sin implementar} al cierre de la sesión.
+\end{warnbox}
+
+Comparando en cambio contra el control verdaderamente aleatorio de la
+campaña oficial (0.748), VICReg con ImageNet + \emph{dropout} 0.1 mejora
+$+0.081$, en línea con la mejora de BYOL ($+0.078$ frente a su propio
+control real, 0.744). Pero el propio VICReg con ImageNet, comparado contra
+\emph{su análogo} con ImageNet sin entrenamiento SSL, solo mejora $+0.018$
+con evidencia estadística débil (\emph{bootstrap} $P=0.71$): es decir, gran
+parte de la ganancia observada podría deberse al preentrenamiento en
+ImageNet, no al entrenamiento SSL sobre OASIS3 en sí. Lo mismo aplica, sin
+cuantificar todavía, a la mejora de BYOL con ResNet-18.
+
+\begin{tldrbox}
+Con \emph{backbones} preentrenados en ImageNet, tanto VICReg como BYOL
+llegan a AUROC $\approx0.82$--$0.83$ --- notablemente mejor que la campaña
+oficial sin preentrenar ($0.78$ y $0.74$). Pero todavía no se sabe cuánto de
+esa mejora viene del entrenamiento SSL sobre OASIS3 y cuánto ya venía
+``de fábrica'' con ImageNet, porque el control usado para aislar esa
+pregunta tiene el error descrito arriba. DINOv2 se mantiene marginal en
+ambas sesiones.
+\end{tldrbox}
+
+% ============================================================
+\section{Limitaciones, lecciones y próximos pasos}
+\label{sec:limits}
+% ============================================================
+
+\begin{itemize}
+\item \textbf{Un solo split, una sola semilla.} Todos los intervalos de
+  confianza de este informe son \emph{bootstrap} condicionado a un único
+  split de sujetos; no reflejan variabilidad entre splits ni entre semillas
+  de inicialización.
+\item \textbf{Test pequeño para el efecto que se busca.} 134 sujetos (31
+  AD) es una muestra modesta para diferencias de AUROC de una o dos
+  centésimas; los intervalos de confianza de la campaña oficial son, en
+  consecuencia, anchos.
+\item \textbf{Colapso parcial en BYOL y DINOv2.} El rango efectivo bajo
+  (Tabla~\ref{tab:rank}) sugiere que, antes de correr más épocas, vale la
+  pena revisar hiperparámetros específicos anti-colapso de cada método
+  (por ejemplo, la temperatura del profesor en DINOv2, o el \emph{momentum}
+  EMA de BYOL) más que simplemente extender el entrenamiento.
+\item \textbf{Confusión preentrenamiento-ImageNet vs.\ SSL-OASIS3.} Como se
+  detalla en la Sección~\ref{sec:caveat}, el control aleatorio de
+  \texttt{evaluate\_frozen\_probe.py} debe forzarse a pesos aleatorios
+  reales independientemente de \texttt{model.backbone.pretrained}, para
+  poder atribuir correctamente la mejora observada.
+\item \textbf{Nada de la sesión exploratoria está en control de versiones
+  todavía.} Los \texttt{.json} del \emph{probe}, las figuras nuevas y los
+  \emph{checkpoints} de esa sesión no están comiteados; persistirlos en
+  \texttt{reports/frozen\_probe/} es el paso pendiente más simple y de
+  mayor valor inmediato.
+\item \textbf{t-SNE de embeddings}: existe para una corrida antigua de 270
+  sujetos, pero no se ha regenerado para la cohorte completa de 981
+  sujetos ni para las corridas de esta campaña.
+\end{itemize}
+
+% ============================================================
+\section{Cómo reproducir estos resultados}
+\label{sec:repro}
+% ============================================================
+
+Entorno: \texttt{oasis3-ssl-workbench/.venv/Scripts/python.exe} (Windows).
+Comando base de la campaña oficial de 50 épocas (varía \texttt{model=} y
+\texttt{loss=} para cada método, ver \texttt{scripts/run\_full50.sh}):
+
+\begin{quote}
+\begin{verbatim}
+.venv/Scripts/python.exe -m t5_ssl.train \
+  data=oasis3_full50 trainer=full50 trainer.accelerator=cpu \
+  trainer.enable_progress_bar=false
+\end{verbatim}
+\end{quote}
+
+Evaluación del \emph{probe} congelado sobre un experimento ya entrenado:
+
+\begin{quote}
+\begin{verbatim}
+.venv/Scripts/python.exe scripts/evaluate_frozen_probe.py \
+  logs/<experimento> --checkpoint best
+\end{verbatim}
+\end{quote}
+
+\begin{ideabox}
+En una máquina con poca memoria (esta se corrió con 7.7\,GB de RAM y hasta
+tres entrenamientos concurrentes) es obligatorio reducir el caché de LMDB:
+\texttt{data.train\_cache\_capacity=80 +data.eval\_cache\_capacity=16}. Con
+el valor por defecto (1\,300) el proceso termina en \emph{out-of-memory}.
+\end{ideabox}
+
+% ============================================================
+\appendix
+\section{Glosario exprés}
+% ============================================================
+
+\begin{description}[leftmargin=3.2cm,style=nextline]
+\item[AUROC] Área bajo la curva ROC; $0.5$ equivale a una clasificación al
+  azar, $1.0$ a una separación perfecta entre AD y HC.
+\item[Backbone / encoder] Red convolucional o \emph{transformer} que
+  convierte una imagen en un vector de características; es la única parte
+  que se conserva después del preentrenamiento SSL.
+\item[EMA] \emph{Exponential Moving Average}: una copia de los pesos que se
+  actualiza como promedio móvil de los pesos ``reales'', nunca por
+  gradiente directo.
+\item[\emph{Frozen probe}] Protocolo de evaluación que congela el encoder y
+  entrena solo un clasificador lineal encima, usando las etiquetas
+  clínicas únicamente en este paso.
+\item[\emph{Rango efectivo} (\emph{effective rank})] Medida continua de
+  cuántas direcciones del espacio de embeddings concentran la varianza;
+  bajo $\Rightarrow$ posible colapso parcial.
+\item[SSL] Aprendizaje autosupervisado (\emph{self-supervised learning}):
+  entrenar sin etiquetas humanas, usando la propia estructura de los datos
+  (aquí, ``dos vistas del mismo cerebro'') como señal de supervisión.
+\item[\emph{Stop-gradient}] Operación que impide que el gradiente fluya
+  hacia una rama de la red (p.\,ej.\ la rama \emph{target} de BYOL o la
+  profesora de DINOv2), aunque sus salidas se usen para calcular la
+  pérdida.
+\end{description}
+
+\end{document}

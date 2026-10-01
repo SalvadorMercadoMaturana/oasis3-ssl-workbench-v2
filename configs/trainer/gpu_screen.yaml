@@ -1,0 +1,26 @@
+# @package trainer
+# Real preliminary signal (not just a pipeline check): 800 optimizer steps
+# per candidate. At ~9 steps/epoch on the small screening cohort and
+# ~1.16s/step, this is ~15 minutes per candidate, ~1h for all four.
+max_epochs: 1000
+max_steps: 800
+accelerator: "gpu"
+devices: "auto"
+precision: "16-mixed"
+log_every_n_steps: 20
+# ViTBackbone's bicubic position-embedding interpolation has no deterministic
+# CUDA backward (raises on-device); GPU screening trades bit-exact repro for
+# actually running. CPU campaigns (default/full20/full50) keep determinism.
+deterministic: false
+enable_checkpointing: true
+enable_progress_bar: true
+limit_train_batches: 1.0
+limit_val_batches: 1.0
+early_stopping_patience: null
+enable_health_check: true
+health_check_every_n_epochs: 1
+# ~89 epochs at 800 steps; every 5 gives ~18 health/probe-adjacent checkpoints
+# without spending too much wall-clock on validation overhead.
+check_val_every_n_epoch: 5
+checkpoint_every_n_epochs: 5
+checkpoint_weights_only: true  # false = keep optimizer state (needed only to resume via ckpt_path)

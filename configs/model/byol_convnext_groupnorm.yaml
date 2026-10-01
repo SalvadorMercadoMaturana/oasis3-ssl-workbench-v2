@@ -1,0 +1,17 @@
+# @package model
+# BYOL control variant: GroupNorm instead of BatchNorm16 in the online
+# projector/predictor, decoupling their statistics from the (small) batch size.
+backbone:
+  variant: convnext_tiny
+  in_channels: 1
+  pretrained: false
+projector:
+  hidden_dim: 512
+  out_dim: 256
+  num_layers: 2
+  norm: group
+  activation: relu
+predictor:
+  hidden_dim: 256
+  num_layers: 2
+  norm: group

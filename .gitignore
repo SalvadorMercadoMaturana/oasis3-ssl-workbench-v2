@@ -1,0 +1,77 @@
+# Local Python environments and caches
+.venv/
+.venv-toolkit/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Training outputs and large model artifacts
+logs/
+outputs/
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.log
+*.sqlite
+*.sqlite3
+*.db
+tuning_runs/
+tuning_smoke/
+tuning_smoke_lmdb/
+tuning_smoke_pretext/
+figures_smoke/
+
+# OASIS-derived subject manifests and machine-readable results.
+# Keep these local unless redistribution has been explicitly approved.
+*.csv
+*.json
+
+# Individual MRI-derived visualizations are kept local with the source data.
+lmdb_axial_qc.png
+campaign_mri_fullview20/figures/augmentation_examples.png
+
+# Private/local dataset mount. Keep only its documentation in Git.
+data/*
+!data/README.md
+artifacts/*
+!artifacts/README.md
+
+# Editor and OS metadata
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Experiment outputs, local backups and reports with MRI-derived figures stay local.
+campaign_*/
+campaign_*.log
+backup_*/
+tuning_*/
+tuning_*.log
+reports/
+docs/*.pdf
+docs/figures_*/
+/*.png
+*.npy
+*.npz
+*.nii
+*.nii.gz
+*.mdb
+
+# RunPod / 4090 runtime outputs (train.py, run_all.py, bench.py)
+runs/
+bench_results/
+.inductor-cache/
+cloud/state/

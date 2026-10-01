@@ -1,0 +1,15 @@
+# @package augmentation
+# 3D views of the hippocampal ROI pair (ROIView3DTransform): random sub-cube
+# of 84-100% of the cached side resized to data.roi_size, left-right flip
+# (= channel swap), +/-10 degree rotation about each axis, and no photometric
+# change by default; photometric/TorchIO settings come from the champion of
+# the augmentation screen (scripts/run_roi3d.py).
+side_range: [0.84, 1.0]
+lr_swap_p: 0.5
+ap_flip_p: 0.0
+affine_degrees: 10.0
+blur_p: 0.0
+blur_sigma: [0.1, 1.5]
+noise_std: 0.0
+intensity_scale: [1.0, 1.0]
+torchio: []

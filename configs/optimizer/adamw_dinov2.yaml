@@ -1,0 +1,9 @@
+# @package optimizer
+# adamw.yaml with DINO/DINOv2's weight decay: 0.04 rising to 0.2 on a cosine
+# schedule, never applied to biases, norms or LayerScale.
+
+lr: 1.0e-4
+weight_decay: 0.04
+weight_decay_end: 0.2
+warmup_epochs: 10
+min_lr: 1.0e-6

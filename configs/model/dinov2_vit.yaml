@@ -1,0 +1,20 @@
+# @package model
+# Matches the EL7006 report's best DINOv2/ViT configuration (Tabla 1 / Anexo D):
+# canonical ViT-Small (depth 12, 6 heads, hidden_dim 384) with a large patch_size,
+# which they found necessary for the network to move away from a trivial
+# collapsed solution.
+backbone:
+  variant: vit_small
+  in_channels: 1
+  pretrained: false
+  image_size: 120
+  patch_size: 60
+  embed_dim: 384
+  depth: 12
+  num_heads: 6
+projector:
+  hidden_dim: 512
+  out_dim: 1024
+  num_layers: 2
+  use_bn: false
+  activation: gelu

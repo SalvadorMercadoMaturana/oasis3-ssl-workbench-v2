@@ -1,0 +1,16 @@
+# @package augmentation
+# Base for the augmentation screen: the SSL random crop plus plausible head-pose
+# changes only (left-right flip, +/-10 degree in-plane rotation, no
+# anterior-posterior flip). No torchvision blur/noise/intensity jitter here:
+# acquisition artifacts come from the TorchIO specs in `torchio`, applied to
+# the full slice before cropping, e.g.
+#   augmentation.torchio=[{name:RandomMotion,p:0.5,degrees:5,translation:5}]
+image_size: [96, 96]
+crop_scale: [0.3, 1.0]
+horizontal_flip_p: 0.5
+vertical_flip_p: 0.0
+affine_degrees: 10.0
+blur_p: 0.0
+noise_std: 0.0
+intensity_scale: [1.0, 1.0]
+torchio: []

@@ -1,0 +1,18 @@
+# @package model
+# BYOL with a 3D ResNet-18 inflated from ImageNet weights (I3D-style), the 3D
+# counterpart of byol_resnet18.yaml. Two input channels: left hippocampus and
+# mirrored right hippocampus.
+backbone:
+  variant: resnet18_3d
+  in_channels: 2
+  pretrained: true
+projector:
+  hidden_dim: 512
+  out_dim: 256
+  num_layers: 2
+  use_bn: true
+  activation: relu
+predictor:
+  hidden_dim: 256
+  num_layers: 2
+  use_bn: true

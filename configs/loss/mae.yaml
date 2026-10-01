@@ -1,0 +1,5 @@
+# @package loss
+# SimMIM-style masked patch reconstruction (full-length ViT input, mask-token
+# replacement, single encoder pass) rather than MAE's asymmetric encoder/decoder.
+name: "mae"
+mask_ratio: 0.6
