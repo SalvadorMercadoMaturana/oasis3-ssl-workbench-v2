@@ -73,6 +73,9 @@ def main(argv: list[str] | None = None) -> int:
         torch.backends.cudnn.allow_tf32 = True
         torch.set_float32_matmul_precision("high")
         a = torch.randn(4096, 4096, device="cuda")
+        for _ in range(3):  # cuBLAS initialization and heuristics, outside the timing
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                a @ a
         torch.cuda.synchronize()
         start = time.perf_counter()
         for _ in range(10):

@@ -370,7 +370,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--accumulate", type=int, default=1)
     parser.add_argument("--precision", default="bf16-mixed")
-    parser.add_argument("--compile", choices=("on", "off"), default="on")
+    parser.add_argument("--compile", choices=("on", "off"), default="off")
     parser.add_argument("--workers", type=int, default=None,
                         help="DataLoader workers per job (default: CPUs / concurrent jobs)")
     parser.add_argument("--max-procs", type=int, default=None,

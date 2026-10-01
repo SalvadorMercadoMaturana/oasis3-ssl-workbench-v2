@@ -54,7 +54,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--accumulate", type=int, default=1, help="gradient accumulation steps")
     parser.add_argument("--precision", default="bf16-mixed",
                         help="Lightning precision (degrades to 16-mixed / 32-true when unsupported)")
-    parser.add_argument("--compile", choices=("on", "off"), default="on")
+    parser.add_argument("--compile", choices=("on", "off"), default="off",
+                        help="torch.compile the encoders (bench.py: slower at batch 16 of 32^3)")
     parser.add_argument("--compile-modes", default="default,reduce-overhead",
                         help="torch.compile modes tried in order before falling back to eager")
     parser.add_argument("--channels-last", choices=("on", "off"), default="on")

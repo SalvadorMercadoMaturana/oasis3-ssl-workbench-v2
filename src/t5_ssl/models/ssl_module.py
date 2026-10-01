@@ -255,13 +255,16 @@ class SSLLightningModule(L.LightningModule):
     def configure_optimizers(self) -> dict[str, Any]:
         """Configure AdamW optimizer with linear warmup + cosine decay scheduler."""
         groups = self.optimizer_param_groups()
-        fused = self.fused_optimizer and all(
+        # Lightning refuses gradient clipping with fused optimizers (DINOv2 clips at
+        # 3.0); those keep the multi-tensor `foreach` kernels instead.
+        clips = bool(self._trainer is not None and self._trainer.gradient_clip_val)
+        fused = self.fused_optimizer and not clips and all(
             p.is_cuda for group in groups for p in group["params"])
         optimizer = torch.optim.AdamW(
             groups,
             lr=self.lr,
             weight_decay=self.weight_decay,
-            **({"fused": True} if fused else {}),
+            **({"fused": True} if fused else {"foreach": True} if self.fused_optimizer else {}),
         )
 
         max_epochs = max(1, self.max_epochs)

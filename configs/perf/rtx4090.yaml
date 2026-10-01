@@ -9,7 +9,9 @@ enabled: true
 tf32: true                 # TF32 matmul + cuDNN
 matmul_precision: high     # torch.set_float32_matmul_precision
 cudnn_benchmark: true      # fixed 32^3 inputs: autotune conv algorithms once
-compile: true              # torch.compile the encoders ...
+# torch.compile the encoders with the mode chain below (opt-in: on the RTX 5090
+# bench, 100 steps at batch 16 of 32^3, it was 2.6-2.8x slower than eager).
+compile: false
 compile_modes: [default, reduce-overhead]   # ... first mode that works, else eager
 channels_last: true        # channels_last_3d weights/inputs (CNN encoders only)
 fused_optimizer: true      # AdamW(fused=True)
