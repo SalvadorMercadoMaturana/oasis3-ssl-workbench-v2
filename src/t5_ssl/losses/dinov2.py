@@ -157,12 +157,15 @@ class DINOv2Loss(nn.Module):
         with torch.no_grad():
             probs = torch.cat(teacher_probs)
             entropy = -(probs * probs.clamp_min(1e-12).log()).sum(-1).mean()
-            unique = probs.argmax(-1).unique().numel() / probs.shape[0]
+            # Distinct argmax prototypes without a host sync (unique() needs one).
+            seen = torch.zeros(probs.shape[-1], device=probs.device)
+            seen.index_fill_(0, probs.argmax(-1), 1.0)
+            unique = seen.sum() / probs.shape[0]
         metrics = {
             "dino": dino.detach(), "ibot": ibot.detach(), "koleo": spread.detach(),
             # Collapse monitors (DINO paper, Fig. 7): entropy ~ ln(K) is uniform collapse.
             "teacher_entropy": entropy, "dino_kl": dino.detach() - entropy,
             "teacher_entropy_frac": entropy / math.log(self.out_dim),
-            "teacher_unique_frac": torch.tensor(unique, device=dino.device),
+            "teacher_unique_frac": unique,
         }
         return total, metrics

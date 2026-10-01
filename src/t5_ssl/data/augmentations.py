@@ -39,14 +39,19 @@ def build_torchio_transform(specs: Sequence[dict[str, Any]] | None, spatial_dims
                              **{k: _tupleize(v) for k, v in kwargs.items()})
         return getattr(tio, name)(**{k: _tupleize(v) for k, v in kwargs.items()})
 
-    compose = tio.Compose([build(spec) for spec in specs])
+    return _TorchIOApply(tio.Compose([build(spec) for spec in specs]), spatial_dims)
 
-    def apply(image: torch.Tensor) -> torch.Tensor:
-        if spatial_dims == 3:
-            return compose(image)
-        return compose(image.unsqueeze(-1)).squeeze(-1)
 
-    return apply
+class _TorchIOApply:
+    """Picklable wrapper (DataLoader workers started with spawn pickle the transform)."""
+
+    def __init__(self, compose: Any, spatial_dims: int) -> None:
+        self.compose, self.spatial_dims = compose, spatial_dims
+
+    def __call__(self, image: torch.Tensor) -> torch.Tensor:
+        if self.spatial_dims == 3:
+            return self.compose(image)
+        return self.compose(image.unsqueeze(-1)).squeeze(-1)
 
 
 class SSLViewTransform:

@@ -1,0 +1,16 @@
+# @package augmentation
+# The 3D campaigns' champion views as a standalone group: roi3d.yaml plus the
+# screen-2 champion "bias" (TorchIO RandomBiasField, order 2) at the strength
+# recalibrated in 3D (campaign_roi3d/calibration_s32.json, RMSE 0.080). It is
+# exactly what scripts/run_roi3d.py aug3d_overrides("bias") composes, so
+# train.py / run_all.py reproduce campaign_ssl3d(_v2) without the calibration
+# JSON. BYOL's fix: augmentation.rotation_padding=border.
+defaults:
+  - roi3d
+  - _self_
+
+torchio:
+  - name: RandomBiasField
+    coefficients: 0.18391731957276947
+    order: 2
+    p: 1.0

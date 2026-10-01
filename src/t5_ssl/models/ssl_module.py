@@ -52,7 +52,16 @@ class SSLLightningModule(L.LightningModule):
         Minimum learning rate floor at the end of cosine annealing.
         Default: ``1e-6``.
 
+    Runtime switches (class attributes, off by default; ``t5_ssl.utils.runtime``
+    turns them on for GPU profiles such as ``perf=rtx4090``):
+    ``fused_optimizer`` builds AdamW with ``fused=True`` when every parameter is
+    on CUDA, and ``input_memory_format`` (e.g. ``torch.channels_last_3d``) is
+    applied to the 4D/5D image tensors of every batch after the device transfer.
+
     """
+
+    fused_optimizer: bool = False
+    input_memory_format: torch.memory_format | None = None
 
     def __init__(
         self,
@@ -194,12 +203,65 @@ class SSLLightningModule(L.LightningModule):
         """AdamW parameter groups; a single group with ``weight_decay`` by default."""
         return [{"params": self.trainable_parameters(), "weight_decay": self.weight_decay}]
 
+    def on_after_batch_transfer(self, batch: Any, dataloader_idx: int) -> Any:
+        """Put the image views in ``input_memory_format`` (no-op by default)."""
+        memory_format = self.input_memory_format
+        if memory_format is None or not isinstance(batch, dict) or "image" not in batch:
+            return batch
+
+        def convert(image: Any) -> Any:
+            if isinstance(image, torch.Tensor) and image.ndim in (4, 5):
+                fmt = memory_format
+                if image.ndim == 5 and fmt is torch.channels_last:
+                    fmt = torch.channels_last_3d
+                elif image.ndim == 4 and fmt is torch.channels_last_3d:
+                    fmt = torch.channels_last
+                return image.contiguous(memory_format=fmt)
+            if isinstance(image, list | tuple):
+                return type(image)(convert(view) for view in image)
+            return image
+
+        batch["image"] = convert(batch["image"])
+        return batch
+
+    def _optimizer_stepped(self) -> bool:
+        """Return True once per optimizer step, False on gradient-accumulation-only batches.
+
+        EMA targets/teachers follow the online weights only when they changed.
+        """
+        step = int(self.global_step)
+        if step == getattr(self, "_last_ema_step", 0):
+            return False
+        self._last_ema_step = step
+        return True
+
+    @staticmethod
+    @torch.no_grad()
+    def _ema_update(pairs: list[tuple[nn.Module, nn.Module]], momentum: float) -> None:
+        """``target = momentum * target + (1 - momentum) * online`` over all pairs, fused."""
+        sources: list[torch.Tensor] = []
+        targets: list[torch.Tensor] = []
+        for online, target in pairs:
+            online_params, target_params = list(online.parameters()), list(target.parameters())
+            if len(online_params) != len(target_params):
+                raise RuntimeError("EMA pair with different parameter lists")
+            sources += online_params
+            targets += target_params
+        torch._foreach_lerp_(targets, sources, 1 - momentum)
+        for online, target in pairs:
+            for source, destination in zip(online.buffers(), target.buffers(), strict=True):
+                destination.copy_(source)
+
     def configure_optimizers(self) -> dict[str, Any]:
         """Configure AdamW optimizer with linear warmup + cosine decay scheduler."""
+        groups = self.optimizer_param_groups()
+        fused = self.fused_optimizer and all(
+            p.is_cuda for group in groups for p in group["params"])
         optimizer = torch.optim.AdamW(
-            self.optimizer_param_groups(),
+            groups,
             lr=self.lr,
             weight_decay=self.weight_decay,
+            **({"fused": True} if fused else {}),
         )
 
         max_epochs = max(1, self.max_epochs)

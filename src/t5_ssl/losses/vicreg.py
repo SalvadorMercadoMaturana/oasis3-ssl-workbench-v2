@@ -114,6 +114,16 @@ class VICRegLoss(BaseSSLLoss):
             ``(total_loss, metrics_dict)``
 
         """
+        # Under bf16 autocast the covariance matmul would run in bf16; the loss is
+        # tiny next to the encoder, so always evaluate it in float32.
+        with torch.autocast(device_type=z1.device.type, enabled=False):
+            z1, z2 = z1.float(), z2.float()
+            queue = queue.float() if queue is not None else None
+            return self._forward_fp32(z1, z2, queue)
+
+    def _forward_fp32(
+        self, z1: torch.Tensor, z2: torch.Tensor, queue: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         # 1. Invariance loss
         sim_loss = self._invariance_loss(z1, z2)
 

@@ -168,6 +168,13 @@ class ROIView3DTransform:
     Mirrors ``SSLViewTransform``: TorchIO artifacts on the full cached cube,
     then a random sub-cube resized to ``size``, flips, rotation about the three
     axes, blur, intensity scale and Gaussian noise.
+
+    ``rotation_padding`` is ``grid_sample``'s ``padding_mode`` for the voxels
+    the rotation brings in from outside the view. ``"zeros"`` (the default and
+    every campaign up to 2026-10-01) fills the corners with black wedges whose
+    shape depends only on the angles; BYOL's trained encoder collapsed onto
+    that subject-independent cue (campaign_ssl3d_v2/byol_sensitivity.json).
+    ``"border"`` repeats the edge voxels and ``"reflection"`` mirrors them.
     """
 
     def __init__(self, size: int = 32, side_range: tuple[float, float] = (0.84, 1.0),
@@ -175,8 +182,12 @@ class ROIView3DTransform:
                  blur_p: float = 0.0, blur_sigma: tuple[float, float] = (0.1, 1.5),
                  noise_std: float = 0.0, intensity_scale: tuple[float, float] = (1.0, 1.0),
                  torchio_transforms: list[dict] | None = None, n_local_crops: int = 0,
-                 local_size: int = 16, local_side_range: tuple[float, float] = (0.4, 0.6)) -> None:
+                 local_size: int = 16, local_side_range: tuple[float, float] = (0.4, 0.6),
+                 rotation_padding: str = "zeros") -> None:
+        if rotation_padding not in ("zeros", "border", "reflection"):
+            raise ValueError("rotation_padding must be 'zeros', 'border' or 'reflection'")
         self.size, self.side_range = size, side_range
+        self.rotation_padding = rotation_padding
         # DINOv2 multi-crop: extra smaller views, like DINOv2ViewTransform in 2D.
         self.n_local_crops, self.local_size = n_local_crops, local_size
         self.local_side_range = local_side_range
@@ -204,8 +215,8 @@ class ROIView3DTransform:
             theta = torch.zeros(1, 3, 4)
             theta[0, :, :3] = _rotation_matrix(self.degrees)
             grid = F.affine_grid(theta, [1, *view.shape], align_corners=False)
-            view = F.grid_sample(view[None], grid, mode="bilinear", padding_mode="zeros",
-                                 align_corners=False)[0]
+            view = F.grid_sample(view[None], grid, mode="bilinear",
+                                 padding_mode=self.rotation_padding, align_corners=False)[0]
         return self._photometric(view)
 
     def photometric_only(self, cube: torch.Tensor) -> torch.Tensor:
@@ -258,7 +269,8 @@ def build_roi3d_transforms(cfg: Any) -> tuple[ROIView3DTransform, ROIEvalViews3D
         torchio_transforms=(OmegaConf.to_container(aug.torchio, resolve=True)
                             if aug.get("torchio") else None),
         n_local_crops=aug.get("n_local_crops", 0), local_size=aug.get("local_size", 16),
-        local_side_range=tuple(aug.get("local_side_range", (0.4, 0.6))))
+        local_side_range=tuple(aug.get("local_side_range", (0.4, 0.6))),
+        rotation_padding=str(aug.get("rotation_padding", "zeros")))
     return train, ROIEvalViews3D(size)
 
 
@@ -296,8 +308,10 @@ class ROI3DDataModule(L.LightningDataModule):
     def __init__(self, *, csv_path: str, cache_path: str, manifest_path: str,
                  batch_size: int = 16, num_workers: int = 0, pin_memory: bool = False,
                  one_session_per_subject_train: bool = True, seed: int = 42,
-                 train_transform: Any = None, eval_transform: Any = None) -> None:
+                 train_transform: Any = None, eval_transform: Any = None,
+                 prefetch_factor: int | None = None) -> None:
         super().__init__()
+        self.prefetch_factor = prefetch_factor
         self.csv_path, self.cache_path, self.manifest_path = csv_path, cache_path, manifest_path
         self.batch_size, self.num_workers, self.pin_memory = batch_size, num_workers, pin_memory
         self.one_session_per_subject_train, self.seed = one_session_per_subject_train, seed
@@ -337,9 +351,11 @@ class ROI3DDataModule(L.LightningDataModule):
     def _loader(self, dataset: ROI3DDataset | None, shuffle: bool) -> DataLoader:
         if dataset is None:
             raise RuntimeError("Call setup() before requesting a dataloader")
+        extra = ({"prefetch_factor": self.prefetch_factor}
+                 if self.num_workers > 0 and self.prefetch_factor else {})
         return DataLoader(dataset, batch_size=self.batch_size, shuffle=shuffle,
                           num_workers=self.num_workers, pin_memory=self.pin_memory,
-                          persistent_workers=self.num_workers > 0)
+                          persistent_workers=self.num_workers > 0, **extra)
 
     def train_dataloader(self) -> DataLoader:
         return self._loader(self.train_dataset, True)

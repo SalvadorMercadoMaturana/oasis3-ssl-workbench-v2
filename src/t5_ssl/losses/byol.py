@@ -15,10 +15,11 @@ class BYOLLoss(nn.Module):
         target_1: torch.Tensor, target_2: torch.Tensor,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """Compare opposite views in both directions; targets never receive gradients."""
-        p1 = F.normalize(prediction_1, dim=-1)
-        p2 = F.normalize(prediction_2, dim=-1)
-        t1 = F.normalize(target_1.detach(), dim=-1)
-        t2 = F.normalize(target_2.detach(), dim=-1)
+        # float32 even under bf16 autocast: the cosines are the whole signal.
+        p1 = F.normalize(prediction_1.float(), dim=-1)
+        p2 = F.normalize(prediction_2.float(), dim=-1)
+        t1 = F.normalize(target_1.detach().float(), dim=-1)
+        t2 = F.normalize(target_2.detach().float(), dim=-1)
         loss_12 = 2 - 2 * (p1 * t2).sum(dim=-1).mean()
         loss_21 = 2 - 2 * (p2 * t1).sum(dim=-1).mean()
         total = (loss_12 + loss_21) / 2

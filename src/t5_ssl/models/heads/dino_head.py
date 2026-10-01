@@ -72,8 +72,13 @@ class DINOHead(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Return cosine scores ``(N, out_dim)`` of ``(N, in_dim)`` tokens."""
-        x = F.normalize(self.mlp(x), dim=-1)
-        return F.linear(x, F.normalize(self.prototypes, dim=-1))
+        x = self.mlp(x)
+        # The scores are divided by a teacher temperature as low as 0.01: in bf16
+        # (8-bit mantissa) a cosine is off by up to ~0.004, i.e. 0.4 logits, so
+        # the bottleneck and prototype scores always run in float32.
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            x = F.normalize(x.float(), dim=-1)
+            return F.linear(x, F.normalize(self.prototypes.float(), dim=-1))
 
     def last_layer_parameters(self) -> list[nn.Parameter]:
         """Prototype weights, frozen during the first epoch(s) as in DINO."""

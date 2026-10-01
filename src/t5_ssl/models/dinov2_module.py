@@ -168,17 +168,11 @@ class DINOv2LightningModule(SSLLightningModule):
     @torch.no_grad()
     def on_train_batch_end(self, outputs: Any, batch: Any, batch_idx: int) -> None:
         """Track the student after the optimizer step with cosine EMA momentum."""
+        if not self._optimizer_stepped():  # gradient accumulation: no step, no EMA
+            return
         total_steps = max(1, self.trainer.estimated_stepping_batches)
         progress = min(1.0, self.global_step / total_steps)
         momentum = 1 - (1 - self.ema_base) * (math.cos(math.pi * progress) + 1) / 2
-        for student, teacher in (
-            (self.backbone, self.teacher_backbone),
-            (self.projector, self.teacher_projector),
-            (self.patch_head, self.teacher_patch_head),
-        ):
-            for source, destination in zip(
-                student.parameters(), teacher.parameters(), strict=True
-            ):
-                destination.lerp_(source, 1 - momentum)
-            for source, destination in zip(student.buffers(), teacher.buffers(), strict=True):
-                destination.copy_(source)
+        self._ema_update([(self.backbone, self.teacher_backbone),
+                          (self.projector, self.teacher_projector),
+                          (self.patch_head, self.teacher_patch_head)], momentum)

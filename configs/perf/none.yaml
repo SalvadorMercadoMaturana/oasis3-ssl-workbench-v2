@@ -1,0 +1,5 @@
+# @package perf
+# No runtime changes (the behavior of every config without a perf node).
+name: none
+enabled: false
+monitor: false

@@ -1,0 +1,16 @@
+# @package perf
+# Fast-GPU runtime for an RTX 4090 (24 GB, Ada, native bf16), opt-in with
+# `+perf=rtx4090` (train.py / run_all.py add it). Pair it with
+# trainer.precision=bf16-mixed and DataLoader workers (data.num_workers,
+# data.pin_memory, data.prefetch_factor). Every knob is a no-op without CUDA;
+# see src/t5_ssl/utils/runtime.py.
+name: rtx4090
+enabled: true
+tf32: true                 # TF32 matmul + cuDNN
+matmul_precision: high     # torch.set_float32_matmul_precision
+cudnn_benchmark: true      # fixed 32^3 inputs: autotune conv algorithms once
+compile: true              # torch.compile the encoders ...
+compile_modes: [default, reduce-overhead]   # ... first mode that works, else eager
+channels_last: true        # channels_last_3d weights/inputs (CNN encoders only)
+fused_optimizer: true      # AdamW(fused=True)
+monitor: true              # perf.json: s/epoch, images/s, peak VRAM

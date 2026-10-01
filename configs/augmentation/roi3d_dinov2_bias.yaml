@@ -1,0 +1,12 @@
+# @package augmentation
+# DINOv2's geometry-free views (roi3d_dinov2.yaml) with the campaign champion
+# bias field, as campaign_ssl3d_v2 composes them (see roi3d_bias.yaml).
+defaults:
+  - roi3d_dinov2
+  - _self_
+
+torchio:
+  - name: RandomBiasField
+    coefficients: 0.18391731957276947
+    order: 2
+    p: 1.0

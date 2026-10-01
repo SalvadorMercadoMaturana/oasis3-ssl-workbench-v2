@@ -47,6 +47,7 @@ from t5_ssl.models.mae_module import MAELightningModule, MAEVICRegLightningModul
 from t5_ssl.models.ssl_module import SSLLightningModule
 from t5_ssl.models.vicreg_module import VICRegLightningModule
 from t5_ssl.utils.logging import get_logger
+from t5_ssl.utils.runtime import PerfMonitor, apply_runtime, perf_settings, resolve_precision
 
 logger = get_logger(__name__)
 
@@ -223,7 +224,7 @@ def build_datamodule(cfg: DictConfig, train_transform: Any,
             num_workers=data_cfg.get("num_workers", 0), pin_memory=data_cfg.get("pin_memory", False),
             one_session_per_subject_train=data_cfg.get("one_session_per_subject_train", True),
             seed=data_cfg.get("seed", 42), train_transform=train_transform,
-            eval_transform=eval_transform)
+            eval_transform=eval_transform, prefetch_factor=data_cfg.get("prefetch_factor", None))
     common = dict(
         csv_path=data_cfg.get("csv_path", DEFAULT_CSV),
         batch_size=data_cfg.get("batch_size", 16),
@@ -325,16 +326,18 @@ def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> d
     # 1. Setup unified experiment directory: logs/[loss-params-date-time]/
     # Runs started in the same second get the same timestamped name; claim the
     # directory atomically and suffix it instead of mixing two runs' files.
-    exp_name = get_experiment_dir_name(cfg)
-    Path("logs").mkdir(exist_ok=True)
-    exp_dir = Path("logs") / exp_name
+    # `log_root` / `run_name` (optional) give orchestrated runs fixed locations.
+    exp_name = cfg.get("run_name") or get_experiment_dir_name(cfg)
+    log_root = Path(cfg.get("log_root") or "logs")
+    log_root.mkdir(parents=True, exist_ok=True)
+    exp_dir = log_root / exp_name
     suffix = 1
     while True:
         try:
             exp_dir.mkdir()
             break
         except FileExistsError:
-            exp_dir = Path("logs") / f"{exp_name}-{suffix}"
+            exp_dir = log_root / f"{exp_name}-{suffix}"
             suffix += 1
 
     # Save resolved config into experiment directory
@@ -458,6 +461,7 @@ def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> d
         model = BYOLLightningModule(
             **module_kwargs, predictor=predictor,
             ema_base=cfg.loss.get("ema_base", 0.996),
+            predictor_lr_mult=opt_cfg.get("predictor_lr_mult", 1.0),
         )
     elif loss_name == "dinov2":
         # Separate (untied) iBOT head for the masked patch tokens, as in DINOv2.
@@ -546,15 +550,19 @@ def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> d
             save_weights_only=weights_only,
         ))
         # Periodic snapshots so any pre-collapse epoch can be recovered even
-        # when it is not the val/loss optimum above.
+        # when it is not the val/loss optimum above. `checkpoint_keep_last: k`
+        # rotates them (only the k most recent stay on disk); unset keeps all.
+        keep_last = trainer_cfg.get("checkpoint_keep_last", None)
+        rotation = ({"save_top_k": int(keep_last), "monitor": "step", "mode": "max"}
+                    if keep_last else {"save_top_k": -1})
         callbacks.append(ModelCheckpoint(
             dirpath=exp_dir / "checkpoints",
             filename="ckpt-epoch={epoch:02d}",
             auto_insert_metric_name=False,
             every_n_epochs=int(trainer_cfg.get("checkpoint_every_n_epochs", 5)),
-            save_top_k=-1,
             save_last=True,
             save_weights_only=weights_only,
+            **rotation,
         ))
 
     # 7. Trainer with adaptive log interval
@@ -584,12 +592,32 @@ def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> d
     default_grad_clip = 3.0 if loss_name == "dinov2" else None
     gradient_clip_val = trainer_cfg.get("gradient_clip_val", default_grad_clip)
 
+    # Optional runtime profile (configs/perf, e.g. `+perf=rtx4090`): TF32, fused
+    # AdamW, channels_last, torch.compile with fallback, throughput monitor.
+    # Without a perf node nothing changes; precision only degrades when the
+    # device cannot run what was asked (bf16 without CUDA/Ampere).
+    precision = resolve_precision(trainer_cfg.get("precision", "32-true"),
+                                  trainer_cfg.get("accelerator", "auto"))
+    example = None
+    if str(cfg.data.get("source", "")) == "roi3d":
+        import torch
+        side = int(cfg.data.roi_size)
+        example = torch.rand(int(cfg.data.get("batch_size", 16)),
+                             int(cfg.model.backbone.get("in_channels", 1)), side, side, side)
+    runtime = apply_runtime(cfg, model, precision, example)
+    if perf_settings(cfg)["monitor"]:
+        callbacks.append(PerfMonitor(exp_dir / "perf.json", extra={
+            **runtime, "batch_size": int(cfg.data.get("batch_size", 16)),
+            "accumulate_grad_batches": int(trainer_cfg.get("accumulate_grad_batches", 1)),
+            "num_workers": int(cfg.data.get("num_workers", 0))}))
+
     trainer = L.Trainer(
         max_epochs=max_epochs,
         max_steps=trainer_cfg.get("max_steps", -1),
         accelerator=trainer_cfg.get("accelerator", "auto"),
         devices=trainer_cfg.get("devices", "auto"),
-        precision=trainer_cfg.get("precision", "32-true"),
+        precision=precision,
+        accumulate_grad_batches=int(trainer_cfg.get("accumulate_grad_batches", 1)),
         log_every_n_steps=effective_log_steps,
         deterministic=trainer_cfg.get("deterministic", True),
         enable_checkpointing=trainer_cfg.get("enable_checkpointing", True),
@@ -617,6 +645,7 @@ def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> d
         "model": model,
         "datamodule": dm,
         "exp_dir": exp_dir,
+        "runtime": runtime,
     }
 
 
