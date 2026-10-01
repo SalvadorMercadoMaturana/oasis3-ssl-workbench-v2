@@ -103,7 +103,9 @@ def create(args: argparse.Namespace) -> None:
       podFindAndDeployOnDemand(input: $input) {
         id costPerHr machineId machine { gpuDisplayName } } }"""
     tried = []
-    for gpu, cloud in PREFERENCE:
+    preference = [(g, c) for g, c in PREFERENCE
+                  if not args.only or any(o.lower() in g.lower() for o in args.only.split(","))]
+    for gpu, cloud in preference:
         price = (table.get(gpu) or {}).get(cloud)
         if not price or price > args.max_price:
             tried.append(f"{gpu}/{cloud}: price {price} > {args.max_price} or unlisted")
@@ -115,7 +117,8 @@ def create(args: argparse.Namespace) -> None:
                        "volumeMountPath": "/workspace", "ports": "22/tcp,8888/http",
                        "minVcpuCount": vcpu, "minMemoryInGb": args.min_ram,
                        "supportPublicIp": True, "startSsh": True,
-                       "allowedCudaVersions": ["12.4", "12.5", "12.6", "12.7", "12.8", "12.9"],
+                       "allowedCudaVersions": ["12.4", "12.5", "12.6", "12.7", "12.8", "12.9",
+                                               "13.0", "13.1", "13.2"],
                        "env": [{"key": "PUBLIC_KEY", "value": pubkey}]}
             try:
                 pod = gql(mutation, {"input": payload})["podFindAndDeployOnDemand"]
@@ -210,6 +213,7 @@ def main() -> None:
     c.add_argument("--disk", type=int, default=40, help="container disk (GB)")
     c.add_argument("--volume", type=int, default=20, help="/workspace volume (GB)")
     c.add_argument("--min-ram", type=int, default=30)
+    c.add_argument("--only", default=None, help="comma list of GPU name fragments, e.g. 5090,4090")
     w = sub.add_parser("wait")
     w.add_argument("--timeout", type=int, default=900)
     sub.add_parser("status")
