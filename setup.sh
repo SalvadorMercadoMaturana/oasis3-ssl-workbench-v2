@@ -24,7 +24,9 @@ if not torch.cuda.is_available():
     print(0)
 else:
     major, minor = torch.cuda.get_device_capability(0)
-    print(0 if f"sm_{major}{minor}" in torch.cuda.get_arch_list() else 1)
+    # cubins run on later minor versions of the same major (sm_86 on an sm_89 4090)
+    archs = [a[3:] for a in torch.cuda.get_arch_list() if a.startswith("sm_")]
+    print(0 if any(int(a[:-1]) == major and int(a[-1]) <= minor for a in archs) else 1)
 PY
 )
 if [[ "$NEED_TORCH" == "1" ]]; then
