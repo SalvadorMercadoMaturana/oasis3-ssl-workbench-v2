@@ -3,7 +3,7 @@
 Métricas agregadas (media de AUROC, F1-macro y AUPR del probe congelado, protocolo
 de `campaign_ssl3d_v2`: CV 5×5 en 357 sujetos AD/HC de train+val y probe en 56 de test).
 Δ con bootstrap pareado sobre sujetos (`scripts/compare_runs.py`). Las salidas
-completas quedan en `runs/pod/` (gitignorado).
+completas y las figuras quedan en `campaign_ssl3d_runpod/` (gitignorado; `RESULTADOS.md` y `figures/`).
 
 ## Hardware y costo
 
