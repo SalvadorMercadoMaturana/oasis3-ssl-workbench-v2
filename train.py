@@ -117,7 +117,7 @@ def build_overrides(args: argparse.Namespace, batch_size: int, accumulate: int,
     tag_root = Path(args.out_root) / ("bench" if bench else args.tag)
     name = recipes.run_name(args.model, args.variant, args.seed, args.aug_recipe, args.roi)
     if args.init_only:
-        name = f"{args.model}_init_s{args.seed}"
+        name = f"{args.model}_init" + (f"__roi{args.roi}" if args.roi else "") + f"_s{args.seed}"
     return recipes.overrides(
         args.model, args.variant, epochs=args.epochs, seed=args.seed, fast=fast,
         checkpoints=not (args.no_checkpoints or bench or args.init_only),
