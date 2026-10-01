@@ -156,3 +156,18 @@ OMP_NUM_THREADS=2 .venv/bin/python scripts/finalize_mri_fullview20.py
 ```
 
 La campaña se lanzó con máximo 20 épocas. DINOv2 completó 20 antes de que se pidiera detener los restantes a 15; VICReg completó 15 y BYOL se detuvo después de 12 por una segunda petición. El intento de reanudar BYOL no terminó ninguna época adicional y no contribuye a sus resultados. El [manifiesto de ejecución](campaign_mri_fullview20/experiment_manifest.json) fija los directorios y las épocas efectivas; el script de lanzamiento reconoce las corridas detenidas y no las reinicia al repetirse. El finalizador verifica las épocas efectivas y la identidad de sujetos y registros frente a `campaign_full50`, selecciona el checkpoint por `val/loss` SSL, evalúa una vez el test AD/HC con un probe congelado y genera las mismas cinco figuras de la campaña anterior, más una comparación visual de augmentations. Los resultados quedan en `campaign_mri_fullview20/`. Una diferencia respecto a la campaña de 50 épocas no aísla el efecto de la augmentation porque también cambia la duración del entrenamiento.
+
+## Entrenamiento rápido en GPU (RTX 4090 / RunPod)
+
+Entrypoints opcionales que no cambian las configs ni `t5-ssl-train`:
+
+| Archivo | Para qué |
+|---|---|
+| `train.py --model byol\|vicreg\|dinov2 [--variant ...]` | Un modelo, protocolo de `campaign_ssl3d_v2` (split, vistas, probes) con el runtime rápido: bf16, TF32, AdamW fused, `channels_last_3d`, `torch.compile` con fallback, workers persistentes; reintento ante OOM con batch/2 y acumulación ×2. |
+| `run_all.py --parallel mps\|all-at-once\|sequential` | Varios trabajos en una GPU (procesos `spawn`, MPS si está disponible), logs por trabajo, `REPORT.md` con img/s, s/época, VRAM pico y probes. `--preset byol-screen` = experimentos de BYOL. |
+| `bench.py` | Throughput real de 100 pasos por modelo y config (baseline vs rápido vs compile). |
+| `preflight.py` | GPU, VRAM, versiones, datos, compile. |
+| `setup.sh`, `bootstrap_runpod.sh`, `cloud/env.sh`, `Dockerfile` | Instalación sobre CUDA 12 + PyTorch ≥ 2.4 y punto de entrada único en el pod. |
+| `cloud/runpod_pod.py` | Crea (≤ `--max-price` USD/h), consulta, mide el costo y termina el pod. |
+
+El perfil de runtime es `configs/perf/rtx4090.yaml` (`+perf=rtx4090`); sin GPU todo degrada a fp32/eager. Variantes de BYOL (`t5_ssl/recipes.py`): `border` (rotación con relleno de borde), `border_wide`, `border_gn`, `border_predlr` y `border_h3` (las tres). Salidas en `runs/` (gitignorado).
