@@ -206,6 +206,40 @@ def recipe_tables(run_dir: Path, groups: dict, n_select: int) -> None:
     print(f"Wrote {run_dir / 'TABLA_RECETAS.md'} and {run_dir / 'TABLA_GANADORAS.md'}")
 
 
+def recipe_figure(run_dir: Path, groups: dict, out: Path) -> None:
+    """CV AUROC vs Var_subject/Var_aug per recipe and model (seed 1), discards hollow."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    colors = {"vicreg": "#2a78d6", "byol": "#eb6834", "dinov2": "#1baf7a"}
+    ranked = rank_recipes(groups)
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5.2), sharey=True, facecolor="#fcfcfb")
+    for ax, model in zip(axes, ("vicreg", "byol", "dinov2"), strict=True):
+        ax.set_facecolor("#fcfcfb")
+        for recipe, doc, ok, _ in ranked.get(model, []):
+            ratio = identity(doc).get("between_over_within", float("nan"))
+            ax.scatter(ratio, doc["cv_auc"], s=46, zorder=3,
+                       facecolor=colors[model] if ok else "none", edgecolor=colors[model],
+                       linewidth=1.4)
+            ax.annotate(recipe, (ratio, doc["cv_auc"]), fontsize=7, color="#52514e",
+                        xytext=(4, 3), textcoords="offset points")
+        ax.axvline(MIN_RATIO, color="#b3261e", linestyle=":", linewidth=1)
+        ax.set_xscale("log")
+        ax.set_xlabel("Var_sujeto / Var_aug con las vistas de la receta (log)")
+        ax.set_title(f"{LABEL[model]} (relleno = pasa, hueco = descartada)", fontsize=10)
+        ax.grid(color="#e1e0d9", linewidth=0.8)
+        for spine in ("top", "right"):
+            ax.spines[spine].set_visible(False)
+    axes[0].set_ylabel("AUROC de CV (semilla 1)")
+    fig.suptitle("Recetas de augmentation a 20 épocas: rendimiento del probe frente a la "
+                 "identidad retenida", fontsize=11)
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=160)
+    plt.close(fig)
+    print(f"Wrote {out}")
+
+
 def dropout_table(run_dir: Path, groups: dict) -> None:
     lines = ["# BYOL `border_wide` con dropout, 20 épocas (3 semillas)", "",
              "*Subida val* = pérdida de validación final − su mínimo (sobreajuste del objetivo); "
@@ -236,6 +270,7 @@ def main() -> None:
     parser.add_argument("--select", type=int, default=0)
     parser.add_argument("--top", type=int, default=3)
     parser.add_argument("--dropout", action="store_true")
+    parser.add_argument("--figure", default=None, help="also write the AUROC/identity figure")
     args = parser.parse_args()
     run_dir = Path(args.run_dir)
     groups = load(run_dir)
@@ -251,6 +286,8 @@ def main() -> None:
         print(" ".join(specs))
         return
     recipe_tables(run_dir, groups, args.top)
+    if args.figure:
+        recipe_figure(run_dir, groups, Path(args.figure))
 
 
 if __name__ == "__main__":
