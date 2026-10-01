@@ -31,11 +31,13 @@ ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT / "cloud" / "state" / "pod.json"
 API = "https://api.runpod.io/graphql"
 IMAGE = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
-# (gpu type id, cloud) in order of preference; prices are checked live.
+# (gpu type id, cloud) in order of preference; prices are checked live. The RTX
+# 5090 community pods (0.69 USD/h, 32 GB, ~20 vCPU) beat the 4090 for these
+# CPU-augmentation-bound runs, so they come first.
 PREFERENCE = [
+    ("NVIDIA GeForce RTX 5090", "COMMUNITY"),
     ("NVIDIA GeForce RTX 4090", "COMMUNITY"),
     ("NVIDIA GeForce RTX 4090", "SECURE"),
-    ("NVIDIA GeForce RTX 5090", "COMMUNITY"),
     ("NVIDIA RTX 6000 Ada Generation", "COMMUNITY"),
     ("NVIDIA L40", "COMMUNITY"),
     ("NVIDIA GeForce RTX 3090", "COMMUNITY"),

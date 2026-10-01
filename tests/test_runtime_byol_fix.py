@@ -248,3 +248,32 @@ def test_dropout_variants_compose():
     assert cfg.model.projector.hidden_dim == 4096
     assert cfg.augmentation.torchio[0].name == "OneOf"
     assert recipes.run_name("byol", "wide_dboth0.2", 3, "geo") == "byol_wide_dboth0.2__geo_s3"
+
+
+# ---------------------------------------------------------------- round 3: regions of interest
+def test_swap_hemispheres_swaps_each_pair():
+    from t5_ssl.data.roi3d import swap_hemispheres
+    two = torch.rand(2, 4, 4, 4)
+    assert torch.equal(swap_hemispheres(two), two.flip(0))
+    six = torch.arange(6.0).view(6, 1, 1, 1).expand(6, 2, 2, 2)
+    assert swap_hemispheres(six)[:, 0, 0, 0].tolist() == [1, 0, 3, 2, 5, 4]
+
+
+@pytest.mark.parametrize("roi", sorted(recipes.ROIS))
+@pytest.mark.parametrize("model", recipes.MODELS)
+def test_every_roi_composes(model, roi):
+    cfg = compose(recipes.overrides(model, aug_recipe="noise", roi=roi, epochs=50))
+    spec = recipes.ROIS[roi]
+    assert cfg.data.roi_size == spec["size"] and cfg.data.channels == spec["channels"]
+    assert cfg.model.backbone.in_channels == spec["channels"]
+    assert cfg.data.cache_path.endswith(f"{spec['cache']}.npy")
+    side = cfg.augmentation.side_range[0] * round(1.2 * spec["size"])
+    assert round(side) == spec["size"]  # photometric recipes see exactly the probe cube
+
+
+def test_vit3d_takes_larger_and_multichannel_rois():
+    from t5_ssl.models.backbones.vit3d import ViT3DBackbone
+    vit = ViT3DBackbone(in_channels=6, image_size=48, patch_size=8, embed_dim=48, depth=1,
+                        num_heads=3)
+    cls, patches = vit.forward_tokens(torch.rand(2, 6, 48, 48, 48))
+    assert cls.shape == (2, 48) and patches.shape == (2, 216, 48)

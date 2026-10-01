@@ -77,6 +77,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="save encoder state_dicts to encoders.pt (for analyses)")
     parser.add_argument("--aug-recipe", default=None, choices=sorted(recipes.AUG_RECIPES),
                         help="replace the views by a recipe of t5_ssl.recipes.AUG_RECIPES")
+    parser.add_argument("--roi", default=None, choices=sorted(recipes.ROIS),
+                        help="region of interest: 32 (default), 48, 64 or multi3")
     parser.add_argument("--identity", action="store_true",
                         help="identity/collapse metrics on the 142 held-out subjects")
     parser.add_argument("--init-only", action="store_true",
@@ -111,14 +113,15 @@ def build_overrides(args: argparse.Namespace, batch_size: int, accumulate: int,
         if fast:
             extra.append("perf.monitor=false")
     tag_root = Path(args.out_root) / ("bench" if bench else args.tag)
-    name = recipes.run_name(args.model, args.variant, args.seed, args.aug_recipe)
+    name = recipes.run_name(args.model, args.variant, args.seed, args.aug_recipe, args.roi)
     if args.init_only:
         name = f"{args.model}_init_s{args.seed}"
     return recipes.overrides(
         args.model, args.variant, epochs=args.epochs, seed=args.seed, fast=fast,
         checkpoints=not (args.no_checkpoints or bench or args.init_only),
         accelerator="cpu" if args.cpu else "auto", log_root=tag_root.as_posix(),
-        run_name=name, aug_recipe=args.aug_recipe, extra=extra + list(args.set))
+        run_name=name, aug_recipe=args.aug_recipe, roi=args.roi or "32",
+        extra=extra + list(args.set))
 
 
 def compose(overrides: list[str]) -> Any:
@@ -245,7 +248,7 @@ def identity_scores(encoder: Any, dm: Any, cfg: Any) -> dict[str, Any]:
     size = int(cfg.data.roi_size)
     clean = enc.embed(encoder, [ROIEval3D(size)(c) for c in cubes])
     reference = OmegaConf.create({"data": {"roi_size": size},
-                                  "augmentation": recipes.aug_spec("campaign_border")})
+                                  "augmentation": recipes.aug_spec("campaign_border", size)})
     out: dict[str, Any] = {"subjects": len(cubes)}
     for name, transform in (("own", build_roi3d_transforms(cfg)[0]),
                             ("reference", build_roi3d_transforms(reference)[0])):
@@ -373,7 +376,8 @@ def write_result(exp_dir: Path, args: argparse.Namespace, overrides: list[str],
                            "overrides": overrides, "runtime": runtime, "perf": perf,
                            "retries": attempts, "minutes": (time.time() - started) / 60,
                            "experiment_dir": exp_dir.as_posix(),
-                           "aug_recipe": getattr(args, "aug_recipe", None), "identity": identity}
+                           "aug_recipe": getattr(args, "aug_recipe", None),
+                           "roi": getattr(args, "roi", None) or "32", "identity": identity}
     if scored:
         main = scored.pop("main")
         doc.update(main)

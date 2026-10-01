@@ -176,16 +176,19 @@ def make_jobs(args: argparse.Namespace) -> list[dict[str, Any]]:
                    for m in args.models]
     pairs = [(m, v) for m, v, _ in triples]
     jobs = []
+    rois = args.rois or [None]
     for seed in args.seeds:  # seed-major: every model of seed 1 starts first
-        for model, variant, recipe in triples:
-            name = recipes.run_name(model, variant, seed, recipe)
+        for roi, (model, variant, recipe) in ((r, t) for r in rois for t in triples):
+            name = recipes.run_name(model, variant, seed, recipe, roi)
             argv = ["--model", model, "--variant", variant, "--seed", str(seed),
                     "--epochs", str(args.epochs), "--tag", args.tag,
                     "--out-root", args.out_root, "--workers", str(args.workers),
                     "--batch-size", str(args.batch_size), "--accumulate", str(args.accumulate),
                     "--compile", args.compile, "--precision", args.precision,
-                    *(["--aug-recipe", recipe] if recipe else []), *args.train_args]
+                    *(["--aug-recipe", recipe] if recipe else []),
+                    *(["--roi", roi] if roi else []), *args.train_args]
             jobs.append({"name": name, "model": model, "variant": variant, "recipe": recipe,
+                         "roi": roi,
                          "seed": seed, "argv": argv, "batch_size": args.batch_size,
                          "accumulate": args.accumulate})
     if args.init_controls:
@@ -281,7 +284,9 @@ def report(args: argparse.Namespace, jobs: list[dict[str, Any]], wall_seconds: f
         ref = (doc.get("identity") or {}).get("reference") or {}
         rows.append({
             "job": job["name"], "model": job["model"], "variant": job["variant"],
-            "recipe": job.get("recipe"), "seed": job["seed"], "status": "ok" if doc else "failed",
+            "recipe": ((job.get("recipe") or "") + (f" @roi{job['roi']}" if job.get("roi") else "")
+                       or None),
+            "seed": job["seed"], "status": "ok" if doc else "failed",
             "cv_auc": doc.get("cv_auc"), "test_auc": doc.get("test_auc"),
             "var_subject_over_aug": own.get("between_over_within"),
             "var_subject_over_aug_reference": ref.get("between_over_within"),
@@ -389,6 +394,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--aug-recipes", nargs="+", default=None,
                         choices=sorted(recipes.AUG_RECIPES),
                         help="one job per model x recipe (t5_ssl.recipes.AUG_RECIPES)")
+    parser.add_argument("--rois", nargs="+", default=None, choices=sorted(recipes.ROIS),
+                        help="repeat every job for these regions of interest (listed order)")
     parser.add_argument("--specs", nargs="+", default=None, metavar="MODEL:RECIPE",
                         help="explicit model:recipe jobs (recipe '-' = the model's own views)")
     parser.add_argument("--byol-variant", default="campaign")

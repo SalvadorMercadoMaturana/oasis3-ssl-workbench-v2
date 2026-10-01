@@ -132,6 +132,98 @@ def build_cache(cache_path: str | Path, *, csv_path: str, lmdb_path: str,
     return meta
 
 
+# Bilateral regions for multi-ROI caches: (left labels, right labels) of the
+# FreeSurfer aparc+aseg parcellation stored in the LMDB ``roi`` volumes.
+REGIONS: dict[str, tuple[tuple[int, ...], tuple[int, ...]]] = {
+    "hippocampus": ((17,), (53,)),
+    "amygdala": ((18,), (54,)),
+    "ventricle": ((4,), (43,)),                       # lateral ventricle
+    "entorhinal": ((1006,), (2006,)),
+    # posterior + isthmus cingulate and precuneus (posteromedial cortex)
+    "posteromedial": ((1023, 1010, 1025), (2023, 2010, 2025)),
+}
+
+
+def build_region_cache(cache_path: str | Path, *, csv_path: str, lmdb_path: str,
+                       manifest_path: str, size: int, regions: list[str]) -> dict[str, Any]:
+    """Like :func:`build_cache` for any list of bilateral ``REGIONS``.
+
+    Channels are ``[left, right mirrored]`` per region, in order (so a
+    left-right flip of the head swaps the channels of each pair). Each cube is
+    centered on the region's population-mean centroid over the training
+    sessions, shifted into the brain box shared by every session when it fits
+    and always into the volume (a 64-voxel ROI needs a 77-voxel cube, wider
+    than that box). Cubes are written to a memory-mapped ``.npy``.
+    """
+    selected, _ = select_rows(csv_path, manifest_path, False, 42, 0.7, 0.15)
+    rows = [row for split in ("train", "val", "test") for row in selected[split]]
+    extract = extract_size(size)
+    train_idx = {row["idx"] for row in selected["train"]}
+    env = lmdb.open(str(lmdb_path), readonly=True, lock=False, readahead=False)
+    sides = [(region, side, labels) for region in regions
+             for side, labels in zip(("left", "right"), REGIONS[region], strict=True)]
+    sums = {(r, s): np.zeros(3) for r, s, _ in sides}
+    counts = {(r, s): 0 for r, s, _ in sides}
+    low = high = None
+    shape = None
+    with env.begin() as txn:
+        for row in rows:
+            payload = _payload(txn, row["idx"])
+            if payload["original_code"] != row["session"]:
+                raise ValueError(f"LMDB/CSV mismatch at {row['idx']}")
+            volume = normalize_volume(np.asarray(payload["image"]))
+            shape = volume.shape
+            brain = np.argwhere(volume > BRAIN_THRESHOLD)
+            lo, hi = brain.min(axis=0), brain.max(axis=0)
+            low = lo if low is None else np.maximum(low, lo)
+            high = hi if high is None else np.minimum(high, hi)
+            if "roi" in payload and row["idx"] in train_idx:
+                roi = np.asarray(payload["roi"])
+                for region, side, labels in sides:
+                    voxels = np.argwhere(np.isin(roi, labels))
+                    if len(voxels):
+                        sums[(region, side)] += voxels.mean(axis=0)
+                        counts[(region, side)] += 1
+    assert shape is not None and low is not None and high is not None
+    centers = {key: sums[key] / max(1, counts[key]) for key in sums}
+
+    def start(center: float, axis: int) -> int:
+        first = _cube_start(center, extract, int(low[axis]), int(high[axis]))
+        return int(min(max(first, 0), shape[axis] - extract))
+
+    starts = {key: [start(centers[key][a], a) for a in range(3)] for key in centers}
+    cache_path = Path(cache_path).with_suffix(".npy")
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cubes = np.lib.format.open_memmap(cache_path, mode="w+", dtype=np.float16,
+                                      shape=(len(rows), len(sides), extract, extract, extract))
+    with env.begin() as txn:
+        for i, row in enumerate(rows):
+            volume = normalize_volume(np.asarray(_payload(txn, row["idx"])["image"]))
+            for channel, (region, side, _) in enumerate(sides):
+                o = starts[(region, side)]
+                cube = volume[o[0]:o[0] + extract, o[1]:o[1] + extract, o[2]:o[2] + extract]
+                if side == "right":
+                    cube = np.flip(cube, axis=LR_AXIS)
+                cubes[i, channel] = cube
+    cubes.flush()
+    meta = {"size": size, "extract": extract, "sessions": len(rows), "regions": regions,
+            "channels": [f"{region} {side}" + (" mirrored left-right" if side == "right" else "")
+                         for region, side, _ in sides],
+            "labels": {region: [list(v) for v in REGIONS[region]] for region in regions},
+            "centers_voxel": {f"{r}_{s}": centers[(r, s)].round(2).tolist() for r, s, _ in sides},
+            "centroid_sessions": {f"{r}_{s}": counts[(r, s)] for r, s, _ in sides},
+            "cube_starts": {f"{r}_{s}": starts[(r, s)] for r, s, _ in sides},
+            "shared_brain_box": [low.tolist(), high.tolist()],
+            "idx": [row["idx"] for row in rows]}
+    cache_path.with_suffix(".json").write_text(json.dumps(meta, indent=2) + "\n")
+    return meta
+
+
+def swap_hemispheres(view: torch.Tensor) -> torch.Tensor:
+    """Anatomical left-right flip: swap the [left, right mirrored] channels of every pair."""
+    return view.reshape(-1, 2, *view.shape[1:]).flip(1).reshape(view.shape)
+
+
 # ---------------------------------------------------------------- views
 def _rotation_matrix(degrees: float) -> torch.Tensor:
     angles = [math.radians(random.uniform(-degrees, degrees)) for _ in range(3)]
@@ -212,7 +304,7 @@ class ROIView3DTransform:
         view = F.interpolate(view[None], size=(size,) * 3, mode="trilinear",
                              align_corners=False)[0]
         if random.random() < self.lr_swap_p:  # anatomical left-right flip of the head
-            view = view.flip(0)
+            view = swap_hemispheres(view)
         if random.random() < self.ap_flip_p:
             view = view.flip(2)
         if self.degrees > 0:
@@ -258,7 +350,7 @@ class ROIEvalViews3D(ROIEval3D):
 
     def __call__(self, cube: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:  # type: ignore[override]
         first = super().__call__(cube)
-        return first, first.flip(0)
+        return first, swap_hemispheres(first)
 
 
 def build_roi3d_transforms(cfg: Any) -> tuple[ROIView3DTransform, ROIEvalViews3D]:

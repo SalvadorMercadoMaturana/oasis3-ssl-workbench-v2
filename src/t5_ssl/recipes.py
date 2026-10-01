@@ -69,9 +69,29 @@ VARIANTS: dict[str, dict[str, list[str]]] = {
     "dinov2": {"campaign": []},
 }
 
+# ---------------------------------------------------------------- regions of interest
+# ROI configurations: cube side (voxels of 2 mm) and cache. "multi3" stacks three
+# bilateral 32-voxel regions as 6 channels: hippocampus, lateral ventricle and
+# posteromedial cortex (posterior/isthmus cingulate + precuneus); see
+# t5_ssl.data.roi3d.REGIONS and scripts/build_roi_caches.py.
+ROIS: dict[str, dict] = {
+    "32": {"size": 32, "cache": "hippo_s32", "channels": 2},
+    "48": {"size": 48, "cache": "hippo_s48", "channels": 2},
+    "64": {"size": 64, "cache": "hippo_s64", "channels": 2},
+    "multi3": {"size": 32, "cache": "multi3_s32", "channels": 6},
+}
+
+
+def roi_overrides(roi: str) -> list[str]:
+    spec = ROIS[roi]
+    return [f"data.roi_size={spec['size']}", f"data.cache_path=data/roi3d/{spec['cache']}.npy",
+            f"data.channels={spec['channels']}", f"model.backbone.in_channels={spec['channels']}",
+            f"++model.backbone.image_size={spec['size']}"]
+
+
 # ---------------------------------------------------------------- augmentation recipes
-_SIDE_EVAL = 32 / 38  # the central 32-voxel cube of the 38-voxel cache = the probe input
-_NONE = {"side_range": [_SIDE_EVAL, _SIDE_EVAL], "centered_crop": True, "lr_swap_p": 0.5,
+EVAL = "eval"  # side of the probe's central cube in the cache: size / round(1.2 * size)
+_NONE = {"side_range": [EVAL, EVAL], "centered_crop": True, "lr_swap_p": 0.5,
          "ap_flip_p": 0.0, "affine_degrees": 0.0, "rotation_padding": "border", "blur_p": 0.0,
          "blur_sigma": [0.1, 1.5], "noise_std": 0.0, "intensity_scale": [1.0, 1.0],
          "torchio": [], "n_local_crops": 0}
@@ -88,7 +108,7 @@ _TIO = {  # calibrated to RMSE 0.080 (3D campaign strength)
     "elastic": {"name": "RandomElasticDeformation", "num_control_points": 7,
                 "max_displacement": 1.9532824307146963, "locked_borders": 2},
 }
-_GEO = {"side_range": [_SIDE_EVAL, 0.92], "centered_crop": False, "affine_degrees": 5.0}
+_GEO = {"side_range": [EVAL, 0.92], "centered_crop": False, "affine_degrees": 5.0}
 
 
 def _tio(*names: str) -> list[dict]:
@@ -103,7 +123,7 @@ _ARTIFACTS = ("bias", "noise", "motion", "ghosting", "spike")
 AUG_RECIPES: dict[str, dict] = {
     # identity controls / single components (all with the left-right flip)
     "flip": {},
-    "crop": {"side_range": [_SIDE_EVAL, 0.92], "centered_crop": False},   # soft rescale + shift
+    "crop": {"side_range": [EVAL, 0.92], "centered_crop": False},         # soft rescale + shift
     "translate": {"centered_crop": False},                                # +/-3 voxels, no rescale
     "rotate": {"affine_degrees": 5.0},                                    # +/-5 deg, border padding
     "intensity": {"intensity_scale": [0.9, 1.1], "torchio": _tio("gamma")},
@@ -130,11 +150,14 @@ AUG_RECIPES: dict[str, dict] = {
 REFERENCE_RECIPE = {"vicreg": "campaign_zeros", "byol": "campaign_border", "dinov2": "dinov2_ref"}
 
 
-def aug_spec(recipe: str) -> dict:
+def aug_spec(recipe: str, size: int = 32) -> dict:
     """Return the full augmentation node of a recipe (``_NONE`` defaults + the recipe)."""
     if recipe not in AUG_RECIPES:
         raise ValueError(f"Unknown augmentation recipe '{recipe}'. Choose from {list(AUG_RECIPES)}.")
-    return {**_NONE, **AUG_RECIPES[recipe]}
+    spec = {**_NONE, **AUG_RECIPES[recipe]}
+    side = size / round(1.2 * size)
+    spec["side_range"] = [side if v == EVAL else v for v in spec["side_range"]]
+    return spec
 
 
 def _hydra(value: object) -> str:
@@ -147,8 +170,8 @@ def _hydra(value: object) -> str:
     return str(value)
 
 
-def aug_overrides(recipe: str) -> list[str]:
-    return [f"++augmentation.{k}={_hydra(v)}" for k, v in aug_spec(recipe).items()]
+def aug_overrides(recipe: str, size: int = 32) -> list[str]:
+    return [f"++augmentation.{k}={_hydra(v)}" for k, v in aug_spec(recipe, size).items()]
 
 
 # The `perf=rtx4090` runtime: everything the Trainer needs besides the perf node.
@@ -165,13 +188,16 @@ def warmup_epochs(epochs: int) -> int:
 def overrides(model: str, variant: str = "campaign", *, epochs: int = 30, seed: int = 1,
               fast: bool = True, checkpoints: bool = False, accelerator: str = "auto",
               log_root: str | None = None, run_name: str | None = None,
-              aug_recipe: str | None = None, extra: list[str] | None = None) -> list[str]:
+              aug_recipe: str | None = None, roi: str = "32",
+              extra: list[str] | None = None) -> list[str]:
     """Hydra overrides for one run (later entries win, so ``extra`` overrides anything)."""
     if model not in BASE:
         raise ValueError(f"Unknown model '{model}'. Choose from {list(BASE)}.")
     if variant not in VARIANTS[model]:
         raise ValueError(f"Unknown {model} variant '{variant}'. Choose from {list(VARIANTS[model])}.")
-    out = ["data=oasis3_roi3d", "data.roi_size=32", f"data.manifest_path={MANIFEST}",
+    if roi not in ROIS:
+        raise ValueError(f"Unknown ROI '{roi}'. Choose from {list(ROIS)}.")
+    out = ["data=oasis3_roi3d", *roi_overrides(roi), f"data.manifest_path={MANIFEST}",
            "trainer=full50", f"trainer.accelerator={accelerator}", "trainer.deterministic=false",
            "trainer.enable_progress_bar=false", "trainer.early_stopping_patience=null",
            "trainer.enable_health_check=false", f"trainer.enable_checkpointing={str(checkpoints).lower()}",
@@ -181,7 +207,7 @@ def overrides(model: str, variant: str = "campaign", *, epochs: int = 30, seed: 
         out.append(f"loss.teacher_temp_warmup_epochs={max(1, round(0.3 * epochs))}")
     out += VARIANTS[model][variant]
     if aug_recipe:
-        out += aug_overrides(aug_recipe)
+        out += aug_overrides(aug_recipe, ROIS[roi]["size"])
     out += FAST_RUNTIME if fast else CAMPAIGN_RUNTIME
     if log_root:
         out.append(f"++log_root={log_root}")
@@ -202,5 +228,7 @@ def dedupe(items: list[str]) -> list[str]:
     return kept[::-1]
 
 
-def run_name(model: str, variant: str, seed: int, aug_recipe: str | None = None) -> str:
-    return f"{model}_{variant}" + (f"__{aug_recipe}" if aug_recipe else "") + f"_s{seed}"
+def run_name(model: str, variant: str, seed: int, aug_recipe: str | None = None,
+             roi: str | None = None) -> str:
+    return (f"{model}_{variant}" + (f"__{aug_recipe}" if aug_recipe else "")
+            + (f"__roi{roi}" if roi else "") + f"_s{seed}")
