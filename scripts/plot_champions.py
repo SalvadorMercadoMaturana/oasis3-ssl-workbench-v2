@@ -1,6 +1,8 @@
 """Figures for the champion models (best augmentation + best ROI per model, 50 epochs).
 
     python scripts/plot_champions.py
+    python scripts/plot_champions.py --runs split361_30 --no-previous --prefix split361_ \
+        --title "split 361/63/84, 30 épocas"
 
 Champions (campaign_ssl3d_runpod/champions50): VICReg `geo` on the 32³ hippocampal
 pair, BYOL `wide_dproj0.1` + `noise` on the 32³ pair, DINOv2 TorchIO `elastic` on
@@ -34,27 +36,39 @@ CHAMPION = {"vicreg": "vicreg_campaign__geo__roi32", "byol": "byol_wide_dproj0.1
 PREVIOUS = {"vicreg": "vicreg_campaign", "byol": "byol_border_wide", "dinov2": "dinov2_campaign"}
 INIT = {"vicreg": ("final50", "vicreg_init"), "byol": ("final50", "byol_init"),
         "dinov2": ("champions50", "dinov2_init__roimulti3")}
+INIT_SAME_DIR = {"vicreg": "vicreg_init__roi32", "byol": "byol_init__roi32",
+                 "dinov2": "dinov2_init__roimulti3"}
+PREFIX, TITLE = "campeones_", "50 épocas"
 TICK = {"vicreg": "VICReg\ngeo · 32³", "byol": "BYOL\nnoise · 32³ · drop 0.1",
         "dinov2": "DINOv2\nelastic · 3 regiones"}
 
 
-def metrics_figure(champions: dict, final: dict) -> None:
+def metrics_figure(champions: dict, final: dict | None, own_init: bool = False) -> None:
     fig, axes = plt.subplots(2, 3, figsize=(12.5, 6.8), sharey=True)
     models = ["vicreg", "byol", "dinov2"]
-    for r, (split, split_name) in enumerate((("cv", "CV 5×5 (train+val, 357 sujetos)"),
-                                             ("test", "Test (56 sujetos)"))):
+    first = champions[CHAMPION["vicreg"]][0]
+    n_cv, n_test = len(first["labels"]), len(first["test"]["test_predictions"])
+    for r, (split, split_name) in enumerate((("cv", f"CV 5×5 (train+val, {n_cv} sujetos)"),
+                                             ("test", f"Test ({n_test} sujetos)"))):
         for c, key in enumerate(base.METRICS):
             ax = axes[r, c]
             for i, m in enumerate(models):
-                base.bar(ax, i - 0.27, champions[CHAMPION[m]], split, key, base.COLOR[m], 0.26,
-                         label="Campeón: mejor augmentation + mejor entrada (50 ép.)"
+                base.bar(ax, i - 0.27 if final is not None else i - 0.14, champions[CHAMPION[m]],
+                         split, key, base.COLOR[m], 0.26,
+                         label=f"Campeón: mejor augmentation + mejor entrada ({TITLE})"
                          if i == 0 else None)
-                base.bar(ax, i, final[PREVIOUS[m]], split, key, base.COLOR[m], 0.26, alpha=0.4,
-                         label="Receta de la campaña, 32³ (50 ép., RunPod)" if i == 0 else None)
-                where, group = INIT[m]
-                init = (champions if where == "champions50" else final).get(group)
+                if final is not None:
+                    base.bar(ax, i, final[PREVIOUS[m]], split, key, base.COLOR[m], 0.26,
+                             alpha=0.4, label="Receta de la campaña, 32³ (50 ép., RunPod)"
+                             if i == 0 else None)
+                if own_init:
+                    init = champions.get(INIT_SAME_DIR[m])
+                else:
+                    where, group = INIT[m]
+                    init = (champions if where == "champions50" else final).get(group)
                 if init:
-                    base.bar(ax, i + 0.27, init, split, key, base.BASE, 0.26,
+                    x = i + 0.27 if final is not None else i + 0.14
+                    base.bar(ax, x, init, split, key, base.BASE, 0.26,
                              label="Mismo encoder y entrada, sin SSL" if i == 0 else None)
             ax.set_xticks(range(3), [TICK[m] for m in models], fontsize=7.5)
             ax.set_ylim(0.55, 0.97)
@@ -62,10 +76,10 @@ def metrics_figure(champions: dict, final: dict) -> None:
             base.style(ax)
     handles, labels = axes[0, 0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="lower center", ncol=3, frameon=False, fontsize=8.5)
-    fig.suptitle("Modelos campeones tras 50 épocas (3 semillas; puntos = semillas)",
+    fig.suptitle(f"Modelos campeones, {TITLE} (3 semillas; puntos = semillas)",
                  fontsize=10.5, color=base.INK)
     fig.tight_layout(rect=(0, 0.06, 1, 0.97))
-    fig.savefig(base.FIGURES / "campeones_metricas.png", dpi=160)
+    fig.savefig(base.FIGURES / f"{PREFIX}metricas.png", dpi=160)
     plt.close(fig)
 
 
@@ -91,10 +105,10 @@ def curves_figures(champions: dict) -> None:
             ax.set_xlabel("época")
             base.style(ax)
         axes[0].legend(frameon=False, fontsize=8)
-        fig.suptitle(f"{TICK[model].replace(chr(10), ' — ')}: pérdidas en 50 épocas (gruesa = "
+        fig.suptitle(f"{TICK[model].replace(chr(10), ' — ')}: pérdidas, {TITLE} (gruesa = "
                      "media de 3 semillas, finas = semillas)", fontsize=10.5, color=base.INK)
         fig.tight_layout(rect=(0, 0, 1, 0.92))
-        fig.savefig(base.FIGURES / f"campeones_curvas_{model}.png", dpi=160)
+        fig.savefig(base.FIGURES / f"{PREFIX}curvas_{model}.png", dpi=160)
         plt.close(fig)
 
 
@@ -140,11 +154,12 @@ def collapse_figure(champions: dict) -> None:
             if r == len(COLLAPSE) - 1:
                 ax.set_xlabel("época")
             base.style(ax)
-    fig.suptitle("Colapso durante el entrenamiento en 142 sujetos no vistos (vistas fijas de la "
-                 "receta de cada modelo; época 0 = antes de entrenar)", fontsize=10.5,
-                 color=base.INK)
+    n_heldout = (champions[CHAMPION["vicreg"]][0].get("identity") or {}).get("subjects", 142)
+    fig.suptitle(f"Colapso durante el entrenamiento, {TITLE}, en {n_heldout} sujetos no vistos "
+                 "(vistas fijas de la receta de cada modelo; época 0 = antes de entrenar)",
+                 fontsize=10.5, color=base.INK)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
-    fig.savefig(base.FIGURES / "campeones_colapso.png", dpi=150)
+    fig.savefig(base.FIGURES / f"{PREFIX}colapso.png", dpi=150)
     plt.close(fig)
 
 
@@ -157,14 +172,23 @@ def load(path: Path) -> dict[str, list[dict]]:
 
 
 def main() -> None:
+    import argparse
+    global PREFIX, TITLE
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--runs", default="champions50")
+    parser.add_argument("--no-previous", action="store_true")
+    parser.add_argument("--prefix", default=PREFIX)
+    parser.add_argument("--title", default=TITLE)
+    args = parser.parse_args()
+    PREFIX, TITLE = args.prefix, args.title
     base.FIGURES.mkdir(parents=True, exist_ok=True)
-    champions, final = load(CAMPAIGN / "champions50"), load(CAMPAIGN / "final50")
-    metrics_figure(champions, final)
+    champions = load(CAMPAIGN / args.runs)
+    final = None if args.no_previous else load(CAMPAIGN / "final50")
+    metrics_figure(champions, final, own_init=args.no_previous)
     curves_figures(champions)
     collapse_figure(champions)
-    for name in ("campeones_metricas", "campeones_curvas_vicreg", "campeones_curvas_byol",
-                 "campeones_curvas_dinov2", "campeones_colapso"):
-        print(base.FIGURES / f"{name}.png")
+    for name in ("metricas", "curvas_vicreg", "curvas_byol", "curvas_dinov2", "colapso"):
+        print(base.FIGURES / f"{PREFIX}{name}.png")
 
 
 if __name__ == "__main__":
