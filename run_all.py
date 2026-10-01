@@ -168,17 +168,20 @@ def make_jobs(args: argparse.Namespace) -> list[dict[str, Any]]:
 
     if args.preset:
         triples = [(m, v, None) for m, v in PRESETS[args.preset]]
-    elif args.specs:  # explicit model:recipe pairs (e.g. the winners of a recipe screen)
-        triples = [(m, variant_of(m), r if r not in ("", "-") else None)
-                   for m, r in (spec.split(":", 1) for spec in args.specs)]
+    elif args.specs:  # explicit model:recipe[:roi] jobs (e.g. the winners of a screen)
+        parts = [[*spec.split(":"), ""][:3] for spec in args.specs]
+        triples = [(m, variant_of(m), r if r not in ("", "-") else None) for m, r, _ in parts]
+        spec_roi = {i: roi for i, (_, _, roi) in enumerate(parts) if roi}
     else:  # recipe-major, models interleaved so concurrent jobs mix heavy and light models
         triples = [(m, variant_of(m), r) for r in (args.aug_recipes or [None])
                    for m in args.models]
     pairs = [(m, v) for m, v, _ in triples]
     jobs = []
     rois = args.rois or [None]
+    spec_roi = locals().get("spec_roi", {})
     for seed in args.seeds:  # seed-major: every model of seed 1 starts first
-        for roi, (model, variant, recipe) in ((r, t) for r in rois for t in triples):
+        for roi, (model, variant, recipe) in (
+                (spec_roi.get(i, r), t) for r in rois for i, t in enumerate(triples)):
             name = recipes.run_name(model, variant, seed, recipe, roi)
             argv = ["--model", model, "--variant", variant, "--seed", str(seed),
                     "--epochs", str(args.epochs), "--tag", args.tag,

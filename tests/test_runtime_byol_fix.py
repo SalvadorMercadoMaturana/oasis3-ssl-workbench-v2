@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import hydra
+import numpy as np
 import pytest
 import torch
 from hydra.core.global_hydra import GlobalHydra
@@ -300,3 +301,16 @@ def test_elastic_gpu_recipe_composes():
     assert cfg.augmentation.gpu_elastic.max_displacement == pytest.approx(1.5042)
     assert list(cfg.augmentation.torchio) == []
     assert compose(recipes.overrides("vicreg", aug_recipe="geo")).augmentation.gpu_elastic is None
+
+
+def test_collapse_scores_detect_collapse():
+    from t5_ssl.callbacks.collapse_monitor import collapse_scores
+    rng = np.random.default_rng(0)
+    subjects = rng.normal(size=(40, 16))
+    healthy = collapse_scores(subjects, subjects + 0.05 * rng.normal(size=(40, 16)),
+                              subjects + 0.05 * rng.normal(size=(40, 16)))
+    assert healthy["between_over_within"] > 10 and healthy["view_matching_top1"] > 0.9
+    line = np.outer(rng.normal(size=40), np.ones(16))
+    collapsed = collapse_scores(line, line + 2 * rng.normal(size=(40, 16)),
+                                line + 2 * rng.normal(size=(40, 16)))
+    assert collapsed["effective_rank"] < 1.5 and collapsed["between_over_within"] < 1

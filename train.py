@@ -79,6 +79,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="replace the views by a recipe of t5_ssl.recipes.AUG_RECIPES")
     parser.add_argument("--roi", default=None, choices=sorted(recipes.ROIS),
                         help="region of interest: 32 (default), 48, 64 or multi3")
+    parser.add_argument("--collapse-every", type=int, default=0,
+                        help="collapse metrics on held-out subjects every N epochs (0 = off)")
     parser.add_argument("--identity", action="store_true",
                         help="identity/collapse metrics on the 142 held-out subjects")
     parser.add_argument("--init-only", action="store_true",
@@ -312,6 +314,9 @@ def run(args: argparse.Namespace) -> int:
             write_result(exp_dir, args, overrides, scored, None, started, attempts, init=True)
             return 0
         callbacks = []
+        if args.collapse_every:
+            from t5_ssl.callbacks.collapse_monitor import CollapseMonitor
+            callbacks.append(CollapseMonitor(cfg, args.collapse_every))
         timer = None
         if args.bench_steps:
             out = args.bench_out or str(Path(args.out_root) / "bench" / "bench_step.json")
@@ -390,6 +395,8 @@ def write_result(exp_dir: Path, args: argparse.Namespace, overrides: list[str],
                            if k not in ("subjects", "labels")} if "student" in scored else None)
         doc["cv_mean3"], doc["test_mean3"] = mean3_cv(main), mean3_test(main)
         doc["cv_auc"], doc["test_auc"] = main["cv"]["clean"]["metrics"]["auc"], main["test"]["test_auc"]
+    if (exp_dir / "collapse.json").is_file():
+        doc["collapse"] = json.loads((exp_dir / "collapse.json").read_text(encoding="utf-8"))
     if (exp_dir / "metrics.csv").is_file():
         import run_ssl3d_v2 as v2
         doc["training_metrics"] = v2.epoch_metrics(exp_dir)
