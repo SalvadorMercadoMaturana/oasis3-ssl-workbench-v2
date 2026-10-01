@@ -195,7 +195,7 @@ def test_every_recipe_composes(model, variant):
         assert cfg.augmentation.affine_degrees == 0 and cfg.loss.teacher_temp_warmup_epochs == 15
     else:
         assert cfg.augmentation.affine_degrees == 10
-        expected = "border" if variant.startswith("border") else "zeros"
+        expected = "zeros" if variant == "campaign" else "border"
         assert cfg.augmentation.rotation_padding == expected
 
 
@@ -210,3 +210,41 @@ def test_byol_h3_recipe_and_campaign_runtime():
 
 def test_dedupe_keeps_the_last_value():
     assert recipes.dedupe(["a=1", "++b=2", "a=3", "b=4"]) == ["a=3", "b=4"]
+
+
+# ---------------------------------------------------------------- round 2: dropout, recipes
+@pytest.mark.parametrize("recipe", sorted(recipes.AUG_RECIPES))
+def test_every_augmentation_recipe_builds_two_views(recipe):
+    cfg = OmegaConf.create({"data": {"roi_size": 32}, "augmentation": recipes.aug_spec(recipe)})
+    transform = build_roi3d_transforms(cfg)[0]
+    random.seed(0), torch.manual_seed(0)
+    views = transform(torch.rand(2, 38, 38, 38))
+    assert len(views) == 2 and all(v.shape == (2, 32, 32, 32) for v in views)
+    assert all(torch.isfinite(v).all() for v in views)
+
+
+def test_centered_crop_of_eval_side_is_the_probe_cube():
+    from t5_ssl.data.roi3d import ROIEval3D
+    cube = torch.rand(2, 38, 38, 38)
+    cfg = OmegaConf.create({"data": {"roi_size": 32}, "augmentation": recipes.aug_spec("flip")})
+    view = build_roi3d_transforms(cfg)[0]
+    view.lr_swap_p = 0.0
+    assert torch.allclose(view(cube)[0], ROIEval3D(32)(cube), atol=1e-6)
+
+
+def test_byol_target_projector_never_drops_units():
+    model = BYOLLightningModule(
+        backbone=TinyEncoder(), projector=MLPProjector(8, 16, 8, 2, use_bn=False, dropout=0.3),
+        predictor=MLPProjector(8, 16, 8, 2, use_bn=False, dropout=0.3), loss_fn=BYOLLoss(),
+        max_epochs=2)
+    online = [m.p for m in model.projector.modules() if isinstance(m, nn.Dropout)]
+    target = [m.p for m in model.target_projector.modules() if isinstance(m, nn.Dropout)]
+    assert online == [0.3] and target == [0.0]
+
+
+def test_dropout_variants_compose():
+    cfg = compose(recipes.overrides("byol", "wide_dboth0.2", aug_recipe="geo_artifacts"))
+    assert cfg.model.projector.dropout == cfg.model.predictor.dropout == 0.2
+    assert cfg.model.projector.hidden_dim == 4096
+    assert cfg.augmentation.torchio[0].name == "OneOf"
+    assert recipes.run_name("byol", "wide_dboth0.2", 3, "geo") == "byol_wide_dboth0.2__geo_s3"

@@ -457,6 +457,7 @@ def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> d
             num_layers=pred_cfg.get("num_layers", 2),
             use_bn=pred_cfg.get("use_bn", True),
             norm=pred_cfg.get("norm", None),
+            dropout=pred_cfg.get("dropout", 0.0),
         )
         model = BYOLLightningModule(
             **module_kwargs, predictor=predictor,

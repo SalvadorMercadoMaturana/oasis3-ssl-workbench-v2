@@ -48,8 +48,12 @@ PRESETS: dict[str, list[tuple[str, str]]] = {
     # The BYOL experiments of docs/informe_ssl3d_v2.pdf sec. 8.5 (without the
     # VICReg-terms one), re-running the campaign BYOL and VICReg as same-hardware
     # baselines; 30 epochs as campaign_ssl3d(_v2).
-    "byol-screen": [("byol", v) for v in recipes.VARIANTS["byol"]]
+    "byol-screen": [("byol", v) for v in ("campaign", "border", "border_wide", "border_gn",
+                                          "border_predlr", "border_h3")]
                    + [("vicreg", "campaign"), ("vicreg", "border")],
+    # Dropout against BYOL's overfitting (validation loss rising at 50 epochs).
+    "byol-dropout": [("byol", v) for v in ("border_wide", "wide_dproj0.1", "wide_dproj0.3",
+                                          "wide_dpred0.1", "wide_dpred0.3", "wide_dboth0.2")],
 }
 MPS_DIRS = {"CUDA_MPS_PIPE_DIRECTORY": "/tmp/nvidia-mps",
             "CUDA_MPS_LOG_DIRECTORY": "/tmp/nvidia-mps-log"}
@@ -159,21 +163,30 @@ class GPUSampler(threading.Thread):
 
 # ---------------------------------------------------------------- jobs
 def make_jobs(args: argparse.Namespace) -> list[dict[str, Any]]:
-    pairs = PRESETS[args.preset] if args.preset else [
-        (m, {"byol": args.byol_variant, "vicreg": args.vicreg_variant}.get(m, "campaign"))
-        for m in args.models]
+    def variant_of(model: str) -> str:
+        return {"byol": args.byol_variant, "vicreg": args.vicreg_variant}.get(model, "campaign")
+
+    if args.preset:
+        triples = [(m, v, None) for m, v in PRESETS[args.preset]]
+    elif args.specs:  # explicit model:recipe pairs (e.g. the winners of a recipe screen)
+        triples = [(m, variant_of(m), r if r not in ("", "-") else None)
+                   for m, r in (spec.split(":", 1) for spec in args.specs)]
+    else:  # recipe-major, models interleaved so concurrent jobs mix heavy and light models
+        triples = [(m, variant_of(m), r) for r in (args.aug_recipes or [None])
+                   for m in args.models]
+    pairs = [(m, v) for m, v, _ in triples]
     jobs = []
     for seed in args.seeds:  # seed-major: every model of seed 1 starts first
-        for model, variant in pairs:
-            name = recipes.run_name(model, variant, seed)
+        for model, variant, recipe in triples:
+            name = recipes.run_name(model, variant, seed, recipe)
             argv = ["--model", model, "--variant", variant, "--seed", str(seed),
                     "--epochs", str(args.epochs), "--tag", args.tag,
                     "--out-root", args.out_root, "--workers", str(args.workers),
                     "--batch-size", str(args.batch_size), "--accumulate", str(args.accumulate),
                     "--compile", args.compile, "--precision", args.precision,
-                    *args.train_args]
-            jobs.append({"name": name, "model": model, "variant": variant, "seed": seed,
-                         "argv": argv, "batch_size": args.batch_size,
+                    *(["--aug-recipe", recipe] if recipe else []), *args.train_args]
+            jobs.append({"name": name, "model": model, "variant": variant, "recipe": recipe,
+                         "seed": seed, "argv": argv, "batch_size": args.batch_size,
                          "accumulate": args.accumulate})
     if args.init_controls:
         for model in sorted({m for m, _ in pairs}):
@@ -181,7 +194,7 @@ def make_jobs(args: argparse.Namespace) -> list[dict[str, Any]]:
                     "--out-root", args.out_root, *[a for a in args.train_args
                                                    if a == "--spatial-probe"]]
             jobs.append({"name": f"{model}_init_s1", "model": model, "variant": "init",
-                         "seed": 1, "argv": argv, "batch_size": args.batch_size,
+                         "recipe": None, "seed": 1, "argv": argv, "batch_size": args.batch_size,
                          "accumulate": 1})
     return jobs
 
@@ -264,9 +277,18 @@ def report(args: argparse.Namespace, jobs: list[dict[str, Any]], wall_seconds: f
         perf = doc.get("perf") or {}
         student = doc.get("student") or {}
         spatial = doc.get("spatial") or {}
+        own = (doc.get("identity") or {}).get("own") or {}
+        ref = (doc.get("identity") or {}).get("reference") or {}
         rows.append({
             "job": job["name"], "model": job["model"], "variant": job["variant"],
-            "seed": job["seed"], "status": "ok" if doc else "failed",
+            "recipe": job.get("recipe"), "seed": job["seed"], "status": "ok" if doc else "failed",
+            "cv_auc": doc.get("cv_auc"), "test_auc": doc.get("test_auc"),
+            "var_subject_over_aug": own.get("between_over_within"),
+            "var_subject_over_aug_reference": ref.get("between_over_within"),
+            "same_subject_cos": own.get("same_subject_cos"),
+            "different_subject_cos": own.get("different_subject_cos"),
+            "view_matching_top1": own.get("view_matching_top1"),
+            "heldout_effective_rank": own.get("effective_rank"),
             "batch_size": (perf.get("batch_size") or job["batch_size"]),
             "accumulate": perf.get("accumulate_grad_batches", job["accumulate"]),
             "images_per_second": perf.get("images_per_second"),
@@ -286,21 +308,22 @@ def report(args: argparse.Namespace, jobs: list[dict[str, Any]], wall_seconds: f
             "spatial_test_mean3": (_mean3_test(spatial["test"]) if spatial.get("test") else None),
             "attempts": job.get("attempts", []),
         })
-    groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    groups: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
     for row in rows:
         if row["status"] == "ok":
-            groups[(row["model"], row["variant"])].append(row)
+            groups[(row["model"], row["variant"], row["recipe"] or "")].append(row)
 
     def avg(values: list[Any]) -> float | None:
         values = [v for v in values if v is not None]
         return statistics.mean(values) if values else None
 
-    summary = [{"model": m, "variant": v, "n": len(rs),
-                **{k: avg([r[k] for r in rs]) for k in (
+    summary = [{"model": m, "variant": v + (f" / {r}" if r else ""), "n": len(rs),
+                **{k: avg([row[k] for row in rs]) for k in (
                     "cv_mean3", "test_mean3", "effective_rank", "images_per_second",
                     "seconds_per_epoch", "peak_vram_reserved_gb", "minutes",
-                    "spatial_cv_mean3", "spatial_test_mean3", "student_cv_mean3")}}
-               for (m, v), rs in sorted(groups.items())]
+                    "spatial_cv_mean3", "spatial_test_mean3", "student_cv_mean3", "cv_auc",
+                    "test_auc", "var_subject_over_aug", "heldout_effective_rank")}}
+               for (m, v, r), rs in sorted(groups.items())]
     doc = {"tag": args.tag, "mode": mode, "epochs": args.epochs, "wall_minutes": wall_seconds / 60,
            "gpu": gpu, "jobs": rows, "summary": summary}
     out = Path(args.out_root) / args.tag
@@ -363,6 +386,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--models", nargs="+", default=list(recipes.MODELS),
                         choices=recipes.MODELS)
     parser.add_argument("--preset", choices=sorted(PRESETS), default=None)
+    parser.add_argument("--aug-recipes", nargs="+", default=None,
+                        choices=sorted(recipes.AUG_RECIPES),
+                        help="one job per model x recipe (t5_ssl.recipes.AUG_RECIPES)")
+    parser.add_argument("--specs", nargs="+", default=None, metavar="MODEL:RECIPE",
+                        help="explicit model:recipe jobs (recipe '-' = the model's own views)")
     parser.add_argument("--byol-variant", default="campaign")
     parser.add_argument("--vicreg-variant", default="campaign")
     parser.add_argument("--seeds", nargs="+", type=int, default=[1])
@@ -384,7 +412,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="after '--': extra train.py flags, e.g. -- --spatial-probe")
     args = parser.parse_args(argv)
     args.train_args = [a for a in args.train_args if a != "--"]
-    n_models = len(PRESETS[args.preset]) if args.preset else len(args.models)
+    n_models = (len(PRESETS[args.preset]) if args.preset else len(args.specs) if args.specs
+                else len(args.models))
     if args.max_procs is None:
         args.max_procs = 1 if args.parallel == "sequential" else min(n_models, 4)
     if args.parallel == "sequential":

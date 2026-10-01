@@ -39,6 +39,11 @@ class BYOLLightningModule(SSLLightningModule):
         self.target_projector = copy.deepcopy(projector)
         self.target_backbone.requires_grad_(False)
         self.target_projector.requires_grad_(False)
+        # Projector dropout regularizes the online branch only: the EMA target
+        # gives deterministic regression targets (as DINOv2's teacher drops no paths).
+        for module in self.target_projector.modules():
+            if isinstance(module, nn.Dropout):
+                module.p = 0.0
         self.ema_base = ema_base
 
     def trainable_parameters(self) -> list[nn.Parameter]:

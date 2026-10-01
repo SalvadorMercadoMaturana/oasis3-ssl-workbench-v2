@@ -75,6 +75,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="also probe the pre-GAP feature map pooled to 2^3 (H4)")
     parser.add_argument("--export-encoders", action="store_true",
                         help="save encoder state_dicts to encoders.pt (for analyses)")
+    parser.add_argument("--aug-recipe", default=None, choices=sorted(recipes.AUG_RECIPES),
+                        help="replace the views by a recipe of t5_ssl.recipes.AUG_RECIPES")
+    parser.add_argument("--identity", action="store_true",
+                        help="identity/collapse metrics on the 142 held-out subjects")
     parser.add_argument("--init-only", action="store_true",
                         help="no SSL: score the ImageNet-initialized encoder (control)")
     parser.add_argument("--oom-retries", type=int, default=2)
@@ -107,14 +111,14 @@ def build_overrides(args: argparse.Namespace, batch_size: int, accumulate: int,
         if fast:
             extra.append("perf.monitor=false")
     tag_root = Path(args.out_root) / ("bench" if bench else args.tag)
-    name = recipes.run_name(args.model, args.variant, args.seed)
+    name = recipes.run_name(args.model, args.variant, args.seed, args.aug_recipe)
     if args.init_only:
         name = f"{args.model}_init_s{args.seed}"
     return recipes.overrides(
         args.model, args.variant, epochs=args.epochs, seed=args.seed, fast=fast,
         checkpoints=not (args.no_checkpoints or bench or args.init_only),
         accelerator="cpu" if args.cpu else "auto", log_root=tag_root.as_posix(),
-        run_name=name, extra=extra + list(args.set))
+        run_name=name, aug_recipe=args.aug_recipe, extra=extra + list(args.set))
 
 
 def compose(overrides: list[str]) -> Any:
@@ -213,6 +217,43 @@ def evaluate(model_name: str, encoders: dict[str, Any], dm: Any, cfg: Any,
               f"test={mean3_test(out[role]):.3f} erank={out[role]['effective_rank']:.1f}"
               + (f" | spatial cv={mean3_cv(out[role]['spatial']):.3f} "
                  f"test={mean3_test(out[role]['spatial']):.3f}" if spatial else ""), flush=True)
+    return out
+
+
+def identity_scores(encoder: Any, dm: Any, cfg: Any) -> dict[str, Any]:
+    """Identity retention and collapse on the val + test subjects (one session each).
+
+    Under the run's own training views and under a fixed reference set (the
+    campaign geometry with border padding + bias field, the same for every
+    recipe): centered cosine same vs different subject, top-1 view matching,
+    between-subject variance of the clean cube over within-subject variance of
+    the views (``between_over_within`` = Var_subject / Var_aug) and the
+    effective rank (variance spectrum) of the clean embeddings.
+    """
+    import analyze_ssl3d_encoders as enc
+    import numpy as np
+    import torch
+    from omegaconf import OmegaConf
+
+    from t5_ssl.data.roi3d import ROIEval3D, build_roi3d_transforms
+    for attr in ("forward", "forward_tokens"):
+        if attr in encoder.__dict__:
+            delattr(encoder, attr)
+    encoder = encoder.float().to(memory_format=torch.contiguous_format)
+    records = dm.val_dataset.records + dm.test_dataset.records
+    cubes = [torch.from_numpy(dm.cubes[r["idx"]].astype(np.float32)) for r in records]
+    size = int(cfg.data.roi_size)
+    clean = enc.embed(encoder, [ROIEval3D(size)(c) for c in cubes])
+    reference = OmegaConf.create({"data": {"roi_size": size},
+                                  "augmentation": recipes.aug_spec("campaign_border")})
+    out: dict[str, Any] = {"subjects": len(cubes)}
+    for name, transform in (("own", build_roi3d_transforms(cfg)[0]),
+                            ("reference", build_roi3d_transforms(reference)[0])):
+        first, second = enc.views(transform, cubes, seed=0)
+        out[name] = enc.scores(clean, enc.embed(encoder, first), enc.embed(encoder, second))
+    print(f"[identity] own: Var_subject/Var_aug={out['own']['between_over_within']:.3g} "
+          f"same={out['own']['same_subject_cos']:.3f} diff={out['own']['different_subject_cos']:.3f} "
+          f"erank={out['own']['effective_rank']:.2f}", flush=True)
     return out
 
 
@@ -315,20 +356,24 @@ def run(args: argparse.Namespace) -> int:
     scored = None
     if not args.no_eval:
         scored = evaluate(args.model, encoders, dm, cfg, args.spatial_probe)
-    write_result(exp_dir, args, overrides, scored, result.get("runtime"), started, attempts)
+    identity = identity_scores(encoders["main"], dm, cfg) if args.identity else None
+    write_result(exp_dir, args, overrides, scored, result.get("runtime"), started, attempts,
+                 identity=identity)
     return 0
 
 
 def write_result(exp_dir: Path, args: argparse.Namespace, overrides: list[str],
                  scored: dict | None, runtime: dict | None, started: float,
-                 attempts: list[dict], init: bool = False) -> None:
+                 attempts: list[dict], init: bool = False,
+                 identity: dict | None = None) -> None:
     perf_path = exp_dir / "perf.json"
     perf = json.loads(perf_path.read_text(encoding="utf-8")) if perf_path.is_file() else None
     doc: dict[str, Any] = {"model": args.model, "variant": "init" if init else args.variant,
                            "seed": args.seed, "epochs": 0 if init else args.epochs,
                            "overrides": overrides, "runtime": runtime, "perf": perf,
                            "retries": attempts, "minutes": (time.time() - started) / 60,
-                           "experiment_dir": exp_dir.as_posix()}
+                           "experiment_dir": exp_dir.as_posix(),
+                           "aug_recipe": getattr(args, "aug_recipe", None), "identity": identity}
     if scored:
         main = scored.pop("main")
         doc.update(main)
@@ -336,6 +381,7 @@ def write_result(exp_dir: Path, args: argparse.Namespace, overrides: list[str],
         doc["student"] = ({k: v for k, v in scored["student"].items()
                            if k not in ("subjects", "labels")} if "student" in scored else None)
         doc["cv_mean3"], doc["test_mean3"] = mean3_cv(main), mean3_test(main)
+        doc["cv_auc"], doc["test_auc"] = main["cv"]["clean"]["metrics"]["auc"], main["test"]["test_auc"]
     if (exp_dir / "metrics.csv").is_file():
         import run_ssl3d_v2 as v2
         doc["training_metrics"] = v2.epoch_metrics(exp_dir)

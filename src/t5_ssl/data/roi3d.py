@@ -175,6 +175,8 @@ class ROIView3DTransform:
     shape depends only on the angles; BYOL's trained encoder collapsed onto
     that subject-independent cue (campaign_ssl3d_v2/byol_sensitivity.json).
     ``"border"`` repeats the edge voxels and ``"reflection"`` mirrors them.
+    ``centered_crop`` takes the sub-cube at the center instead of a random offset
+    (no translation): with a side of ``size`` it is exactly the evaluation cube.
     """
 
     def __init__(self, size: int = 32, side_range: tuple[float, float] = (0.84, 1.0),
@@ -183,11 +185,12 @@ class ROIView3DTransform:
                  noise_std: float = 0.0, intensity_scale: tuple[float, float] = (1.0, 1.0),
                  torchio_transforms: list[dict] | None = None, n_local_crops: int = 0,
                  local_size: int = 16, local_side_range: tuple[float, float] = (0.4, 0.6),
-                 rotation_padding: str = "zeros") -> None:
+                 rotation_padding: str = "zeros", centered_crop: bool = False) -> None:
         if rotation_padding not in ("zeros", "border", "reflection"):
             raise ValueError("rotation_padding must be 'zeros', 'border' or 'reflection'")
         self.size, self.side_range = size, side_range
         self.rotation_padding = rotation_padding
+        self.centered_crop = centered_crop
         # DINOv2 multi-crop: extra smaller views, like DINOv2ViewTransform in 2D.
         self.n_local_crops, self.local_size = n_local_crops, local_size
         self.local_side_range = local_side_range
@@ -203,7 +206,8 @@ class ROIView3DTransform:
             cube = self.torchio_transform(cube)
         extract = cube.shape[-1]
         side = random.randint(round(side_range[0] * extract), round(side_range[1] * extract))
-        o = [random.randint(0, extract - side) for _ in range(3)]
+        o = ([(extract - side) // 2] * 3 if self.centered_crop
+             else [random.randint(0, extract - side) for _ in range(3)])
         view = cube[:, o[0]:o[0] + side, o[1]:o[1] + side, o[2]:o[2] + side]
         view = F.interpolate(view[None], size=(size,) * 3, mode="trilinear",
                              align_corners=False)[0]
@@ -270,7 +274,8 @@ def build_roi3d_transforms(cfg: Any) -> tuple[ROIView3DTransform, ROIEvalViews3D
                             if aug.get("torchio") else None),
         n_local_crops=aug.get("n_local_crops", 0), local_size=aug.get("local_size", 16),
         local_side_range=tuple(aug.get("local_side_range", (0.4, 0.6))),
-        rotation_padding=str(aug.get("rotation_padding", "zeros")))
+        rotation_padding=str(aug.get("rotation_padding", "zeros")),
+        centered_crop=bool(aug.get("centered_crop", False)))
     return train, ROIEvalViews3D(size)
 
 
