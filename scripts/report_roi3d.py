@@ -31,36 +31,40 @@ ROI_LABEL = {"32": "32³ (64 mm)", "48": "48³ (96 mm)", "64": "64³ (128 mm)",
 
 def main() -> None:
     run_dir = Path(sys.argv[1])
-    groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    groups: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
     for path in sorted(run_dir.glob("*/result.json")):
         doc = json.loads(path.read_text(encoding="utf-8"))
         if "cv" in doc:
-            groups[(doc["model"], doc.get("roi") or "32")].append(doc)
+            groups[(doc["model"], doc.get("roi") or "32", doc.get("aug_recipe") or "")].append(doc)
+    main_recipe = {"vicreg": "geo", "byol": "noise", "dinov2": "elastic_gpu"}
     lines = ["# Región de interés, 50 épocas", "",
              "Cada modelo con su mejor receta de augmentation (VICReg `geo`, BYOL `noise` con "
              "`wide_dproj0.1`, DINOv2 `elastic`). Media ± desviación entre semillas. Δ AUROC "
-             "frente a 32³ del mismo modelo con bootstrap pareado sobre sujetos (IC 95 %). "
+             "frente a 32³ del mismo modelo con su receta principal, con bootstrap pareado sobre "
+             "sujetos (IC 95 %). DINOv2 `elastic` (TorchIO, CPU) es el control de `elastic_gpu`. "
              "Identidad en 142 sujetos no vistos con las vistas de la receta.", "",
-             "| Modelo | ROI | n | AUROC CV | AUROC test | Media3 CV | Media3 test | "
+             "| Modelo | Receta | ROI | n | AUROC CV | AUROC test | Media3 CV | Media3 test | "
              "Δ AUROC CV vs 32³ | Δ AUROC test vs 32³ | Var_suj/Var_aug | Rango ef. | "
              "s/época | min/corrida | VRAM pico (GB) |",
-             "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
+             "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     payload = []
-    for model in ("vicreg", "byol", "dinov2"):
-        base = groups.get((model, "32"))
+    keys = sorted({(m, r) for m, _, r in groups},
+                  key=lambda k: (("vicreg", "byol", "dinov2").index(k[0]), k[1] != main_recipe[k[0]]))
+    for model, recipe in keys:
+        base = groups.get((model, "32", main_recipe[model]))
         for roi in ROI_ORDER:
-            docs = groups.get((model, roi))
+            docs = groups.get((model, roi, recipe))
             if not docs:
                 continue
             perf = [d.get("perf") or {} for d in docs]
-            if base and roi != "32" and len(docs) > 1 and len(base) > 1:
+            if base and docs is not base and len(docs) > 1 and len(base) > 1:
                 b = bootstrap_auc(docs, base)
                 delta = " | ".join(f"{b[s][0]:+.3f} [{b[s][1]:+.3f}, {b[s][2]:+.3f}]"
                                    for s in ("cv", "test"))
             else:
                 b, delta = None, "— | —"
             own = [identity(d) for d in docs]
-            row = {"model": model, "roi": roi, "n": len(docs),
+            row = {"model": model, "recipe": recipe, "roi": roi, "n": len(docs),
                    "cv_auc": mean([d["cv_auc"] for d in docs]),
                    "test_auc": mean([d["test_auc"] for d in docs]),
                    "cv_auc_seeds": [d["cv_auc"] for d in docs],
@@ -68,7 +72,7 @@ def main() -> None:
                    "delta_vs_32": b}
             payload.append(row)
             lines.append(
-                f"| {LABEL[model]} | {ROI_LABEL[roi]} | {len(docs)} | "
+                f"| {LABEL[model]} | `{recipe}` | {ROI_LABEL[roi]} | {len(docs)} | "
                 f"{row['cv_auc']:.3f} ± {std(row['cv_auc_seeds']):.3f} | "
                 f"{row['test_auc']:.3f} ± {std(row['test_auc_seeds']):.3f} | "
                 f"{mean([d['cv_mean3'] for d in docs]):.3f} | {mean([d['test_mean3'] for d in docs]):.3f} | "
@@ -86,6 +90,7 @@ def main() -> None:
     import matplotlib.pyplot as plt
     fig, axes = plt.subplots(1, 2, figsize=(13, 4.6), sharey=True, facecolor="#fcfcfb")
     rois = [r for r in ROI_ORDER if any(g[1] == r for g in groups)]
+    groups = {(m, r): d for (m, r, rec), d in groups.items() if rec == main_recipe[m]}
     width = 0.26
     for ax, split, title in ((axes[0], "cv", "AUROC de CV (357 sujetos)"),
                              (axes[1], "test", "AUROC de test (56 sujetos)")):
