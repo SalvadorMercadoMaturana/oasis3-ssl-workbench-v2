@@ -1,0 +1,1090 @@
+\documentclass[11pt,a4paper]{article}
+
+% ============================================================
+%  Informe breve: entrenamientos SSL 3D en RunPod, split 361/63/84
+%  Figuras: python scripts/build_report_split361.py
+%  Compilar desde docs/: pdflatex informe_split361.tex (dos veces)
+% ============================================================
+
+\usepackage[a4paper,margin=2.2cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[spanish,es-noshorthands]{babel}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{placeins}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage[most]{tcolorbox}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,backgrounds,calc}
+
+% Paleta del informe v2 (VICReg azul, BYOL naranja, DINOv2 aqua)
+\definecolor{primaryblue}{HTML}{1B4F72}
+\definecolor{steelblue}{HTML}{2E86AB}
+\definecolor{accentorange}{HTML}{E67E22}
+\definecolor{softgray}{HTML}{85929E}
+\definecolor{panelbg}{HTML}{EAF2F8}
+\definecolor{warnbg}{HTML}{FDEBD0}
+\definecolor{tldrbg}{HTML}{EBF5FB}
+\definecolor{vicregc}{HTML}{2A78D6}
+\definecolor{byolc}{HTML}{EB6834}
+\definecolor{dinoc}{HTML}{1BAF7A}
+\definecolor{diagbg}{HTML}{FEF5E7}
+
+\usepackage[colorlinks=true,linkcolor=primaryblue,citecolor=primaryblue,urlcolor=steelblue]{hyperref}
+
+% Cajas
+\newtcolorbox{tldrbox}{colback=tldrbg,colframe=primaryblue,coltitle=white,
+  colbacktitle=primaryblue,fonttitle=\bfseries,boxrule=0.9pt,arc=3pt,
+  left=8pt,right=8pt,top=5pt,bottom=5pt,title=En pocas palabras}
+\newtcolorbox{ideabox}[1][Idea clave]{colback=panelbg,colframe=steelblue,coltitle=white,
+  colbacktitle=steelblue,fonttitle=\bfseries,boxrule=0.8pt,arc=2pt,
+  left=8pt,right=8pt,top=5pt,bottom=5pt,title=#1}
+\newtcolorbox{warnbox}[1][Ojo con esto]{colback=warnbg,colframe=accentorange,coltitle=white,
+  colbacktitle=accentorange,fonttitle=\bfseries,boxrule=0.8pt,arc=2pt,
+  left=8pt,right=8pt,top=5pt,bottom=5pt,title=#1}
+\newtcolorbox{byolbox}[1][BYOL]{colback=diagbg,colframe=byolc,
+  coltitle=white,colbacktitle=byolc,fonttitle=\bfseries,boxrule=0.8pt,arc=2pt,
+  left=8pt,right=8pt,top=5pt,bottom=5pt,title=#1}
+
+% Encabezados y secciones
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.5pt}
+\fancyhead[L]{\small\color{softgray}SSL 3D en RunPod · split 361/63/84}
+\fancyhead[R]{\small\color{softgray}VICReg / BYOL / DINOv2}
+\fancyfoot[C]{\small\thepage}
+\setlength{\headheight}{14pt}
+
+\titleformat{\section}{\normalfont\Large\bfseries\color{primaryblue}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalfont\large\bfseries\color{steelblue}}{\thesubsection}{0.6em}{}
+
+\graphicspath{{figures_split361/}}
+\setlength{\parskip}{4pt}
+\setlength{\parindent}{0pt}
+\setlength{\emergencystretch}{3em}
+\setlist[itemize]{topsep=2pt,itemsep=2pt}
+\setlist[enumerate]{topsep=2pt,itemsep=2pt}
+\captionsetup{font=small,labelfont={bf,color=primaryblue}}
+\renewcommand{\arraystretch}{1.15}
+
+% Estilos TikZ
+\tikzset{
+  viewbox/.style={rectangle, rounded corners=1pt, draw=softgray, thick, fill=white,
+    text width=2.6cm, align=center, minimum height=0.8cm, inner sep=3pt, font=\scriptsize},
+  netbox/.style={rectangle, rounded corners=2pt, draw=#1, thick, fill=#1!8,
+    text width=3.4cm, align=center, minimum height=0.85cm, inner sep=3pt, font=\scriptsize},
+  targetbox/.style={rectangle, rounded corners=2pt, draw=softgray, thick, dashed,
+    fill=softgray!10, text width=3.4cm, align=center, minimum height=0.85cm, inner sep=3pt,
+    font=\scriptsize},
+  lossbox/.style={rectangle, rounded corners=2pt, draw=accentorange, thick,
+    fill=accentorange!8, text width=9.6cm, align=left, inner sep=5pt, font=\scriptsize},
+  evalbox/.style={rectangle, rounded corners=2pt, draw=primaryblue, thick, fill=panelbg,
+    text width=3.2cm, align=center, minimum height=1cm, inner sep=4pt, font=\scriptsize},
+  arr/.style={-{Latex[length=2mm]}, thick, primaryblue},
+  arrg/.style={-{Latex[length=2mm]}, thin, softgray},
+  emaarr/.style={-{Latex[length=2mm]}, thin, dashed, accentorange},
+}
+
+\begin{document}
+
+% ============================================================
+% PORTADA
+% ============================================================
+\begin{titlepage}
+\centering
+\vspace*{0.8cm}
+{\Huge\bfseries\color{primaryblue} SSL 3D en OASIS3}\\[8pt]
+{\Large\color{steelblue} Los entrenamientos en RunPod con el split 361/63/84\\
+versión corta y visual}\\[20pt]
+
+\begin{tikzpicture}
+\draw[primaryblue, thick] (0,0) -- (11,0);
+\end{tikzpicture}
+
+\vspace{14pt}
+{\large \textit{Qué datos entran, qué ve cada modelo, cómo aprende y cómo lo medimos,\\
+en una lectura de diez minutos.}}
+
+\vspace{24pt}
+\includegraphics[width=0.95\textwidth]{roi_cubes.png}
+
+\vspace{16pt}
+\begin{tcolorbox}[colback=panelbg,colframe=primaryblue,arc=4pt,width=0.9\textwidth,
+  boxrule=1pt, left=14pt,right=14pt,top=8pt,bottom=8pt]
+\begin{center}
+\textbf{oasis3-ssl-workbench · \texttt{campaign\_ssl3d\_runpod/split361\_30}}\\[4pt]
+\small 508 sujetos, split por sujeto 361/63/84 · VICReg, BYOL y DINOv2 con su receta campeona\\
+30 épocas · 3 semillas · probe lineal sobre el encoder congelado\\
+RTX 5090 en RunPod · 9 corridas en 20 minutos · 0.33 USD
+\end{center}
+\end{tcolorbox}
+
+\vfill
+{\small Resultados: \texttt{split361\_30/REPORT.md} y \texttt{DELTAS.md}; diagnóstico de BYOL:
+\texttt{byol\_diag30/DIAGNOSTICO.md}.}\\[4pt]
+{\small 1 de octubre de 2026}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ============================================================
+\section{En pocas palabras}
+% ============================================================
+
+\begin{tldrbox}
+\begin{itemize}[leftmargin=12pt]
+\item \textbf{Los tres métodos aprenden y ninguno colapsa.} En sujetos no vistos, la
+  diferencia entre sujetos supera entre 10 y 34 veces la variación que introduce la
+  augmentation.
+\item \textbf{En test los tres empatan}: AUROC de 0.831 a 0.837 sobre 84 sujetos.
+\item \textbf{DINOv2 es el que más gana con el SSL}: $+0.055$ en CV y $+0.104$ en test
+  frente al mismo ViT sin entrenar, ambos significativos. Pero parte del punto más bajo.
+\item \textbf{VICReg tiene el mejor CV} (0.875) y mejora en CV ($+0.026$, significativo).
+\item \textbf{BYOL no supera a su inicio ImageNet en CV} ($-0.009$). Su pérdida de
+  validación sube, pero no por memorizar: es un efecto de la batch norm (Sección~\ref{sec:byol}).
+\item \textbf{Con 100 épocas nada mejora} (Sección~\ref{sec:e100}). El SSL empata en test con el
+  mismo encoder entrenado de forma supervisada; frente al encoder sin SSL gana DINOv2 (CV y
+  test), VICReg solo en CV y BYOL no.
+\end{itemize}
+\end{tldrbox}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{lllrrrr}
+\toprule
+Método & Entrada & Augmentation & AUROC CV & AUROC test & $\Delta$ CV & $\Delta$ test \\
+\midrule
+\textcolor{vicregc}{\textbf{VICReg}} & hipocampos 2$\times$32$^3$ & \texttt{geo} & \textbf{0.875} & 0.835 & $+0.026^{*}$ & $+0.029$ \\
+\textcolor{byolc}{\textbf{BYOL}} & hipocampos 2$\times$32$^3$ & \texttt{noise} & 0.852 & \textbf{0.837} & $-0.009$ & $+0.029$ \\
+\textcolor{dinoc}{\textbf{DINOv2}} & 3 regiones 6$\times$32$^3$ & \texttt{elastic} & 0.839 & 0.831 & $+0.055^{*}$ & $+0.104^{*}$ \\
+\bottomrule
+\end{tabular}
+\caption{Resumen (media de 3 semillas). $\Delta$: frente al mismo encoder y la misma entrada
+sin entrenamiento SSL; $^{*}$ = intervalo de confianza del 95\,\% enteramente sobre cero.}
+\label{tab:summary}
+\end{table}
+
+% ============================================================
+\section{Los datos y el split}
+\label{sec:data}
+% ============================================================
+
+Cada sesión de OASIS3 es una resonancia T1 registrada al espacio MNI con vóxeles de 2\,mm.
+El split reparte \textbf{508 sujetos por sujeto}: ninguno aparece en dos conjuntos. Val y test
+tienen cupos fijos de HC y AD, y dentro de cada diagnóstico se reparten de forma proporcional
+entre los tres terciles de edad (semilla 42). Los terciles se calculan por separado para HC
+(cortes en 65 y 73 años) y para AD (72.3 y 79), con la edad de la sesión evaluada. El sexo no
+está registrado en el CSV clínico de OASIS3, y los años de estudio no fueron un estrato.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{split_balance.png}
+\caption{Sujetos por split. Arriba, diagnóstico: ``otros'' (sin diagnóstico, Lewy,
+frontotemporal, vascular o etiqueta ambigua) solo entran al entrenamiento SSL, que no usa
+etiquetas. Al medio, los estratos de edad con que se armó el split. Abajo, años de estudio, que no
+se estratificaron: val queda algo más alto (15.9) y test algo más bajo (14.8) que train (15.3).}
+\label{fig:split}
+\end{figure}
+
+\begin{itemize}
+\item \textbf{Train (361):} el SSL toma \emph{una sesión al azar por sujeto} en cada época:
+  unos 23 lotes de 16, unos 690 pasos en 30 épocas.
+\item \textbf{Val (63) y test (84):} solo AD y HC, una sesión cada uno. Val sirve para la
+  pérdida de validación y para elegir la regularización del probe; test se usa una sola vez.
+\end{itemize}
+
+\begin{warnbox}[La edad viene pegada al diagnóstico]
+En los tres splits los AD tienen unos 7 años más que los HC (HC 67--69 años, AD 75--76).
+Parte de lo que separa el probe puede ser envejecimiento y no Alzheimer.
+\end{warnbox}
+
+% ============================================================
+\section{Qué cubo ve cada modelo}
+\label{sec:roi}
+% ============================================================
+
+Nadie ve el cerebro entero: cada modelo ve \textbf{cubos de 32 vóxeles} (64\,mm) recortados
+en posiciones fijas, el centroide poblacional de cada región. Se guarda un cubo de 38 para
+tener margen en recortes y deformaciones. El hemisferio derecho se \emph{espeja}: ambos lados
+quedan orientados igual y voltear la cabeza equivale a intercambiar canales.
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l>{\raggedright\arraybackslash}Xc>{\raggedright\arraybackslash}X}
+\toprule
+Modelo & Regiones & Entrada & Por qué \\
+\midrule
+VICReg y BYOL & hipocampo izq. y der. & 2$\times$32$^3$ & 32$^3$ fue la mejor ROI para las CNN \\
+DINOv2 & hipocampo, ventrículo lateral, corteza posteromedial & 6$\times$32$^3$ & 3 regiones frente a 32$^3$: $+0.034$ CV, $+0.077$ test \\
+\bottomrule
+\end{tabularx}
+\caption{ROI por modelo, elegida en la ronda de ROI (50 épocas, split anterior). Para las CNN,
+cubos de 48$^3$ rindieron igual y los de 64$^3$ o las 3 regiones, peor.}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{inputs.png}
+\caption{Lo que entra a la red, en el corte coronal central de cada canal. La corteza
+posteromedial es el cíngulo posterior e ístmico más el precúneo.}
+\label{fig:inputs}
+\end{figure}
+
+% ============================================================
+\section{Augmentations: una receta por modelo}
+\label{sec:aug}
+% ============================================================
+
+Los métodos SSL aprenden comparando dos \emph{vistas} distintas del mismo sujeto. Cada modelo
+usa la receta que ganó en el \emph{screen} de 19 recetas (20 épocas): una sola idea por receta,
+más el volteo izquierda-derecha (intercambio de canales, $p=0.5$) que llevan todas.
+
+\begin{ideabox}[Qué cambió frente al informe v2]
+Ya no hay rotación con \textbf{relleno de ceros}: sus esquinas negras eran el atajo sobre el
+que colapsaba BYOL. Todas las rotaciones rellenan con el borde.
+\end{ideabox}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.84\textwidth]{views.png}
+\caption{Cubo limpio que ve el probe y dos vistas de cada receta (canal del hipocampo izquierdo,
+sujeto de validación). Cada imagen apila los cortes centrales de los tres planos del mismo
+volumen (coronal al frente, axial y sagital detrás): la red no ve cortes sueltos sino el volumen
+3D completo, y las augmentations también actúan en 3D.}
+\label{fig:views}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X}
+\toprule
+ & \textcolor{vicregc}{\textbf{VICReg · \texttt{geo}}} & \textcolor{byolc}{\textbf{BYOL · \texttt{noise}}} & \textcolor{dinoc}{\textbf{DINOv2 · \texttt{elastic}}} \\
+\midrule
+Recorte & sub-cubo de 32--35 vóxeles en posición al azar, reescalado a 32 & cubo central de 32 & cubo central de 32 \\
+Rotación & $\pm5^\circ$ por eje, relleno con el borde & no & no \\
+Intensidad & no & ruido gaussiano, $\sigma\sim U(0;\,0.22)$ & no \\
+Deformación & no & no & elástica TorchIO: 7 puntos de control, $\leq$1.95 vóxeles \\
+Volteo izq.-der. & $p=0.5$ & $p=0.5$ & $p=0.5$ \\
+Enmascarado & no & no & iBOT: 50\,\% de las vistas, 10--50\,\% de los parches \\
+\bottomrule
+\end{tabularx}
+\caption{Recetas (\texttt{t5\_ssl.recipes.AUG\_RECIPES}). La intensidad del ruido y de la
+deformación está calibrada para alterar el cubo lo mismo (RMSE 0.08).}
+\label{tab:aug}
+\end{table}
+
+% ============================================================
+\section{Arquitecturas}
+\label{sec:arch}
+% ============================================================
+
+Las tres redes parten de pesos de \textbf{ImageNet en 2D} y se \emph{inflan} a 3D: cada filtro
+$k\times k$ se repite $k$ veces en profundidad y se divide por $k$. En el ViT, el parche de
+16$\times$16 se reduce a 8$^3$ y las posiciones se extienden a una grilla de 4$\times$4$\times$4.
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l>{\raggedright\arraybackslash}p{3.0cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.1cm}}
+\toprule
+Método & Encoder & Cabezas (solo para entrenar) & Lo que usa el probe \\
+\midrule
+\textcolor{vicregc}{\textbf{VICReg}} & ConvNeXt-T 3D & proyector 768$\rightarrow$2048$\rightarrow$2048$\rightarrow$2048 (BN, dropout 0.1) & 768 (GAP) \\
+\textcolor{byolc}{\textbf{BYOL}} & ResNet-18 3D sin max-pool & proyector 512$\rightarrow$4096$\rightarrow$256 (BN, dropout 0.1); predictor 256$\rightarrow$4096$\rightarrow$256 (BN) & 512 (GAP, red online) \\
+\textcolor{dinoc}{\textbf{DINOv2}} & ViT-S 3D, parche 8$^3$, 12 bloques & cabezas DINO e iBOT: 384$\rightarrow$2048$\rightarrow$2048$\rightarrow$256$\rightarrow$4096 prototipos & 384 (CLS del profesor) \\
+\bottomrule
+\end{tabularx}
+\caption{Encoders y cabezas. Las cabezas se descartan después del SSL.}
+\label{tab:arch}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm]
+% VICReg
+\node[font=\small\bfseries, text=vicregc] at (-5.2,0.9) {VICReg};
+\node[viewbox, text width=1.6cm] (va) at (-6.2,0) {vista 1};
+\node[viewbox, text width=1.6cm] (vb) at (-4.2,0) {vista 2};
+\node[netbox=vicregc, text width=3.6cm] (ve) at (-5.2,-1.3) {\textbf{ConvNeXt-T 3D}\\una sola red, mismos pesos};
+\node[netbox=vicregc, text width=3.6cm] (vp) at (-5.2,-2.6) {\textbf{Proyector} 2048\\$\Rightarrow z_1,\ z_2$};
+\draw[arr] (va) -- (va |- ve.north); \draw[arr] (vb) -- (vb |- ve.north);
+\draw[arr] (ve) -- (vp);
+% BYOL
+\node[font=\small\bfseries, text=byolc] at (0,0.9) {BYOL};
+\node[netbox=byolc, text width=2.0cm] (bo) at (-1.35,-1.3) {\textbf{online}\\ResNet-18};
+\node[targetbox, text width=2.0cm] (bt) at (1.35,-1.3) {\textbf{target}\\EMA del online};
+\node[netbox=byolc, text width=2.0cm] (bp) at (-1.35,-2.6) {proyector +\\\textbf{predictor} $\Rightarrow p$};
+\node[targetbox, text width=2.0cm] (btp) at (1.35,-2.6) {proyector\\$\Rightarrow \bar z$ (sin grad.)};
+\node[viewbox, text width=1.6cm] (b1) at (-1.35,0) {vista 1};
+\node[viewbox, text width=1.6cm] (b2) at (1.35,0) {vista 2};
+\draw[arr] (b1) -- (bo); \draw[arrg] (b2) -- (bt);
+\draw[arr] (bo) -- (bp); \draw[arrg] (bt) -- (btp);
+\draw[emaarr] (bo) -- (bt);
+% DINOv2
+\node[font=\small\bfseries, text=dinoc] at (5.3,0.9) {DINOv2};
+\node[netbox=dinoc, text width=2.0cm] (ds) at (3.95,-1.3) {\textbf{estudiante}\\ViT-S 3D};
+\node[targetbox, text width=2.0cm] (dt) at (6.65,-1.3) {\textbf{profesor}\\EMA del estudiante};
+\node[netbox=dinoc, text width=2.0cm] (dh) at (3.95,-2.6) {cabezas $\rightarrow$\\4096\\prototipos};
+\node[targetbox, text width=2.0cm] (dth) at (6.65,-2.6) {cabezas\\Sinkhorn-Knopp};
+\node[viewbox, text width=1.9cm] (d1) at (3.95,0) {vista 1 + máscara};
+\node[viewbox, text width=1.6cm] (d2) at (6.65,0) {vista 2};
+\draw[arr] (d1) -- (ds); \draw[arrg] (d2) -- (dt);
+\draw[arr] (ds) -- (dh); \draw[arrg] (dt) -- (dth);
+\draw[emaarr] (ds) -- (dt);
+% pérdidas
+\node[font=\scriptsize, text=primaryblue, align=center] (lv) at (-5.2,-3.7) {acercar $z_1$ y $z_2$\\sin que colapsen};
+\node[font=\scriptsize, text=primaryblue, align=center] (lb) at (0,-3.7) {$p$ predice $\bar z$\\de la otra vista};
+\node[font=\scriptsize, text=primaryblue, align=center] (ld) at (5.3,-3.7) {el estudiante copia el\\reparto en prototipos};
+\draw[arr] (vp) -- (lv);
+\draw[arr] (bp) -- (lb.north west); \draw[arrg] (btp) -- (lb.north east);
+\draw[arr] (dh) -- (ld.north west); \draw[arrg] (dth) -- (ld.north east);
+\end{tikzpicture}
+\caption{Las tres familias. VICReg usa una sola red. BYOL y DINOv2 usan dos copias: la que
+aprende (color) y una copia lenta, promedio móvil (EMA) de sus pesos (gris, sin gradiente).
+Las flechas naranjas discontinuas son la actualización EMA.}
+\label{fig:arch}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\textwidth]{architectures.png}
+\caption{Los tres modelos campeones, de la entrada a la pérdida. El vector marcado
+\emph{probe} es la representación que se evalúa; proyectores, predictor y cabezas solo
+existen para entrenar. En BYOL y DINOv2, la caja punteada es la copia lenta (EMA) que
+produce los objetivos. Abajo, los hiperparámetros fundamentales de cada uno.}
+\label{fig:architectures}
+\end{figure}
+
+% ============================================================
+\FloatBarrier
+\section{Funciones de pérdida}
+\label{sec:losses}
+% ============================================================
+
+\subsection{VICReg: tres fuerzas}
+
+\begin{equation*}
+\mathcal{L}_{\text{VICReg}} = 25\cdot\underbrace{\mathrm{MSE}(z_1,z_2)}_{\text{invarianza}}
++ 25\cdot\underbrace{\big[v(z_1)+v(z_2)\big]}_{\text{varianza}}
++ 1\cdot\underbrace{\big[c(z_1)+c(z_2)\big]}_{\text{covarianza}}
+\end{equation*}
+
+La \textbf{invarianza} acerca las dos vistas. La \textbf{varianza} $v$ castiga cada dimensión
+cuya desviación estándar en el lote quede bajo 1, así que nadie colapsa a una constante. La
+\textbf{covarianza} $c$ castiga dimensiones redundantes. Las dos últimas obligan a separar
+sujetos.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{split361_curvas_vicreg.png}
+\caption{VICReg: la invarianza cae de 0.23 a 0.06; la varianza es casi toda la pérdida. La
+invarianza de validación vale 0 porque el par de validación (cubo y su espejo) es el mismo
+input para una red con pesos ImageNet inflados.}
+\end{figure}
+
+\subsection{BYOL: predecir a la copia lenta}
+
+\begin{equation*}
+\mathcal{L}_{\text{BYOL}} = \tfrac12\Big[\big(2-2\cos(p_1,\bar z_2)\big)+\big(2-2\cos(p_2,\bar z_1)\big)\Big],
+\qquad \theta_{\text{target}}\leftarrow\tau\,\theta_{\text{target}}+(1-\tau)\,\theta_{\text{online}}
+\end{equation*}
+
+La red online predice, con su predictor, la proyección que la target da a la \emph{otra}
+vista. $\tau$ sube de 0.996 a 1 en coseno. Ningún término separa sujetos: lo que evita el
+colapso es la asimetría (predictor solo en la online, sin gradiente en la target).
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{split361_curvas_byol.png}
+\caption{BYOL: el entrenamiento baja a 0.16 y la validación sube desde la época 4 aproximadamente. La
+Sección~\ref{sec:byol} muestra que no es memorización.}
+\end{figure}
+
+\subsection{DINOv2: repartir en prototipos}
+
+\begin{equation*}
+\mathcal{L}_{\text{DINOv2}} = \underbrace{\mathrm{CE}\big(P_t(\text{CLS}_2),\,P_s(\text{CLS}_1)\big)}_{\text{DINO}}
++ 1.0\cdot\underbrace{\mathrm{CE}\big(P_t(\text{parches}),\,P_s(\text{parches enmasc.})\big)}_{\text{iBOT}}
++ 0.1\cdot\underbrace{\mathrm{KoLeo}}_{\text{dispersión}}
+\end{equation*}
+
+Cada imagen se reparte en 4096 prototipos (softmax con temperatura 0.1 para el estudiante y
+0.01 para el profesor). \textbf{DINO}: el CLS del estudiante reproduce el reparto que el
+profesor da a la otra vista. \textbf{iBOT}: los parches tapados reproducen los del profesor.
+\textbf{KoLeo}: separa los CLS del lote. Sinkhorn-Knopp reparte los prototipos de forma pareja
+para que no se concentren en uno.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{split361_curvas_dinov2.png}
+\caption{DINOv2: DINO baja de 8.4 a 6.75 (bajo $\ln K = 8.3$), iBOT de 4.2 a 3.4; a diferencia
+del informe v2, la validación ahora también baja. La entropía del profesor se mantiene en
+0.67--0.76\,$\ln K$: sin colapso.}
+\end{figure}
+
+\subsection{Lo común a los tres}
+
+AdamW con tasa $10^{-4}$, 6 épocas de \emph{warmup} y decaimiento coseno hasta $10^{-6}$; lote
+de 16; 30 épocas; bf16; 3 semillas; se evalúa el estado final, sin \emph{early stopping}.
+DINOv2 usa además \emph{weight decay} 0.04$\rightarrow$0.2 y recorte de gradiente.
+
+% ============================================================
+\section{Cómo evaluamos}
+\label{sec:eval}
+% ============================================================
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm]
+\node[evalbox] (enc) at (0,0) {\textbf{Encoder congelado}\\cabezas descartadas};
+\node[evalbox] (emb) at (4.2,0) {\textbf{Un vector por sujeto}\\promedio de sus sesiones,\\cubo limpio};
+\node[evalbox] (lr) at (8.4,0) {\textbf{Regresión logística}\\estandarizada, clases balanceadas};
+\node[evalbox, fill=white] (cv) at (2.1,-2.3) {\textbf{CV 5$\times$5}\\329 sujetos AD/HC\\(266 train + 63 val)};
+\node[evalbox, fill=white] (te) at (6.3,-2.3) {\textbf{Test}\\ajuste en 266 de train,\\$C$ elegido en val, una vez\\sobre 84 sujetos};
+\node[evalbox, fill=white, draw=accentorange] (col) at (10.5,-2.3) {\textbf{Monitor de colapso}\\cada 2 épocas, en 147\\sujetos no vistos};
+\draw[arr] (enc) -- (emb); \draw[arr] (emb) -- (lr);
+\draw[arr] (lr.south) -- ++(0,-0.5) -| (cv.north);
+\draw[arr] (lr.south) -- ++(0,-0.5) -| (te.north);
+\draw[emaarr] (enc.south) -- ++(0,-0.25) -| (col.north);
+\end{tikzpicture}
+\caption{Del encoder entrenado a los números del informe.}
+\label{fig:eval}
+\end{figure}
+
+\begin{itemize}
+\item \textbf{Métricas:} AUROC (la principal), F1-macro y AUPR.
+\item \textbf{Comparación justa:} cada modelo se compara con \emph{el mismo encoder y la misma
+  entrada sin SSL} (pesos ImageNet o DeiT inflados). La diferencia lleva un intervalo de
+  confianza del 95\,\% por \emph{bootstrap} pareado sobre sujetos.
+\item \textbf{Colapso:} rango efectivo, varianza entre sujetos sobre varianza por augmentation y
+  top-1 (si una vista encuentra a su gemela entre 147; azar 0.7\,\%).
+\end{itemize}
+
+\begin{warnbox}[CV y test no miden lo mismo]
+266 de los 329 sujetos del CV estuvieron en el entrenamiento SSL (sin etiquetas). El test son
+sujetos que el encoder nunca vio, pero con 84 sujetos sus intervalos son anchos (unos
+$\pm0.05$ a $\pm0.07$).
+\end{warnbox}
+
+% ============================================================
+\section{Resultados}
+\label{sec:results}
+% ============================================================
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{split361_metricas.png}
+\caption{Las tres métricas en CV y test. Color: modelo con SSL; gris: mismo encoder sin SSL;
+puntos: semillas.}
+\label{fig:metrics}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{delta.png}
+\caption{Lo que aporta el SSL: diferencia de AUROC con el mismo encoder sin entrenar, con IC
+del 95\,\%. Un intervalo que no toca el cero es una mejora significativa.}
+\label{fig:delta}
+\end{figure}
+
+\begin{ideabox}[Cómo leerlo]
+\begin{itemize}[leftmargin=12pt]
+\item \textbf{DINOv2} es el único que mejora en CV \emph{y} en test, pero porque su ViT sin
+  entrenar es el peor punto de partida (0.778 CV, 0.727 test). Con SSL alcanza a las CNN, no
+  las supera.
+\item \textbf{VICReg} mejora en CV; en test, $+0.029$ queda dentro del ruido.
+\item \textbf{BYOL} queda igual que su ResNet ImageNet, que ya era el mejor encoder sin SSL
+  (0.860 CV).
+\end{itemize}
+\end{ideabox}
+
+% ============================================================
+\section{¿Colapsan?}
+\label{sec:collapse}
+% ============================================================
+
+No. En los 147 sujetos no vistos, la diferencia entre sujetos crece a lo largo del
+entrenamiento y termina muy por encima de la variación por augmentation.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{collapse.png}
+\caption{Encoder online, media de 3 semillas. Izquierda: sobre 1 (línea punteada), el sujeto
+pesa más que la augmentation. Derecha: fracción de vistas que encuentran a su gemela.}
+\label{fig:collapse}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{lrrl}
+\toprule
+Modelo & Var sujeto / Var aug. & Rango efectivo & Top-1 de vistas \\
+\midrule
+VICReg & 23.2 & 7.2 & 0.75 \\
+BYOL & 34.2 & 10.5 & 0.96 \\
+DINOv2 & 10.5 & 22.7 & 1.00 \\
+\bottomrule
+\end{tabular}
+\caption{Valores finales (época 30). En el informe v2, BYOL tenía cocientes de $4\times10^{-5}$
+y rangos de 1--1.2.}
+\end{table}
+
+\begin{warnbox}[Reconocer al sujeto no es reconocer la enfermedad]
+Los tres aprenden muy bien \emph{quién} es cada sujeto (DINOv2 reconoce el 100\,\% de las
+vistas), pero el probe mejora poco. La identidad del sujeto no basta para separar AD de HC.
+\end{warnbox}
+
+% ============================================================
+\section{El espacio latente}
+\label{sec:latent}
+% ============================================================
+
+Los embeddings salen directo de los modelos campeones de este informe (semilla 1, estado final),
+sin reentrenar nada: un vector por sujeto (promedio de sus sesiones, cubo limpio) para los 413
+sujetos AD/HC. El probe de esta sección es una regresión logística evaluada \emph{fuera de
+muestra} con 5 pliegues sobre los 413 sujetos, así que sus AUROC difieren algo de los de la
+Sección~\ref{sec:results}.
+
+\subsection{AD y HC en el espacio latente}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{latent.png}
+\caption{Cada punto es un sujeto. Fila 1: las dos direcciones de mayor varianza (PCA). Fila 2:
+t-SNE, que conserva vecindarios. Fila 3: puntaje del probe para cada sujeto, calculado sin que
+el probe lo haya visto.}
+\label{fig:latent}
+\end{figure}
+
+\begin{itemize}
+\item \textbf{AD y HC no forman grupos separados}, sino un gradiente: en t-SNE los vecinos
+  tienden a compartir diagnóstico, pero hay mucha mezcla.
+\item \textbf{La dirección principal ya ordena el diagnóstico}: en VICReg y BYOL la primera
+  componente (32--34\,\% de la varianza) correlaciona $-0.56$ con AD; en DINOv2, $+0.51$
+  (el signo de una componente es arbitrario).
+\item \textbf{El probe separa con solapamiento}: AUROC fuera de muestra de 0.86 (VICReg), 0.87
+  (BYOL) y 0.80 (DINOv2).
+\end{itemize}
+
+\subsection{¿Qué codifican los embeddings?}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{latent_corr.png}
+\caption{Correlación de cada variable con las 5 primeras componentes del embedding y con su
+mejor predicción lineal desde el vector completo. El ruido se mide en la sustancia blanca de la
+resonancia completa (dispersión de alta frecuencia en un tejido homogéneo). Sexo no está
+disponible en OASIS3.}
+\label{fig:latentcorr}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=0.9\textwidth]{latent_tsne_vars.png}
+\caption{El mismo mapa t-SNE de cada modelo, coloreado por cada variable (color = percentil
+entre los 413 sujetos). Una variable que el embedding codifica aparece como un gradiente suave
+sobre el mapa; una que no codifica, como sal y pimienta (educación). $r$: correlación entre la
+variable y su predicción lineal desde el embedding completo, fuera de muestra (la última
+columna de la Figura~\ref{fig:latentcorr}). Con marco de color, las variables que cada modelo
+codifica al menos tan bien como el diagnóstico: todas menos la educación.}
+\label{fig:tsnevars}
+\end{figure}
+
+\begin{itemize}
+\item \textbf{La primera componente es un eje de atrofia}: sigue al volumen del hipocampo
+  ($|\rho|$ 0.71--0.84), al de los ventrículos (0.70--0.80) y a la edad (0.53--0.60).
+\item \textbf{El vector completo codifica casi perfecto la anatomía}: volumen del hipocampo
+  (0.87--0.91), ventrículos (0.83--0.86) y volumen cerebral (0.81--0.83). La educación no
+  aparece ($\leq$0.10).
+\item \textbf{También codifica la intensidad y el ruido} (0.76--0.96): el encoder ve toda la
+  imagen, no solo lo útil para el diagnóstico.
+\end{itemize}
+
+\begin{warnbox}[La edad pesa tanto como el diagnóstico]
+El embedding predice la edad (0.57--0.67) tan bien como el diagnóstico (0.51--0.65). Como los AD
+son 7 años mayores (Sección~\ref{sec:data}), parte del eje AD es un eje de envejecimiento.
+\end{warnbox}
+
+\subsection{¿Cómo garantizamos que no aprende solo el ruido?}
+
+No hay una prueba única. Lo que sí se puede hacer es buscar la huella que dejaría un modelo que
+aprendió ruido y comprobar que no aparece. Hay tres huellas fáciles de medir.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{noise_checks.png}
+\caption{Tres pruebas sobre los embeddings de los campeones. 1: probe ajustado en train+val con
+cubos limpios y evaluado en los 84 sujetos de test con ruido gaussiano añadido. 2: para cada
+sesión, ¿su vecino más cercano entre 131 sesiones es otra sesión del mismo sujeto? 3:
+correlación parcial de Spearman del puntaje AD (marca negra: la del diagnóstico real).}
+\label{fig:noise}
+\end{figure}
+
+\begin{enumerate}[leftmargin=16pt]
+\item \textbf{Si dependiera del ruido, más ruido cambiaría la respuesta.} Con ruido añadido
+  hasta $\sigma=0.3$, los modelos con SSL mantienen el AUROC de test (VICReg 0.83$\rightarrow$0.86,
+  BYOL 0.87$\rightarrow$0.86, DINOv2 0.85$\rightarrow$0.80). Los mismos encoders sin SSL caen
+  (BYOL 0.82$\rightarrow$0.59, DINOv2 0.76$\rightarrow$0.53): el SSL los hizo más robustos al
+  ruido.
+\item \textbf{Si codificara el ruido de cada imagen, no reconocería al sujeto en otra
+  sesión.} Dos resonancias de la misma persona en días distintos tienen ruido distinto y la
+  misma anatomía. El vecino más cercano es otra sesión del mismo sujeto el 23\,\% (VICReg), 47\,\%
+  (BYOL) y 79\,\% (DINOv2) de las veces, frente a un azar de 1\,\%. VICReg y BYOL quedan bajo sus
+  encoders sin SSL (67\,\% y 82\,\%): su invarianza descarta parte del detalle fino.
+\item \textbf{Si siguiera al ruido, el eje AD no seguiría a la anatomía.} Descontando edad y
+  ruido, el puntaje AD correlaciona con el volumen del hipocampo ($|\rho|$ 0.62--0.77), más que el
+  propio diagnóstico (0.54). En DINOv2, borrar el canal del hipocampo baja el AUROC de test de
+  0.85 a 0.77; borrar el ventrículo o la corteza posteromedial apenas lo mueve (0.84--0.85).
+\end{enumerate}
+
+\begin{ideabox}[Respuesta corta]
+Las tres pruebas apuntan a que la decisión se apoya en la \textbf{anatomía} (sobre todo en el
+hipocampo) y no en el ruido. Queda una señal residual: descontando anatomía y edad, el puntaje AD
+todavía correlaciona 0.18--0.28 con el ruido de la sustancia blanca, más que el diagnóstico real
+(0.10). Puede ser textura de lesiones de sustancia blanca o algo de la adquisición. Para
+\emph{garantizarlo} faltan dos pruebas: validar en otra cohorte u otro escáner (ADNI ya está en
+el LMDB) y controlar por escáner, un dato que hoy no está en el CSV.
+\end{ideabox}
+
+% ============================================================
+\section{BYOL: ¿por qué sube su validación?}
+\label{sec:byol}
+% ============================================================
+
+La pérdida de validación de BYOL sube desde la época 4 mientras la de entrenamiento baja.
+Parecía sobreajuste. Se probó con lotes más grandes y con GroupNorm en las cabezas (30 épocas,
+3 semillas), y se midió el objetivo con las mismas vistas en sujetos de train y no vistos.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{byol_diag_objetivo.png}
+\caption{Paneles 3 y 4: con la red en modo evaluación, el objetivo es idéntico en sujetos de
+train y no vistos (brecha bajo 0.015). No hay memorización.}
+\label{fig:byoldiag}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{lrrrr}
+\toprule
+Configuración & AUROC CV & AUROC test & Objetivo (modo eval.) & Subida de val. \\
+\midrule
+Actual (lote 16, BN) & 0.851 & 0.831 & 1.39 & 0.42 \\
+Lote 32 & 0.847 & 0.833 & 1.18 & 0.34 \\
+Lote 64 & 0.848 & 0.829 & 1.12 & 0.17 \\
+GroupNorm en cabezas & 0.853 & 0.821 & 0.35 & 0.09 \\
+\bottomrule
+\end{tabular}
+\caption{Ninguna variante cambia el probe: diferencias de AUROC entre $-0.010$ y $+0.003$,
+ninguna significativa. Objetivo y subida: pérdida $2-2\cos$ al final del entrenamiento.}
+\end{table}
+
+\begin{byolbox}[Diagnóstico]
+No es memorización: es la \textbf{batch norm}. En entrenamiento las cabezas normalizan con las
+estadísticas del lote (pérdida 0.16); en evaluación, con promedios globales, y ahí el objetivo
+vale 1.4 \emph{incluso en sujetos de train}. Lotes más grandes achican la brecha y GroupNorm casi
+la elimina, pero el encoder que usa el probe rinde igual. La curva que sube es inofensiva.
+\end{byolbox}
+
+% ============================================================
+\section{Costo y velocidad}
+\label{sec:cost}
+% ============================================================
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{lrrrr}
+\toprule
+Modelo & volúmenes/s & s por época & VRAM pico & min por corrida \\
+\midrule
+BYOL & 790 & 1.1 & 10.0 GB & 1.8 \\
+VICReg & 469 & 1.7 & 1.1 GB & 2.0 \\
+DINOv2 & 27 & 27.1 & 1.3 GB & 16.6 \\
+\bottomrule
+\end{tabular}
+\caption{RTX 5090 (RunPod, 0.69 USD/h), 9 corridas en paralelo con CUDA MPS: 20.2 minutos de
+reloj y 0.33 USD.}
+\end{table}
+
+DINOv2 es 16 a 25 veces más lento por época porque la deformación elástica de TorchIO se calcula en la CPU,
+no por el ViT: la GPU estuvo ocupada solo el 13\,\% del tiempo.
+
+% ============================================================
+\section{Entrenamiento más largo: 100 épocas}
+\label{sec:e100}
+% ============================================================
+
+Repetimos el entrenamiento del informe con \textbf{100 épocas en vez de 30}: mismo split, mismas
+entradas, mismas augmentations, 3 semillas, misma evaluación. Tres cambios:
+
+\begin{itemize}
+\item \textbf{BYOL usa la variante elegida en la Sección~\ref{sec:byol}}: GroupNorm en proyector y
+  predictor, dropout 0.3 en el proyector y weight decay 0.01 (\texttt{gn\_dp0.3\_dq0\_wd0.01}).
+\item \textbf{VICReg valida con vistas aumentadas.} Antes la pérdida de validación comparaba el cubo
+  con su espejo L/R; como el entrenamiento ya incluye ese espejo, la invarianza de validación
+  quedaba en cero y no informaba nada. Ahora usa las augmentations de entrenamiento, fijas por
+  sesión (la misma semilla en cada época), así que la curva es comparable entre épocas. La
+  evaluación (probe) sigue con el cubo limpio.
+\item \textbf{Dos referencias nuevas para cada encoder} (Tabla~\ref{tab:refs100}).
+\end{itemize}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{lX}
+\toprule
+Barra & Qué es \\
+\midrule
+\textbf{Supervisado completo} & El mismo encoder (mismos pesos iniciales, entrada y augmentation)
+  más una capa lineal, entrenados de punta a punta con BCE balanceada en los 266 sujetos AD/HC
+  de train (AdamW, lr $10^{-4}$, warmup y coseno, lote 16). Se queda la época con mejor AUROC de
+  validación (máx.\ 100, paciencia 20). CV: 5 folds sobre los 329 sujetos, cada uno entrenado
+  hasta esa época. \\
+\textbf{SSL} & El encoder tras 100 épocas de SSL, congelado, con el probe de la
+  Sección~\ref{sec:eval}. \\
+\textbf{Sin SSL} & El mismo encoder \emph{antes} del SSL (pesos ImageNet o DeiT inflados, el
+  punto de partida del SSL), congelado, con el mismo probe. Sus pesos no dependen de la semilla
+  (solo el \emph{mask token} del ViT, que no se usa al evaluar), así que una corrida vale para
+  las tres. \\
+\bottomrule
+\end{tabularx}
+\caption{Las tres barras de la Figura~\ref{fig:metrics100}, en su orden. Como referencia extra
+también evaluamos el mismo encoder con pesos aleatorios
+(\nolinkurl{split361_100/REPORT.md}).}
+\label{tab:refs100}
+\end{table}
+
+\begin{warnbox}[El supervisado necesita calibración]
+Cada modelo supervisado termina con su propio sesgo: detenidos en una época temprana, la mediana
+de su probabilidad de AD va de 0.0 a 0.98 según el fold. Juntar las predicciones de los 5 folds
+bajaba el AUROC de CV de unos 0.84 (dentro de cada fold) a 0.74, y el umbral 0.5 del F1 dejaba de
+tener sentido. Por eso cada modelo supervisado recibe la misma calibración que el probe: una
+regresión logística balanceada sobre sus propios logits en sus sujetos de entrenamiento (sin
+etiquetas de validación ni de test). No cambia el AUROC de test; corrige el CV y el F1.
+\end{warnbox}
+
+\subsection{Las tres arquitecturas, rama por rama}
+
+Cada figura separa las dos ramas en bandas de distinto color. A la izquierda, el cubo limpio de un
+sujeto de validación y las dos vistas que su receta produce (cortes centrales del volumen de
+32$^3$). En VICReg las dos ramas son la misma red; en BYOL y DINOv2 la rama de abajo (punteada) es
+una copia lenta (EMA) que no recibe gradiente (\emph{sg}).
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{arch_vicreg.png}
+\caption{VICReg: dos vistas \texttt{geo} por la misma ConvNeXt-T 3D; la pérdida acerca $z_1$ y
+$z_2$ y mantiene la varianza y la decorrelación de las dimensiones.}
+\label{fig:archvicreg}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{arch_byol.png}
+\caption{BYOL con la variante elegida: cabezas con GroupNorm, dropout 0.3 en el proyector y
+weight decay 0.01. Solo la rama online tiene predictor y recibe gradiente.}
+\label{fig:archbyol}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{arch_dinov2.png}
+\caption{DINOv2: el alumno ve la vista con un bloque de parches ocultos (color) y el profesor la
+vista completa; el probe usa el CLS del profesor.}
+\label{fig:archdinov2}
+\end{figure}
+
+\subsection{Métricas}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{split361_100_metricas.png}
+\caption{Las tres métricas tras 100 épocas. Rayado: supervisado completo; color: SSL; gris: el
+mismo encoder antes del SSL. Puntos: semillas.}
+\label{fig:metrics100}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\textwidth]{delta_100.png}
+\caption{Diferencia de AUROC del SSL frente al mismo encoder sin SSL (círculo lleno) y frente al
+supervisado (cuadrado vacío), con IC del 95\,\% por bootstrap pareado.}
+\label{fig:delta100}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+ & \multicolumn{4}{c}{AUROC CV / test} & \multicolumn{2}{c}{$\Delta$ AUROC del SSL 100 (CV / test)} \\
+\cmidrule(lr){2-5}\cmidrule(lr){6-7}
+Modelo & Supervisado & SSL 100 & SSL 30 & Sin SSL & vs sin SSL & vs supervisado \\
+\midrule
+\textcolor{vicregc}{\textbf{VICReg}} & .864 / .849 & .877 / .834 & .875 / .835 & .848 / .806 &
+  $+.028^{*}$ / $+.028$ & $+.016$ / $-.015$ \\
+\textcolor{byolc}{\textbf{BYOL}} & .827 / .850 & .846 / .838 & .854 / .843 & .860 / .808 &
+  $-.015$ / $+.030$ & $+.026^{*}$ / $-.012$ \\
+\textcolor{dinoc}{\textbf{DINOv2}} & .833 / .825 & .832 / .833 & .839 / .831 & .778 / .727 &
+  $+.047^{*}$ / $+.106^{*}$ & $+.002$ / $+.009$ \\
+\bottomrule
+\end{tabular}
+\caption{Media de 3 semillas. $^{*}$ = IC del 95\,\% enteramente sobre cero. De 30 a 100 épocas
+ninguna diferencia supera $\pm0.008$ ni es significativa. Detalle en
+\nolinkurl{campaign_ssl3d_runpod/split361_100/REPORT.md}.}
+\label{tab:summary100}
+\end{table}
+
+\begin{ideabox}[Cómo leerlo]
+\begin{itemize}[leftmargin=12pt]
+\item \textbf{Entrenar más no ayuda}: con 100 épocas los tres quedan donde estaban a las 30.
+\item \textbf{Frente al mismo encoder sin SSL}, DINOv2 gana mucho ($+0.047$ CV, $+0.106$ test,
+  ambos significativos) porque su ViT de partida es el peor (0.778 / 0.727). VICReg gana en CV
+  ($+0.028$, significativo) y $+0.028$ en test (dentro del ruido). BYOL no supera a su ResNet
+  ImageNet en CV ($-0.015$); en test, $+0.030$ no es significativo.
+\item \textbf{Frente al supervisado completo}, el SSL empata en test (de $-0.015$ a $+0.009$, nada
+  significativo) y empata o gana en CV. Con 266 sujetos etiquetados, el SSL con un probe lineal
+  rinde lo mismo que entrenar la red entera con las etiquetas.
+\item \textbf{El supervisado tampoco se separa mucho del encoder de partida}, salvo en el ViT
+  ($+0.045$ CV, $+0.097$ test, significativos). En las dos CNN gana $+0.043$ en test sin
+  significancia, y en la ResNet de BYOL queda incluso $0.040$ bajo ella en CV (significativo).
+\end{itemize}
+\end{ideabox}
+
+\begin{warnbox}[El CV del supervisado no es el mismo CV]
+El probe repite 5 veces una CV de 5 folds; el supervisado hace una sola (5 entrenamientos por
+semilla) y cada fold entrena hasta la época que eligió la validación. El test (mismos 84 sujetos,
+mismo modelo final) es la comparación más limpia.
+\end{warnbox}
+
+\subsection{Curvas de entrenamiento}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{split361_100_curvas_vicreg.png}
+\includegraphics[width=0.8\textwidth]{split361_100_curvas_byol.png}
+\includegraphics[width=\textwidth]{split361_100_curvas_dinov2.png}
+\caption{Pérdidas de los tres modelos en 100 épocas (continua: train; discontinua: validación).}
+\label{fig:curves100}
+\end{figure}
+
+\begin{itemize}
+\item \textbf{VICReg}: la invarianza de validación ya no es cero. Sube a 0.05 en la primera época y
+  baja hasta 0.007: el encoder se vuelve invariante a las augmentations también en sujetos que no
+  entrena. Queda bajo la de train (0.04) porque en validación las dos vistas se normalizan con las
+  mismas estadísticas de batch norm, y en train cada vista con las de su lote.
+\item \textbf{BYOL}: la validación (cubo vs espejo) baja hasta la época 13--17 (0.13--0.19) y
+  luego sube y se estabiliza en 0.24--0.53 según la semilla. La pérdida de train sigue bajando
+  hasta 0.02.
+\item \textbf{DINOv2}: las tres pérdidas siguen bajando hasta el final; la de validación se separa
+  de la de train desde la época 20 y la entropía del profesor se estabiliza en 0.65 de su máximo.
+\end{itemize}
+
+\subsection{Colapso}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{collapse_100.png}
+\caption{Igual que la Figura~\ref{fig:collapse}, en 100 épocas (punteada: la corrida de 30).}
+\label{fig:collapse100}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+ & \multicolumn{2}{c}{Var sujeto / Var aug.} & \multicolumn{2}{c}{Rango efectivo} &
+ \multicolumn{2}{c}{Top-1 de vistas} \\
+Modelo & 30 ép. & 100 ép. & 30 ép. & 100 ép. & 30 ép. & 100 ép. \\
+\midrule
+VICReg & 23.2 & 47.1 & 7.2 & 9.5 & 0.75 & 0.95 \\
+BYOL$^{\dagger}$ & 34.2 & 56.7 & 10.5 & 13.2 & 0.96 & 0.99 \\
+DINOv2 & 10.5 & 17.4 & 22.7 & 25.6 & 1.00 & 1.00 \\
+\bottomrule
+\end{tabular}
+\caption{Valores finales en los 147 sujetos no vistos. $^{\dagger}$BYOL a 30 épocas es la
+variante anterior (\texttt{wide\_dproj0.1}).}
+\end{table}
+
+Ninguno colapsa: con más épocas la diferencia entre sujetos sigue creciendo en VICReg y BYOL, y en
+DINOv2 se estabiliza desde la época 30. Todos reconocen casi el 100\,\% de las vistas.
+
+\subsection{BYOL en 100 épocas}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{byol_objetivo_100.png}
+\caption{BYOL elegido, 100 épocas (naranja) frente a 30 (gris). Derecha: el objetivo con la red en
+modo evaluación y las mismas vistas, en sujetos de train (continua) y no vistos (discontinua).}
+\label{fig:byol100}
+\end{figure}
+
+\begin{byolbox}[Con más épocas aparece una brecha pequeña]
+A 30 épocas el objetivo en modo evaluación era el mismo en sujetos de train y no vistos (brecha
+$\leq0.015$). A 100 épocas los no vistos quedan 0.03--0.07 por encima desde la época 60: ahora
+sí hay un poco de memorización del objetivo, pero no se traduce en el probe.
+\end{byolbox}
+
+\subsection{El supervisado}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{supervised_100.png}
+\caption{Entrenamiento supervisado, una línea por semilla. Punto: la época elegida en
+validación.}
+\label{fig:sup100}
+\end{figure}
+
+\begin{itemize}
+\item \textbf{Aprende rápido y sobreajusta pronto}: la ResNet-18 (BYOL) llega a su mejor
+  validación en las épocas 6--13 y su BCE de entrenamiento cae hasta 0.05; la ConvNeXt (VICReg)
+  en las 12--49; el ViT (DINOv2) en las 18--51, con una semilla estancada en BCE 0.69 durante
+  las primeras 45 épocas.
+\item \textbf{En test es el mejor número del informe} (0.849 ConvNeXt, 0.850 ResNet, 0.825 ViT),
+  pero dentro del ruido del SSL (Tabla~\ref{tab:summary100}).
+\item \textbf{Frente al encoder sin SSL} (el de partida, congelado) solo el ViT mejora de forma
+  significativa ($+0.045$ CV, $+0.097$ test); la ConvNeXt gana $+0.043$ en test sin
+  significancia y la ResNet queda $0.040$ por debajo en CV.
+\end{itemize}
+
+\subsection{Costo}
+
+RTX 5090 en RunPod. SSL y encoders aleatorios: 1.83 horas, 1.27 USD (DINOv2 tomó 102 minutos
+por semilla, 3 en paralelo; VICReg y BYOL, 8--10 minutos). Supervisado: 0.82 USD en un host con
+red lenta, más 0.07 USD en tres pods descartados porque CUDA no arrancaba en su contenedor.
+Total: 2.16 USD.
+
+\subsection{El espacio latente tras 100 épocas}
+
+Mismo análisis de la Sección~\ref{sec:latent}, ahora con los modelos de 100 épocas (semilla 1,
+estado final). ``Sin SSL'' es, como en las métricas, el encoder \emph{de partida} (pesos ImageNet
+o DeiT inflados), el punto desde el que arranca el SSL.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{latent_100.png}
+\caption{Como la Figura~\ref{fig:latent}, con los modelos de 100 épocas.}
+\label{fig:latent100}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{latent_corr_100.png}
+\caption{Como la Figura~\ref{fig:latentcorr}, con los modelos de 100 épocas.}
+\label{fig:latentcorr100}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=0.9\textwidth]{latent_tsne_vars_100.png}
+\caption{Como la Figura~\ref{fig:tsnevars}, con los modelos de 100 épocas.}
+\label{fig:tsnevars100}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{noise_checks_100.png}
+\caption{Como la Figura~\ref{fig:noise}, con los modelos de 100 épocas.}
+\label{fig:noise100}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+ & \multicolumn{2}{c}{VICReg} & \multicolumn{2}{c}{BYOL$^{\dagger}$} & \multicolumn{2}{c}{DINOv2} \\
+ & 30 & 100 & 30 & 100 & 30 & 100 \\
+\midrule
+AUROC del probe fuera de muestra & 0.86 & 0.86 & 0.87 & 0.86 & 0.80 & 0.83 \\
+Varianza de la 1.ª componente & 0.32 & 0.22 & 0.34 & 0.22 & 0.15 & 0.12 \\
+$|\rho|$ 1.ª componente -- AD & 0.56 & 0.49 & 0.56 & 0.59 & 0.51 & 0.56 \\
+$|\rho|$ 1.ª componente -- vol.\ hipocampo & 0.71 & 0.67 & 0.84 & 0.84 & 0.72 & 0.76 \\
+AUROC test con ruido $\sigma=0.3$ & 0.86 & 0.84 & 0.86 & 0.84 & 0.80 & 0.84 \\
+Otra sesión del mismo sujeto (top-1) & 0.23 & 0.23 & 0.47 & 0.65 & 0.79 & 0.74 \\
+Puntaje AD -- vol.\ hipocampo (parcial) & 0.77 & 0.76 & 0.76 & 0.79 & 0.62 & 0.77 \\
+Puntaje AD -- ruido (parcial) & 0.24 & 0.23 & 0.18 & 0.23 & 0.28 & 0.39 \\
+\bottomrule
+\end{tabular}
+\caption{Lo que cambia en el espacio latente de 30 a 100 épocas (semilla 1). $^{\dagger}$BYOL a 30
+épocas es la variante anterior.}
+\label{tab:latent100}
+\end{table}
+
+\begin{itemize}
+\item \textbf{Casi nada cambia en lo que se puede separar}: el probe fuera de muestra queda en
+  0.86 (VICReg y BYOL) y DINOv2 sube de 0.80 a 0.83. La primera componente sigue siendo un eje de
+  atrofia ($|\rho|$ 0.67--0.84 con el volumen del hipocampo) y explica menos varianza (0.12--0.22):
+  el embedding reparte la información en más direcciones, como ya indicaba el rango efectivo.
+\item \textbf{La robustez al ruido se mantiene}: con $\sigma=0.3$ los tres quedan en 0.84 de AUROC
+  de test, mientras los encoders de partida caen hasta 0.53--0.59.
+\item \textbf{El eje AD sigue apoyado en la anatomía}: descontando edad y ruido, el puntaje AD
+  correlaciona 0.76--0.79 con el volumen del hipocampo (el diagnóstico real, 0.54); DINOv2 sube
+  de 0.62 a 0.77. Pero en DINOv2 la señal residual de ruido también crece, de 0.28 a 0.39
+  (VICReg y BYOL quedan en 0.23; el diagnóstico real, 0.10).
+\item \textbf{BYOL reconoce mejor al sujeto en otra sesión} (47\,\% $\rightarrow$ 65\,\%), más
+  cerca de su encoder de partida (82\,\%): la variante con GroupNorm descarta menos detalle fino.
+\end{itemize}
+
+% ============================================================
+\section{Conclusiones}
+% ============================================================
+
+\begin{enumerate}[leftmargin=16pt]
+\item Con el split 361/63/84 los tres métodos son estables: ninguno colapsa y las semillas
+  coinciden.
+\item En test los tres quedan en 0.83--0.84 de AUROC: no hay un ganador claro.
+\item El SSL aporta poco sobre un buen punto de partida: $+0.026$ en VICReg, nada en BYOL.
+  DINOv2 gana mucho, pero porque arranca desde abajo.
+\item Los encoders aprenden la identidad del sujeto mucho mejor que la enfermedad.
+\item La validación creciente de BYOL es un efecto de la batch norm, no sobreajuste. A 100 épocas
+  aparece además una brecha pequeña entre sujetos de train y no vistos (0.03--0.07).
+\item Entrenar 100 épocas en vez de 30 no cambia ninguna métrica: los modelos ya estaban
+  saturados.
+\item Con 266 sujetos etiquetados, el SSL con probe lineal rinde lo mismo que el entrenamiento
+  supervisado completo del mismo encoder. Frente al mismo encoder sin SSL, DINOv2 gana mucho
+  (parte del ViT más débil), VICReg algo (solo en CV) y BYOL nada.
+\end{enumerate}
+
+\appendix
+\section{Reproducir este informe}
+
+\begin{itemize}
+\item Split: \texttt{python} \nolinkurl{scripts/make_split_361_63_84.py}
+  $\rightarrow$ \nolinkurl{campaign_ssl3d_runpod/split_361_63_84/}.
+\item Entrenamiento: \nolinkurl{run_all.py} con \texttt{-{}-set}
+  \nolinkurl{data.manifest_path=campaign_ssl3d_runpod/split_361_63_84/manifest.csv};
+  resultados en \nolinkurl{campaign_ssl3d_runpod/split361_30/}.
+\item Figuras: \texttt{python scripts/build\_report\_split361.py}; luego, desde \texttt{docs/},
+  dos veces \texttt{pdflatex informe\_split361.tex}.
+\item 100 épocas (Sección~\ref{sec:e100}): \nolinkurl{run_all.py} con \texttt{-{}-epochs 100
+  -{}-identity -{}-collapse-every 2} y las especificaciones
+  \nolinkurl{vicreg:geo:32:campaign_augval}, \nolinkurl{byol:noise:32:gn_dp0.3_dq0_wd0.01} y
+  \nolinkurl{dinov2:elastic:multi3}; encoders aleatorios con \nolinkurl{train.py --init-only}
+  y \nolinkurl{model.backbone.pretrained=false}; supervisado con
+  \nolinkurl{scripts/train_supervised.py}. Resultados en
+  \nolinkurl{campaign_ssl3d_runpod/split361_100/} (\texttt{REPORT.md}).
+\item Figuras de 100 épocas: \nolinkurl{scripts/report_split361_100.py} y
+  \nolinkurl{scripts/analyze_latent_split361.py} con \texttt{-{}-runs split361\_100 -{}-out
+  latent\_split361\_100 -{}-suffix \_100} y los nombres de VICReg y BYOL en \texttt{-{}-run}.
+\end{itemize}
+
+\end{document}
