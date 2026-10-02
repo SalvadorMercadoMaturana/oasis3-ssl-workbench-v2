@@ -16,6 +16,14 @@ improvement, and scored on test. The CV row trains ``--folds`` folds
 subjects, the same subjects as the frozen-probe CV) with the same schedule,
 stopped at that best epoch, and pools the out-of-fold scores.
 
+Scores are calibrated like the frozen probe's class-balanced logistic regression:
+each trained model gets a balanced Platt scaling fit on its own training
+subjects' logits (no val/test labels). Without it every fold model has its own
+bias (median probability 0.0 to 0.98 at the early selected epochs), which drags
+the pooled CV AUROC down and breaks the 0.5 threshold of F1; rank metrics of a
+single model (test AUROC/AUPR) are unchanged. ``cv.clean.per_fold`` keeps the
+within-fold metrics and ``cv.clean.pooled_uncalibrated`` the raw pooled ones.
+
 ``<out-root>/<tag>/<model>_supervised[__<recipe>]__roi<roi>_s<seed>/result.json``
 has the ``subjects``/``labels``/``cv``/``test`` fields of the train.py probe
 results, so the plotting and bootstrap code reads both alike.
@@ -232,12 +240,21 @@ def run(args: argparse.Namespace) -> int:
                 if r["subject"] in dm.subject_labels]
 
     sigmoid = lambda x: 1 / (1 + np.exp(-x))  # noqa: E731
+
+    def calibrator(model: Any, fit_records: list[dict]) -> Any:
+        """Balanced Platt scaling on the model's own training subjects."""
+        from sklearn.linear_model import LogisticRegression
+        _, logit, labels = trainer.predict(model, fit_records)
+        platt = LogisticRegression(class_weight="balanced").fit(logit[:, None], labels)
+        return lambda z: platt.predict_proba(np.asarray(z)[:, None])[:, 1]
+
     # 1. Train split, best val-AUROC epoch, scored on test.
     main = trainer.fit(records("train"), args.seed, val_records=records("val"))
     stop = main["best_epoch"]
     val_subjects, val_logit, y_val = trainer.predict(main["model"], records("val"))
     test_subjects, test_logit, y_test = trainer.predict(main["model"], records("test"))
-    p_val, p_test = sigmoid(val_logit), sigmoid(test_logit)
+    calibrate = calibrator(main["model"], records("train"))
+    p_val, p_test = calibrate(val_logit), calibrate(test_logit)
     test = {"train_subjects": len({r["subject"] for r in records("train")}),
             "val_subjects": len(val_subjects), "test_subjects": len(test_subjects),
             "val_auc": float(roc_auc_score(y_val, p_val)),
@@ -246,6 +263,8 @@ def run(args: argparse.Namespace) -> int:
             "test_accuracy": float(accuracy_score(y_test, p_test >= 0.5)),
             "test_balanced_accuracy": float(balanced_accuracy_score(y_test, p_test >= 0.5)),
             "test_f1_macro": float(f1_score(y_test, p_test >= 0.5, average="macro")),
+            "test_f1_macro_uncalibrated": float(f1_score(y_test, sigmoid(test_logit) >= 0.5,
+                                                         average="macro")),
             "val_predictions": [{"subject": s, "AD": int(a), "score": float(p)}
                                 for s, a, p in zip(val_subjects, y_val, p_val, strict=True)],
             "test_predictions": [{"subject": s, "AD": int(a), "score": float(p)}
@@ -257,19 +276,23 @@ def run(args: argparse.Namespace) -> int:
     pool = records("train", "val")
     subjects = sorted({r["subject"] for r in pool})
     y = np.array([trainer.label(s) for s in subjects])
-    oof = np.zeros(len(subjects))
-    folds = StratifiedKFold(args.folds, shuffle=True, random_state=0).split(subjects, y)
+    oof, raw = np.zeros(len(subjects)), np.zeros(len(subjects))
+    folds = list(StratifiedKFold(args.folds, shuffle=True, random_state=0).split(subjects, y))
+    position = {s: i for i, s in enumerate(subjects)}
     for fold, (train_idx, test_idx) in enumerate(folds):
         fit_subjects = {subjects[i] for i in train_idx}
         held = {subjects[i] for i in test_idx}
-        fitted = trainer.fit([r for r in pool if r["subject"] in fit_subjects],
-                             args.seed + 1000 * (fold + 1), stop_epoch=stop)
+        fit_records = [r for r in pool if r["subject"] in fit_subjects]
+        fitted = trainer.fit(fit_records, args.seed + 1000 * (fold + 1), stop_epoch=stop)
         names, logit, _ = trainer.predict(fitted["model"], [r for r in pool if r["subject"] in held])
-        position = {s: i for i, s in enumerate(subjects)}
-        oof[[position[s] for s in names]] = sigmoid(logit)
+        where = [position[s] for s in names]
+        oof[where] = calibrator(fitted["model"], fit_records)(logit)
+        raw[where] = sigmoid(logit)
         print(f"[sup] fold {fold + 1}/{args.folds} done "
               f"({(time.time() - started) / 60:.1f} min)", flush=True)
-    cv = {"clean": {"metrics": scores(y, oof), "oof_mean": oof.tolist()}}
+    cv = {"clean": {"metrics": scores(y, oof), "oof_mean": oof.tolist(),
+                    "per_fold": [scores(y[t], oof[t]) for _, t in folds],
+                    "pooled_uncalibrated": scores(y, raw)}}
     name = (f"{args.model}_supervised" + (f"__{args.aug_recipe}" if args.aug_recipe else "")
             + f"__roi{args.roi}_s{args.seed}")
     exp_dir = Path(args.out_root) / args.tag / name
