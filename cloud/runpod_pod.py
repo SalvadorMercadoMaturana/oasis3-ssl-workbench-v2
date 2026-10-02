@@ -118,7 +118,7 @@ def create(args: argparse.Namespace) -> None:
                        "minVcpuCount": vcpu, "minMemoryInGb": args.min_ram,
                        "supportPublicIp": True, "startSsh": True,
                        "allowedCudaVersions": ["12.4", "12.5", "12.6", "12.7", "12.8", "12.9",
-                                               "13.0", "13.1", "13.2"],
+                                               "13.0"],
                        "env": [{"key": "PUBLIC_KEY", "value": pubkey}]}
             try:
                 pod = gql(mutation, {"input": payload})["podFindAndDeployOnDemand"]

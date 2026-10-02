@@ -17,6 +17,7 @@ crops and rotations have margin. Evaluation uses the central ``size`` cube.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import pickle
@@ -372,13 +373,33 @@ def build_roi3d_transforms(cfg: Any) -> tuple[ROIView3DTransform, ROIEvalViews3D
 
 
 # ---------------------------------------------------------------- data
+@contextlib.contextmanager
+def _seeded_rng(seed: int):
+    """Seed python, numpy and torch for one call, then restore their previous state."""
+    states = random.getstate(), np.random.get_state(), torch.get_rng_state()
+    random.seed(seed)
+    np.random.seed(seed % 2**32)
+    torch.manual_seed(seed)
+    try:
+        yield
+    finally:
+        random.setstate(states[0])
+        np.random.set_state(states[1])
+        torch.set_rng_state(states[2])
+
+
 class ROI3DDataset(Dataset):
-    """Cached hippocampal pairs; one random session per subject when training."""
+    """Cached hippocampal pairs; one random session per subject when training.
+
+    ``view_seed`` makes a random transform deterministic per record (seed
+    ``view_seed + index``), so augmented validation views are identical every epoch.
+    """
 
     def __init__(self, records: list[dict[str, str]], cubes: dict[str, np.ndarray],
-                 transform: Any = None, one_session_per_subject: bool = False) -> None:
+                 transform: Any = None, one_session_per_subject: bool = False,
+                 view_seed: int | None = None) -> None:
         self.records, self.cubes, self.transform = records, cubes, transform
-        self.one_session_per_subject = one_session_per_subject
+        self.one_session_per_subject, self.view_seed = one_session_per_subject, view_seed
         by_subject: dict[str, list[int]] = defaultdict(list)
         for index, record in enumerate(records):
             by_subject[record["subject"]].append(index)
@@ -394,7 +415,13 @@ class ROI3DDataset(Dataset):
             index = random.choice(self.subject_record_indices[index])
         record = self.records[index]
         cube = torch.from_numpy(self.cubes[record["idx"]].astype(np.float32))
-        image = self.transform(cube) if self.transform is not None else cube
+        if self.transform is None:
+            image = cube
+        elif self.view_seed is None:
+            image = self.transform(cube)
+        else:
+            with _seeded_rng(self.view_seed + index):
+                image = self.transform(cube)
         return {"image": image, "subject": record["subject"], "session": record["session"],
                 "group": record["group"]}
 
@@ -406,9 +433,13 @@ class ROI3DDataModule(L.LightningDataModule):
                  batch_size: int = 16, num_workers: int = 0, pin_memory: bool = False,
                  one_session_per_subject_train: bool = True, seed: int = 42,
                  train_transform: Any = None, eval_transform: Any = None,
-                 prefetch_factor: int | None = None) -> None:
+                 prefetch_factor: int | None = None, val_transform: Any = None,
+                 val_view_seed: int | None = None) -> None:
         super().__init__()
         self.prefetch_factor = prefetch_factor
+        # Validation SSL views: ``eval_transform`` unless ``val_transform`` is given
+        # (e.g. the training augmentations, made fixed per record by ``val_view_seed``).
+        self.val_transform, self.val_view_seed = val_transform, val_view_seed
         self.csv_path, self.cache_path, self.manifest_path = csv_path, cache_path, manifest_path
         self.batch_size, self.num_workers, self.pin_memory = batch_size, num_workers, pin_memory
         self.one_session_per_subject_train, self.seed = one_session_per_subject_train, seed
@@ -441,8 +472,13 @@ class ROI3DDataModule(L.LightningDataModule):
         if missing:
             raise ValueError(f"{len(missing)} sessions missing from {self.cache_path}")
         for split, rows in selected.items():
+            transform, view_seed = self.eval_transform, None
+            if split == "train":
+                transform = self.train_transform
+            elif split == "val" and self.val_transform is not None:
+                transform, view_seed = self.val_transform, self.val_view_seed
             setattr(self, f"{split}_dataset", ROI3DDataset(
-                rows, self.cubes, self.train_transform if split == "train" else self.eval_transform,
+                rows, self.cubes, transform, view_seed=view_seed,
                 one_session_per_subject=split == "train" and self.one_session_per_subject_train))
 
     def _loader(self, dataset: ROI3DDataset | None, shuffle: bool) -> DataLoader:

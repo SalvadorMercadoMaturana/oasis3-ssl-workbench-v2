@@ -218,13 +218,22 @@ def build_datamodule(cfg: DictConfig, train_transform: Any,
         raise ValueError("model.backbone.in_channels must match data.channels.")
     if str(data_cfg.get("source", "")) == "roi3d":
         from t5_ssl.data.roi3d import ROI3DDataModule
+        # augmentation.val_views=train: the SSL validation loss sees the training
+        # augmentations (fixed per session), not the clean cube and its mirror;
+        # downstream evaluation keeps its own deterministic transform.
+        val_views = str(cfg.augmentation.get("val_views", "fixed"))
+        if val_views not in ("fixed", "train"):
+            raise ValueError(f"augmentation.val_views must be 'fixed' or 'train', got {val_views}")
+        augmented_val = val_views == "train"
         return ROI3DDataModule(
             csv_path=data_cfg.get("csv_path", DEFAULT_CSV), cache_path=data_cfg.cache_path,
             manifest_path=data_cfg.manifest_path, batch_size=data_cfg.get("batch_size", 16),
             num_workers=data_cfg.get("num_workers", 0), pin_memory=data_cfg.get("pin_memory", False),
             one_session_per_subject_train=data_cfg.get("one_session_per_subject_train", True),
             seed=data_cfg.get("seed", 42), train_transform=train_transform,
-            eval_transform=eval_transform, prefetch_factor=data_cfg.get("prefetch_factor", None))
+            eval_transform=eval_transform, prefetch_factor=data_cfg.get("prefetch_factor", None),
+            val_transform=train_transform if augmented_val else None,
+            val_view_seed=int(cfg.augmentation.get("val_view_seed", 12345)) if augmented_val else None)
     common = dict(
         csv_path=data_cfg.get("csv_path", DEFAULT_CSV),
         batch_size=data_cfg.get("batch_size", 16),

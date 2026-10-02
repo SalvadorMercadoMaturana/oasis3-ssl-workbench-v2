@@ -67,7 +67,9 @@ VARIANTS: dict[str, dict[str, list[str]]] = {
         # the current BYOL (wide_dproj0.1) with GroupNorm instead of BatchNorm in the heads
         "wide_dproj0.1_gn": BORDER + WIDE + _dropout(projector=0.1) + GROUP_NORM,
     },
-    "vicreg": {"campaign": [], "border": BORDER},
+    "vicreg": {"campaign": [], "border": BORDER,
+               # SSL validation on augmented views (fixed per session) instead of cube vs mirror.
+               "campaign_augval": ["++augmentation.val_views=train"]},
     "dinov2": {"campaign": []},
 }
 
