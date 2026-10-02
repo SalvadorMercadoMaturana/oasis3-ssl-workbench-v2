@@ -71,6 +71,17 @@ VARIANTS: dict[str, dict[str, list[str]]] = {
     "dinov2": {"campaign": []},
 }
 
+# GroupNorm BYOL tuning grid: gn_dp{projector dropout}_dq{predictor dropout}[_wd{weight decay}]
+# (wide heads, GroupNorm in projector and predictor; weight decay default 1e-6).
+for _p in (0.0, 0.1, 0.2, 0.3):
+    for _q in (0.0, 0.1, 0.2, 0.3):
+        _name = f"gn_dp{_p:g}_dq{_q:g}"
+        VARIANTS["byol"][_name] = BORDER + WIDE + GROUP_NORM + _dropout(_p, _q)
+        for _wd in (0.01, 0.05):
+            VARIANTS["byol"][f"{_name}_wd{_wd:g}"] = (VARIANTS["byol"][_name]
+                                                     + [f"optimizer.weight_decay={_wd}"])
+
+
 # ---------------------------------------------------------------- regions of interest
 # ROI configurations: cube side (voxels of 2 mm) and cache. "multi3" stacks three
 # bilateral 32-voxel regions as 6 channels: hippocampus, lateral ventricle and

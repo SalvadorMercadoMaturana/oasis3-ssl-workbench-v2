@@ -168,10 +168,11 @@ def make_jobs(args: argparse.Namespace) -> list[dict[str, Any]]:
 
     if args.preset:
         triples = [(m, v, None) for m, v in PRESETS[args.preset]]
-    elif args.specs:  # explicit model:recipe[:roi] jobs (e.g. the winners of a screen)
-        parts = [[*spec.split(":"), ""][:3] for spec in args.specs]
-        triples = [(m, variant_of(m), r if r not in ("", "-") else None) for m, r, _ in parts]
-        spec_roi = {i: roi for i, (_, _, roi) in enumerate(parts) if roi}
+    elif args.specs:  # explicit model:recipe[:roi[:variant]] jobs (e.g. a screen's winners)
+        parts = [[*spec.split(":"), "", ""][:4] for spec in args.specs]
+        triples = [(m, v or variant_of(m), r if r not in ("", "-") else None)
+                   for m, r, _, v in parts]
+        spec_roi = {i: roi for i, (_, _, roi, _) in enumerate(parts) if roi}
     else:  # recipe-major, models interleaved so concurrent jobs mix heavy and light models
         triples = [(m, variant_of(m), r) for r in (args.aug_recipes or [None])
                    for m in args.models]
