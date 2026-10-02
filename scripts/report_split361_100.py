@@ -1,18 +1,22 @@
-"""Split 361/63/84 at 100 epochs: SSL vs the random-init encoder vs full supervision.
+"""Split 361/63/84 at 100 epochs: full supervision vs SSL vs the encoder before SSL.
 
     python scripts/report_split361_100.py
 
 Reads ``campaign_ssl3d_runpod/split361_100/`` (the pod tags split361_100_{dino,cnn,
 random,sup} merged): the SSL champions (train.py ``--identity --collapse-every 2``),
-the same encoders with random weights and no SSL (``<model>_init__roi*``,
-``--init-only`` with ``model.backbone.pretrained=false``) and the end-to-end
-supervised baselines (``scripts/train_supervised.py``, ``<model>_supervised__*``).
-For reference it also reads the 30-epoch runs (split361_30, BYOL from byol_fbn30)
-and the ImageNet-initialized encoders without SSL of split361_30.
+the end-to-end supervised baselines (``scripts/train_supervised.py``,
+``<model>_supervised__*``) and, as an extra reference, the same encoders with random
+weights (``<model>_init__roi*``, ``--init-only model.backbone.pretrained=false``).
+"Without SSL" is the encoder SSL starts from (ImageNet / DeiT-inflated weights),
+frozen, with the linear probe: the ``*_init*`` runs of split361_30 (same split and
+probe). Those weights do not depend on the seed (only the ViT ``mask_token``, unused
+at evaluation, does), so the single run stands for all three seeds. It also reads the
+30-epoch SSL runs (split361_30, BYOL from byol_fbn30).
 
 Writes ``split361_100/REPORT.md``; ``campaign_ssl3d_runpod/figures/split361_100_
 {metricas,curvas_vicreg,curvas_byol,curvas_dinov2,colapso}.png`` (same layout as the
-split361 figures of ``plot_champions.py``, metrics with three bars per model); and,
+split361 figures of ``plot_champions.py``; metrics with three bars per model in the
+order supervised, SSL, without SSL); and,
 for docs/informe_split361.tex, those figures plus ``delta_100.png``,
 ``collapse_100.png``, ``byol_objetivo_100.png`` and ``supervised_100.png`` in
 ``docs/figures_split361/``.
@@ -45,8 +49,8 @@ SUPERVISED = {"vicreg": "vicreg_supervised__geo__roi32", "byol": "byol_supervise
 SSL30 = {"vicreg": ("split361_30", "vicreg_campaign__geo__roi32"),
          "byol": ("byol_fbn30", "byol_gn_dp0.3_dq0_wd0.01__noise__roi32"),
          "dinov2": ("split361_30", "dinov2_campaign__elastic__roimulti3")}
-IMAGENET = {"vicreg": "vicreg_init__roi32", "byol": "byol_init__roi32",
-            "dinov2": "dinov2_init__roimulti3"}
+INIT = {"vicreg": "vicreg_init__roi32", "byol": "byol_init__roi32",
+        "dinov2": "dinov2_init__roimulti3"}  # in split361_30: pretrained start, no SSL
 TICK = {"vicreg": "VICReg\ngeo · 32³", "byol": "BYOL\nnoise · 32³ · GN",
         "dinov2": "DINOv2\nelastic · 3 regiones"}
 ENCODER = {"vicreg": "ConvNeXt-T 3D", "byol": "ResNet-18 3D", "dinov2": "ViT-S 3D"}
@@ -61,22 +65,22 @@ def groups() -> dict[str, dict[str, list[dict]]]:
             "random": {m: runs[RANDOM[m]] for m in MODELS},
             "supervised": {m: runs[SUPERVISED[m]] for m in MODELS},
             "ssl30": {m: previous[SSL30[m][0]][SSL30[m][1]] for m in MODELS},
-            "imagenet": {m: previous["split361_30"][IMAGENET[m]] for m in MODELS}}
+            "init": {m: previous["split361_30"][INIT[m]] for m in MODELS}}
 
 
 # ---------------------------------------------------------------- campaign figures
 def metrics_figure(g: dict) -> None:
-    values = [base.metric(d, s, k) for kind in ("ssl", "random", "supervised") for m in MODELS
+    values = [base.metric(d, s, k) for kind in ("supervised", "ssl", "init") for m in MODELS
               for d in g[kind][m] for s in ("cv", "test") for k in base.METRICS]
     low = min(0.55, np.floor((min(values) - 0.04) * 20) / 20)
     fig, axes = plt.subplots(2, 3, figsize=(12.5, 6.8), sharey=True)
     first = g["ssl"]["vicreg"][0]
     n_cv, n_test = len(first["labels"]), len(first["test"]["test_predictions"])
-    bars = (("ssl", -0.27, lambda m: base.COLOR[m], None, "SSL (100 épocas) + probe congelado"),
-            ("random", 0.0, lambda m: base.BASE, None,
-             "Sin SSL: mismo encoder con pesos aleatorios + probe congelado"),
-            ("supervised", 0.27, lambda m: SUP_COLOR, "///",
-             "Supervisado completo: mismo encoder entrenado end-to-end en AD/HC"))
+    bars = (("supervised", -0.27, lambda m: SUP_COLOR, "///",
+             "Supervisado completo: mismo encoder entrenado end-to-end en AD/HC"),
+            ("ssl", 0.0, lambda m: base.COLOR[m], None, "SSL (100 épocas), congelado + probe lineal"),
+            ("init", 0.27, lambda m: base.BASE, None,
+             "Sin SSL: mismo encoder antes del SSL, congelado + probe lineal"))
     for r, (split, split_name) in enumerate((("cv", f"CV (train+val, {n_cv} sujetos)"),
                                              ("test", f"Test ({n_test} sujetos)"))):
         for c, key in enumerate(base.METRICS):
@@ -91,15 +95,16 @@ def metrics_figure(g: dict) -> None:
             ax.set_title(f"{key[0]} — {split_name}", fontsize=9.5)
             base.style(ax)
     handles, labels = axes[0, 0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, 0.03), ncol=3,
+    fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, 0.04), ncol=3,
                frameon=False, fontsize=8)
-    fig.suptitle(f"Modelos campeones, {TITLE}: SSL vs sin SSL (encoder aleatorio) vs supervisado "
+    fig.suptitle(f"Modelos campeones, {TITLE}: supervisado vs SSL vs sin SSL "
                  "(3 semillas; puntos = semillas)", fontsize=10.5, color=base.INK)
-    fig.text(0.5, 0.008, "CV del SSL y sin SSL: probe 5×5; CV supervisada: 5 folds entrenados "
-             "end-to-end hasta la época elegida en validación, puntajes calibrados (Platt) en "
-             "los sujetos de entrenamiento de cada fold", ha="center", fontsize=7.5,
-             color=base.INK2)
-    fig.tight_layout(rect=(0, 0.09, 1, 0.97))
+    fig.text(0.5, 0.006, "Sin SSL: el encoder de partida del SSL (pesos ImageNet / DeiT inflados), "
+             "idéntico en las 3 semillas (una sola barra sin puntos). CV de SSL y sin SSL: probe "
+             "5×5.\nCV supervisada: 5 folds entrenados end-to-end hasta la época elegida en "
+             "validación, calibrados (Platt) en los sujetos de entrenamiento de cada fold.",
+             ha="center", va="bottom", fontsize=7.5, color=base.INK2, linespacing=1.4)
+    fig.tight_layout(rect=(0, 0.1, 1, 0.97))
     fig.savefig(base.FIGURES / f"{PREFIX}metricas.png", dpi=160)
     plt.close(fig)
 
@@ -119,14 +124,14 @@ def campaign_figures(g: dict) -> None:
 # ---------------------------------------------------------------- report figures
 def fig_delta(rep, d: dict) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(7.8, 3.0), sharey=True)
-    rows = [(m, ref) for m in ("dinov2", "byol", "vicreg") for ref in ("random", "supervised")]
+    rows = [(m, ref) for m in ("dinov2", "byol", "vicreg") for ref in ("init", "supervised")]
     for ax, split, title in ((axes[0], "cv", "CV (329 sujetos de train+val)"),
                              (axes[1], "test", "Test (84 sujetos nunca vistos)")):
         ax.axvline(0, color=rep.INK2, linewidth=1)
         for y, (m, ref) in enumerate(rows):
             mid, lo, hi, _ = d[m][ref][split]
-            marker = "o" if ref == "random" else "s"
-            face = rep.COLOR[m] if ref == "random" else "white"
+            marker = "o" if ref == "init" else "s"
+            face = rep.COLOR[m] if ref == "init" else "white"
             ax.plot([lo, hi], [y, y], color=rep.COLOR[m], linewidth=2.5, solid_capstyle="butt")
             ax.plot(mid, y, marker, color=rep.COLOR[m], markerfacecolor=face, markersize=7,
                     markeredgewidth=1.6)
@@ -134,7 +139,7 @@ def fig_delta(rep, d: dict) -> None:
         ax.set_title(title, fontsize=9)
         ax.grid(axis="y", visible=False)
         ax.set_xlabel("Δ AUROC del SSL frente a la referencia", fontsize=8)
-    axes[0].set_yticks(range(len(rows)), [f"{rep.LABEL[m]} − {'aleatorio' if ref == 'random' else 'supervisado'}"
+    axes[0].set_yticks(range(len(rows)), [f"{rep.LABEL[m]} − {'sin SSL' if ref == 'init' else 'supervisado'}"
                                           for m, ref in rows], fontsize=8)
     axes[0].set_ylim(-0.6, len(rows) - 0.2)
     rep.save(fig, "delta_100.png")
@@ -225,35 +230,40 @@ def table(g: dict) -> dict:
         f"| {name} | {mean([d['cv_auc'] for d in docs]):.3f} ± {std([d['cv_auc'] for d in docs]):.3f} "
         f"| {mean([d['test_auc'] for d in docs]):.3f} ± {std([d['test_auc'] for d in docs]):.3f} "
         f"| {mean([d['cv_mean3'] for d in docs]):.3f} | {mean([d['test_mean3'] for d in docs]):.3f} |")
-    lines = [f"# Split 361/63/84, 100 épocas: SSL vs sin SSL (aleatorio) vs supervisado", "",
+    lines = [f"# Split 361/63/84, 100 épocas: supervisado vs SSL vs sin SSL", "",
              "Probe congelado (CV 5×5 en 329 sujetos AD/HC de train+val; test en 84) para SSL y "
-             "encoders sin SSL. Supervisado: encoder + capa lineal entrenados end-to-end en los "
-             "266 sujetos AD/HC de train, época elegida por AUROC de validación (63 sujetos), "
-             "CV = 5 folds entrenados hasta esa época. 3 semillas.", ""]
+             "sin SSL. Sin SSL = el encoder de partida del SSL (pesos ImageNet / DeiT inflados), "
+             "congelado; sus pesos no dependen de la semilla (solo el mask_token del ViT, que no "
+             "se usa al evaluar), así que una corrida vale para las 3. Supervisado: encoder + "
+             "capa lineal entrenados end-to-end en los 266 sujetos AD/HC de train, época elegida "
+             "por AUROC de validación (63 sujetos), CV = 5 folds entrenados hasta esa época, "
+             "calibrados (Platt) en sus sujetos de entrenamiento. 3 semillas.", ""]
     deltas: dict = {}
     for m in MODELS:
-        ssl, rnd, sup = g["ssl"][m], g["random"][m], g["supervised"][m]
-        deltas[m] = {"random": bootstrap_auc(ssl, rnd), "supervised": bootstrap_auc(ssl, sup),
+        ssl, init, rnd, sup = g["ssl"][m], g["init"][m], g["random"][m], g["supervised"][m]
+        deltas[m] = {"init": bootstrap_auc(ssl, init), "supervised": bootstrap_auc(ssl, sup),
                      "ssl30": bootstrap_auc(ssl, g["ssl30"][m]),
-                     "sup_random": bootstrap_auc(sup, rnd)}
+                     "sup_init": bootstrap_auc(sup, init), "random": bootstrap_auc(ssl, rnd)}
         own = [d["identity"]["own"] for d in ssl]
         epochs = [d["best_epoch"] for d in sup]
         lines += [f"## {base.LABEL[m]} ({ENCODER[m]})", "",
                   "| Modelo | AUROC CV | AUROC test | Media3 CV | Media3 test |",
                   "|---|---:|---:|---:|---:|",
+                  row(f"Supervisado (épocas elegidas {', '.join(map(str, epochs))})", sup),
                   row("SSL 100 épocas", ssl), row("SSL 30 épocas (ref.)", g["ssl30"][m]),
-                  row("Sin SSL, pesos aleatorios", rnd),
-                  row("Sin SSL, pesos ImageNet (ref., semilla 1)", g["imagenet"][m]),
-                  row(f"Supervisado (épocas elegidas {', '.join(map(str, epochs))})", sup), "",
+                  row("Sin SSL (encoder antes del SSL)", init),
+                  row("Pesos aleatorios, sin SSL (ref.)", rnd), "",
                   "| Δ AUROC (bootstrap pareado, IC 95 %) | CV | Test |", "|---|---:|---:|",
-                  f"| SSL 100 − aleatorio | {fmt(deltas[m]['random'], 'cv')} | "
-                  f"{fmt(deltas[m]['random'], 'test')} |",
+                  f"| SSL 100 − sin SSL | {fmt(deltas[m]['init'], 'cv')} | "
+                  f"{fmt(deltas[m]['init'], 'test')} |",
                   f"| SSL 100 − supervisado | {fmt(deltas[m]['supervised'], 'cv')} | "
                   f"{fmt(deltas[m]['supervised'], 'test')} |",
                   f"| SSL 100 − SSL 30 | {fmt(deltas[m]['ssl30'], 'cv')} | "
                   f"{fmt(deltas[m]['ssl30'], 'test')} |",
-                  f"| Supervisado − aleatorio | {fmt(deltas[m]['sup_random'], 'cv')} | "
-                  f"{fmt(deltas[m]['sup_random'], 'test')} |", "",
+                  f"| Supervisado − sin SSL | {fmt(deltas[m]['sup_init'], 'cv')} | "
+                  f"{fmt(deltas[m]['sup_init'], 'test')} |",
+                  f"| SSL 100 − pesos aleatorios | {fmt(deltas[m]['random'], 'cv')} | "
+                  f"{fmt(deltas[m]['random'], 'test')} |", "",
                   f"Identidad al final (147 sujetos no vistos, vistas de la receta): "
                   f"Var_suj/Var_aug {mean([o['between_over_within'] for o in own]):.3g}, "
                   f"rango efectivo {mean([o['effective_rank'] for o in own]):.1f}, "
