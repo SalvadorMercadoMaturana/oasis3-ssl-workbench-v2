@@ -16,11 +16,15 @@ if not (torch.version.cuda or "").startswith("12"):
 print(f"torch {torch.__version__} / CUDA {torch.version.cuda}")
 PY
 
-# The image's PyTorch may predate the GPU (e.g. torch 2.4/cu124 has no sm_120
-# kernels for an RTX 5090): install a build that has them (CUDA 12.8 wheels).
+# Every campaign ran on torch 2.8 (CUDA 12.8 wheels): install it when the image's
+# PyTorch is older (2.4's fused AdamW rejects the channels_last BYOL parameters) or
+# predates the GPU (no sm_120 kernels for an RTX 5090).
 NEED_TORCH=$(python - <<'PY'
 import torch
-if not torch.cuda.is_available():
+version = tuple(int(x) for x in torch.__version__.split("+")[0].split(".")[:2])
+if version < (2, 8):
+    print(1)
+elif not torch.cuda.is_available():
     print(0)
 else:
     major, minor = torch.cuda.get_device_capability(0)
@@ -31,7 +35,7 @@ PY
 )
 if [[ "$NEED_TORCH" == "1" ]]; then
   SPEC="${TORCH_UPGRADE_SPEC:-torch==2.8.0 torchvision==0.23.0}"
-  echo "GPU architecture missing from the image's PyTorch: installing $SPEC (cu128)"
+  echo "Installing $SPEC (cu128): the image's PyTorch is older than 2.8 or lacks this GPU"
   # shellcheck disable=SC2086
   python -m pip install --quiet $SPEC --index-url "${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}"
   python -c "import torch; print('torch', torch.__version__, 'CUDA', torch.version.cuda, torch.cuda.get_device_name(0))"
