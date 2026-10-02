@@ -72,14 +72,15 @@ def style(ax: plt.Axes) -> None:
 
 
 def bar(ax: plt.Axes, x: float, docs: list[dict], split: str, key: tuple, color: str,
-        width: float, alpha: float = 1.0, label: str | None = None) -> None:
+        width: float, alpha: float = 1.0, label: str | None = None, text_y: float = 0.565,
+        hatch: str | None = None) -> None:
     values = [metric(d, split, key) for d in docs]
     mean = float(np.mean(values))
     ax.bar(x, mean, width=width, color=color, alpha=alpha, edgecolor="white", linewidth=1.2,
-           label=label)
+           label=label, hatch=hatch)
     if len(values) > 1:
         ax.scatter([x] * len(values), values, s=9, color=INK, zorder=3, linewidths=0)
-    ax.text(x, 0.565, f"{mean:.3f}", ha="center", va="bottom", fontsize=6.5, color=INK,
+    ax.text(x, text_y, f"{mean:.3f}", ha="center", va="bottom", fontsize=6.5, color=INK,
             rotation=90)
 
 

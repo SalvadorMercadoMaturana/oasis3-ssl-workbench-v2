@@ -29,7 +29,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT / "cloud" / "state" / "pod.json"
-API = "https://api.runpod.io/graphql"
+# Machines whose containers could not initialize CUDA (one machineId per line).
+BAD_MACHINES = ROOT / "cloud" / "state" / "bad_machines.txt"
+API ="https://api.runpod.io/graphql"
 IMAGE = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
 # (gpu type id, cloud) in order of preference; prices are checked live. The RTX
 # 5090 community pods (0.69 USD/h, 32 GB, ~20 vCPU) beat the 4090 for these
@@ -78,6 +80,13 @@ def load_state() -> dict:
     return json.loads(STATE.read_text(encoding="utf-8")) if STATE.is_file() else {}
 
 
+def bad_machines() -> set[str]:
+    if not BAD_MACHINES.is_file():
+        return set()
+    return {line.split()[0] for line in BAD_MACHINES.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.startswith("#")}
+
+
 def save_state(state: dict) -> None:
     STATE.parent.mkdir(parents=True, exist_ok=True)
     STATE.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
@@ -102,7 +111,8 @@ def create(args: argparse.Namespace) -> None:
     mutation = """mutation($input: PodFindAndDeployOnDemandInput) {
       podFindAndDeployOnDemand(input: $input) {
         id costPerHr machineId machine { gpuDisplayName } } }"""
-    tried = []
+    tried, held = [], []  # held: pods on avoided machines, kept until a good one is found
+    avoid = bad_machines() | set(filter(None, (args.avoid or "").split(",")))
     preference = [(g, c) for g, c in PREFERENCE
                   if not args.only or any(o.lower() in g.lower() for o in args.only.split(","))]
     for gpu, cloud in preference:
@@ -128,15 +138,25 @@ def create(args: argparse.Namespace) -> None:
             if not pod:
                 tried.append(f"{gpu}/{cloud}/{vcpu}vCPU: no pod returned")
                 continue
+            if pod.get("machineId") in avoid and len(held) < 4:
+                # Hold it so the scheduler cannot hand out the same machine again.
+                held.append(pod["id"])
+                tried.append(f"{gpu}/{cloud}: avoided machine {pod['machineId']}")
+                continue
             if float(pod["costPerHr"]) > args.max_price:  # never keep an over-budget pod
                 terminate_pod(pod["id"])
                 tried.append(f"{gpu}/{cloud}: billed {pod['costPerHr']} > {args.max_price}")
                 break
             save_state({"id": pod["id"], "gpu": gpu, "cloud": cloud, "min_vcpu": vcpu,
                         "cost_per_hr": float(pod["costPerHr"]), "created_at": now(),
-                        "image": args.image, "machine": pod.get("machine")})
+                        "image": args.image, "machine": pod.get("machine"),
+                        "machine_id": pod.get("machineId")})
+            for held_id in held:
+                terminate_pod(held_id)
             print(json.dumps(load_state(), indent=2))
             return
+    for held_id in held:
+        terminate_pod(held_id)
     print("\n".join(tried))
     sys.exit("no GPU option available within budget")
 
@@ -214,6 +234,8 @@ def main() -> None:
     c.add_argument("--volume", type=int, default=20, help="/workspace volume (GB)")
     c.add_argument("--min-ram", type=int, default=30)
     c.add_argument("--only", default=None, help="comma list of GPU name fragments, e.g. 5090,4090")
+    c.add_argument("--avoid", default=None,
+                   help="comma list of machineIds to skip (besides cloud/state/bad_machines.txt)")
     w = sub.add_parser("wait")
     w.add_argument("--timeout", type=int, default=900)
     sub.add_parser("status")

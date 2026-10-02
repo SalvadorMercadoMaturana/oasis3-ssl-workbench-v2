@@ -127,7 +127,7 @@ def collapse_figure(champions: dict) -> None:
         by_role: dict[str, list[list[dict]]] = defaultdict(list)
         for d in docs:
             rows = d.get("collapse") or []
-            for role in sorted({r["role"] for r in rows}):
+            for role in sorted({r["role"] for r in rows} - {"objective"}):  # BYOL loss rows
                 by_role[role].append([r for r in rows if r["role"] == role])
         for r, (key, title, log) in enumerate(COLLAPSE):
             ax = axes[r, c]
