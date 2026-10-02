@@ -157,6 +157,8 @@ class CollapseMonitor(L.Callback):
                                  "byol_loss_train": self._byol_loss(pl_module, self.train_views,
                                                                     device, memory_format)})
         self.out_path.write_text(json.dumps(self.history, indent=1) + "\n", encoding="utf-8")
+        if device.type == "cuda":  # fp32 cuDNN autotuning here reserves GBs; hand them back
+            torch.cuda.empty_cache()
 
     @torch.no_grad()
     def _byol_loss(self, pl_module: L.LightningModule, views: dict[str, torch.Tensor],
