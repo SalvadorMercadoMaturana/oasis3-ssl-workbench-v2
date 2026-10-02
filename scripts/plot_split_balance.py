@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import build_report_split361 as rep  # noqa: E402  (also sets the report's rcParams)
+import build_report_split361 as rep
 
 plt = rep.plt
 from matplotlib.patches import Rectangle  # noqa: E402

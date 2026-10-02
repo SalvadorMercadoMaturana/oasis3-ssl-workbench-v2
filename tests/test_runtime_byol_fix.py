@@ -196,7 +196,7 @@ def test_every_recipe_composes(model, variant):
         assert cfg.augmentation.affine_degrees == 0 and cfg.loss.teacher_temp_warmup_epochs == 15
     else:
         assert cfg.augmentation.affine_degrees == 10
-        expected = "zeros" if variant == "campaign" else "border"
+        expected = "zeros" if variant.startswith("campaign") else "border"  # campaign_augval too
         assert cfg.augmentation.rotation_padding == expected
 
 

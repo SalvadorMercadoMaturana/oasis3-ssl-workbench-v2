@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import build_report_split361 as rep  # noqa: E402  (also sets the report's rcParams)
+import build_report_split361 as rep
 
 plt = rep.plt
 from matplotlib.colors import to_rgba  # noqa: E402
@@ -93,13 +93,13 @@ def views(model: str, idx: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 def ibot_mask(volume: np.ndarray) -> np.ndarray:
     """Hide a block of 8³ patches (12 of 64, as iBOT's block masks), NaN where hidden."""
     out = volume.copy()
-    out[8:24, 16:32, 0:24] = np.nan  # patches i 1–2, j 2–3, k 0–2: crosses all three central slices
+    out[8:24, 16:32, 0:24] = np.nan  # patches i 1-2, j 2-3, k 0-2: crosses all three central slices
     return out
 
 
 def stack(ax: plt.Axes, volume: np.ndarray, frame: str, tint: str = "white",
           hidden: str | None = None) -> None:
-    """The three central planes stacked like cards on a transparent background.
+    """Draw the three central planes stacked like cards on a transparent background.
 
     The slices behind are faded towards `tint` (the band colour); NaN voxels are
     drawn in `hidden`.
@@ -127,7 +127,7 @@ def stack(ax: plt.Axes, volume: np.ndarray, frame: str, tint: str = "white",
 
 
 def band_tint(color: str) -> tuple[float, float, float]:
-    """The opaque colour of a band (its colour at BAND_ALPHA over white)."""
+    """Return the opaque colour of a band (its colour at BAND_ALPHA over white)."""
     r, g, b, _ = to_rgba(color)
     return tuple(1 - BAND_ALPHA * (1 - v) for v in (r, g, b))
 

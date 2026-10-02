@@ -13,16 +13,14 @@ Writes to ``docs/figures_split361/``:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import matplotlib
 import numpy as np
 
 matplotlib.use("Agg")
+import build_report_split361 as rep
 import matplotlib.pyplot as plt
 from scipy.stats import spearmanr
-
-import build_report_split361 as rep
 
 OUT = rep.RUNPOD / "latent_split361"
 SUFFIX = ""  # appended to every figure name (analyze_latent_split361.py --suffix)
@@ -82,7 +80,7 @@ def fig_latent(results: dict, variables: dict, emb: dict) -> None:
                               "3 · La dirección que encuentra el probe lineal")):
         axes[r, 0].annotate(text, xy=(0, 1.13 if r else 1.2), xycoords="axes fraction", fontsize=9.5,
                             fontweight="semibold", color=rep.INK)
-    handles, labels = axes[0, 0].get_legend_handles_labels()
+    handles, _ = axes[0, 0].get_legend_handles_labels()
     fig.legend(handles, ["HC (control sano)", "AD (Alzheimer)"], ncol=2, loc="lower center",
                bbox_to_anchor=(0.5, -0.01), markerscale=2)
     fig.subplots_adjust(hspace=0.5, wspace=0.25, bottom=0.08, top=0.93)
@@ -131,10 +129,11 @@ def fig_corr(results: dict, variables: dict, emb: dict) -> None:
 
 def fig_tsne_vars(results: dict, variables: dict, emb: dict, keep: list[str] | None = None,
                   ncols: int = 4, name: str = "latent_tsne_vars.png") -> None:
-    """The t-SNE map of each champion coloured by every variable (percentile colour scale).
+    """Plot the t-SNE map of each champion coloured by every variable (percentile colour scale).
 
     ``keep`` restricts the variables (the diagnosis panel is always first); panels whose
-    cross-validated r reaches the diagnosis' r get a frame in the model's colour."""
+    cross-validated r reaches the diagnosis' r get a frame in the model's colour.
+    """
     import math
 
     from matplotlib.cm import ScalarMappable

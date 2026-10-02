@@ -178,7 +178,7 @@ def fig_roi() -> None:
 
 def fig_inputs() -> None:
     """Central coronal slice of every input channel: 2 for the CNNs, 6 for DINOv2."""
-    hippo, hmeta, hindex = cache("hippo_s32")
+    hippo, _, hindex = cache("hippo_s32")
     multi, mmeta, mindex = cache("multi3_s32")
     idx = next(i for i in mmeta["idx"] if i in hindex)
     m = (mmeta["extract"] - 32) // 2
@@ -238,7 +238,7 @@ def central_slice(volume: np.ndarray, plane: str) -> np.ndarray:
 
 
 def slice_stack(ax: plt.Axes, volume: np.ndarray, labels: bool = False) -> None:
-    """The three central planes of one 32^3 volume, stacked like cards: the network gets them all."""
+    """Draw the three central planes of one 32^3 volume as stacked cards (the network gets all)."""
     n = len(STACK)
     for k, plane in enumerate(STACK):
         off = (n - 1 - k) * STEP
@@ -268,7 +268,7 @@ def fig_views() -> None:
 
     from t5_ssl.data.roi3d import ROIEval3D
     hippo, _, hindex = cache("hippo_s32")
-    multi, mmeta, mindex = cache("multi3_s32")
+    multi, _, mindex = cache("multi3_s32")
     val = [r["idx"] for r in manifest() if r["split"] == "val"]
     idx = next(i for i in val if i in hindex and i in mindex)
     random.seed(7), np.random.seed(7), torch.manual_seed(7)
@@ -344,11 +344,11 @@ ARCH = {
 def fig_architectures() -> None:
     """One card per model: input → encoder → probe vector → heads → loss, plus key settings."""
     from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Polygon
-    H, GAP = 32.0, 2.0
+    card_h, card_gap = 32.0, 2.0
     fig = plt.figure(figsize=(10.6, 10.2))
     ax = fig.add_axes((0, 0, 1, 1))
     ax.set_xlim(0, 100)
-    ax.set_ylim(0, 3 * H + 2 * GAP)
+    ax.set_ylim(0, 3 * card_h + 2 * card_gap)
     ax.axis("off")
 
     def rbox(x, y, w, h, fc="white", ec=INK2, lw=1.0, ls="-", alpha=1.0, r=1.2, z=2):
@@ -371,12 +371,12 @@ def fig_architectures() -> None:
 
     for row, model in enumerate(("vicreg", "byol", "dinov2")):
         spec, color = ARCH[model], COLOR[model]
-        y0 = (2 - row) * (H + GAP)
+        y0 = (2 - row) * (card_h + card_gap)
         cy = y0 + 17.5
-        rbox(0.6, y0 + 0.4, 98.8, H - 0.8, fc=color, ec=color, alpha=0.07, r=2.0, z=1)
-        rbox(0.6, y0 + 0.4, 98.8, H - 0.8, fc="none", ec=color, lw=1.2, r=2.0, z=1)
-        ax.text(2.6, y0 + H - 3.6, LABEL[model], fontsize=14, fontweight="bold", color=color, va="center")
-        ax.text(13.0, y0 + H - 3.6, spec["subtitle"], fontsize=9.5, color=INK2, va="center")
+        rbox(0.6, y0 + 0.4, 98.8, card_h - 0.8, fc=color, ec=color, alpha=0.07, r=2.0, z=1)
+        rbox(0.6, y0 + 0.4, 98.8, card_h - 0.8, fc="none", ec=color, lw=1.2, r=2.0, z=1)
+        ax.text(2.6, y0 + card_h - 3.6, LABEL[model], fontsize=14, fontweight="bold", color=color, va="center")
+        ax.text(13.0, y0 + card_h - 3.6, spec["subtitle"], fontsize=9.5, color=INK2, va="center")
         # input cube
         cube(3.0, cy - 3.2, 5.4, 2.2, color)
         ax.text(6.4, cy - 6.0, "entrada", fontsize=8, color=INK, ha="center", va="top")

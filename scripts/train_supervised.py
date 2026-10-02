@@ -221,11 +221,16 @@ class Trainer:
 
 def run(args: argparse.Namespace) -> int:
     import numpy as np
-    from sklearn.metrics import (accuracy_score, average_precision_score,
-                                 balanced_accuracy_score, f1_score, roc_auc_score)
+    from report_aug_screen import scores
+    from sklearn.metrics import (
+        accuracy_score,
+        average_precision_score,
+        balanced_accuracy_score,
+        f1_score,
+        roc_auc_score,
+    )
     from sklearn.model_selection import StratifiedKFold
 
-    from report_aug_screen import scores
     from t5_ssl.train import build_datamodule
     started = time.time()
     cfg, overrides = compose(args)

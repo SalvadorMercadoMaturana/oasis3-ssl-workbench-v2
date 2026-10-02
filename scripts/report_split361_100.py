@@ -230,7 +230,7 @@ def table(g: dict) -> dict:
         f"| {name} | {mean([d['cv_auc'] for d in docs]):.3f} ± {std([d['cv_auc'] for d in docs]):.3f} "
         f"| {mean([d['test_auc'] for d in docs]):.3f} ± {std([d['test_auc'] for d in docs]):.3f} "
         f"| {mean([d['cv_mean3'] for d in docs]):.3f} | {mean([d['test_mean3'] for d in docs]):.3f} |")
-    lines = [f"# Split 361/63/84, 100 épocas: supervisado vs SSL vs sin SSL", "",
+    lines = ["# Split 361/63/84, 100 épocas: supervisado vs SSL vs sin SSL", "",
              "Probe congelado (CV 5×5 en 329 sujetos AD/HC de train+val; test en 84) para SSL y "
              "sin SSL. Sin SSL = el encoder de partida del SSL (pesos ImageNet / DeiT inflados), "
              "congelado; sus pesos no dependen de la semilla (solo el mask_token del ViT, que no "

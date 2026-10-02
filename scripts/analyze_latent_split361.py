@@ -53,7 +53,7 @@ def compose(model: str):
     import train as entry
     doc = json.loads((RUNS / f"{RUN[model]}_s{SEED}" / "result.json").read_text(encoding="utf-8"))
     overrides = [o for o in doc["overrides"] if not o.startswith(DROP)]
-    return entry.compose(overrides + ["data.num_workers=0", "trainer.precision=32-true"])
+    return entry.compose([*overrides, "data.num_workers=0", "trainer.precision=32-true"])
 
 
 def encoders(model: str, cfg) -> dict:
@@ -304,10 +304,12 @@ OLD_NOISE, NOISE = "ruido de imagen", "ruido (sust. blanca)"
 
 
 def scanner_noise() -> None:
-    """Replace the cube's high-frequency estimate (it mixes noise with atrophy edges) with a
-    scan-level noise estimate: robust spread of the high-pass residual inside the eroded
-    cerebral white matter, a homogeneous tissue. Re-fits only the ridge column of that variable
-    from the saved subject embeddings."""
+    """Replace the cube's high-frequency estimate with a scan-level noise estimate.
+
+    The cube's estimate mixes noise with atrophy edges; the scan-level one is the robust
+    spread of the high-pass residual inside the eroded cerebral white matter, a homogeneous
+    tissue. Re-fits only the ridge column of that variable from the saved subject embeddings.
+    """
     import lmdb
     from scipy.ndimage import binary_erosion, gaussian_filter
 
