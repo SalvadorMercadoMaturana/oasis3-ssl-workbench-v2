@@ -65,6 +65,12 @@ class SSLLightningModule(L.LightningModule):
     # {"max_displacement": ..., "control_points": ...}: elastic deformation of every
     # training view on the GPU (t5_ssl.data.gpu_augment); None = off.
     gpu_elastic: dict | None = None
+    # Backbone BatchNorm with frozen statistics: recalibrated once on the training
+    # views (``bn_calibration_batches``, None = one epoch) when training starts,
+    # then held in eval mode for the whole run, so the encoder normalizes the same
+    # way in training and evaluation (gamma/beta still learn).
+    freeze_backbone_bn: bool = False
+    bn_calibration_batches: int | None = None
 
     def __init__(
         self,
@@ -205,6 +211,57 @@ class SSLLightningModule(L.LightningModule):
     def optimizer_param_groups(self) -> list[dict[str, Any]]:
         """AdamW parameter groups; a single group with ``weight_decay`` by default."""
         return [{"params": self.trainable_parameters(), "weight_decay": self.weight_decay}]
+
+    def _backbone_norms(self) -> list[nn.Module]:
+        encoders = [getattr(self, name, None) for name in
+                    ("backbone", "target_backbone", "teacher_backbone")]
+        return [m for enc in encoders if enc is not None for m in enc.modules()
+                if isinstance(m, nn.modules.batchnorm._BatchNorm)]
+
+    def train(self, mode: bool = True) -> SSLLightningModule:
+        """Switch modes, keeping the backbone BatchNorm frozen when requested."""
+        super().train(mode)
+        if self.freeze_backbone_bn:
+            for norm in self._backbone_norms():
+                norm.eval()
+        return self
+
+    @torch.no_grad()
+    def _calibrate_backbone_bn(self) -> None:
+        """Recompute the online backbone's BatchNorm statistics on training views."""
+        norms = [m for m in self.backbone.modules()
+                 if isinstance(m, nn.modules.batchnorm._BatchNorm)]
+        if not norms:
+            return
+        momenta = [m.momentum for m in norms]
+        for m in norms:
+            m.reset_running_stats()
+            m.momentum = None  # cumulative average over the calibration batches
+            m.train()
+        loader = self.trainer.datamodule.train_dataloader()
+        limit = self.bn_calibration_batches or len(loader)
+        for i, batch in enumerate(loader):
+            if i >= limit:
+                break
+            batch = self.on_after_batch_transfer(
+                self.transfer_batch_to_device(batch, self.device, 0), 0)
+            images = batch["image"]
+            for view in images if isinstance(images, list | tuple) else [images]:
+                self.backbone(view)
+        for m, momentum in zip(norms, momenta, strict=True):
+            m.momentum = momentum
+            m.eval()
+        for target_name in ("target_backbone", "teacher_backbone"):
+            target = getattr(self, target_name, None)
+            if target is not None:
+                for source, destination in zip(self.backbone.buffers(), target.buffers(),
+                                               strict=True):
+                    destination.copy_(source)
+
+    def on_train_start(self) -> None:
+        if self.freeze_backbone_bn:
+            self._calibrate_backbone_bn()
+            self.train(True)
 
     def on_after_batch_transfer(self, batch: Any, dataloader_idx: int) -> Any:
         """Apply the GPU elastic deformation (training only), then ``input_memory_format``."""

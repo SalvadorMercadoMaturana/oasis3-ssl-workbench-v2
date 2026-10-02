@@ -80,6 +80,9 @@ for _p in (0.0, 0.1, 0.2, 0.3):
         for _wd in (0.01, 0.05):
             VARIANTS["byol"][f"{_name}_wd{_wd:g}"] = (VARIANTS["byol"][_name]
                                                      + [f"optimizer.weight_decay={_wd}"])
+# The tuned GroupNorm BYOL with the backbone BatchNorm statistics frozen (``_fbn``).
+VARIANTS["byol"]["gn_dp0.3_dq0_wd0.01_fbn"] = (VARIANTS["byol"]["gn_dp0.3_dq0_wd0.01"]
+                                               + ["++model.freeze_backbone_bn=true"])
 
 
 # ---------------------------------------------------------------- regions of interest

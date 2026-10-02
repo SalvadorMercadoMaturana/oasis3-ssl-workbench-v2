@@ -314,3 +314,16 @@ def test_collapse_scores_detect_collapse():
     collapsed = collapse_scores(line, line + 2 * rng.normal(size=(40, 16)),
                                 line + 2 * rng.normal(size=(40, 16)))
     assert collapsed["effective_rank"] < 1.5 and collapsed["between_over_within"] < 1
+
+
+def test_frozen_backbone_bn_stays_in_eval_mode():
+    model = byol()
+    model.train()
+    assert all(m.training for m in model._backbone_norms())
+    model.freeze_backbone_bn = True
+    model.train()
+    norms = model._backbone_norms()
+    assert norms and not any(m.training for m in norms)  # online and target backbones
+    assert model.projector.training and model.predictor.training
+    cfg = compose(recipes.overrides("byol", "gn_dp0.3_dq0_wd0.01_fbn", aug_recipe="noise"))
+    assert cfg.model.freeze_backbone_bn is True and cfg.optimizer.weight_decay == 0.01

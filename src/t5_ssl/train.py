@@ -513,6 +513,9 @@ def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> d
 
     if aug_cfg.get("gpu_elastic"):
         model.gpu_elastic = dict(OmegaConf.to_container(aug_cfg.gpu_elastic, resolve=True))
+    if cfg.model.get("freeze_backbone_bn", False):
+        model.freeze_backbone_bn = True
+        model.bn_calibration_batches = cfg.model.get("bn_calibration_batches", None)
 
     # 6. Logger & Callbacks inside the same experiment directory
     csv_logger = CSVLogger(
