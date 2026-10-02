@@ -3,13 +3,14 @@
     python scripts/plot_architectures_split361.py
 
 The two branches of each model sit in separate bands with their own colour: VICReg's
-two branches are the same network (shared weights, both get gradients); BYOL's
-online branch against its EMA target and DINOv2's student (masked view) against its
-EMA teacher, the copies dashed and without gradient. Each branch shows a view of
-the same validation subject drawn with the model's own recipe (``geo``, ``noise``,
-TorchIO ``elastic``), as stacked central slices of the 32³ volume. Settings are the
-100-epoch champions of split361_100, BYOL with the chosen ``gn_dp0.3_dq0_wd0.01``
-heads. Writes ``docs/figures_split361/arch_{vicreg,byol,dinov2}.png``.
+two branches are the same network (shared weights); BYOL's online branch against its
+EMA target and DINOv2's student (masked view) against its EMA teacher, the copies
+dashed and without gradient (sg). Each branch shows a view of the same validation
+subject drawn with the model's own recipe (``geo``, ``noise``, TorchIO ``elastic``),
+as stacked central slices of the 32³ volume on the branch colour. Only the key
+settings of the 100-epoch champions (split361_100; BYOL with the chosen
+``gn_dp0.3_dq0_wd0.01`` heads) are written. Writes
+``docs/figures_split361/arch_{vicreg,byol,dinov2}.png``.
 """
 
 from __future__ import annotations
@@ -31,84 +32,47 @@ INK, INK2, MUTED = rep.INK, rep.INK2, rep.MUTED
 SLATE, VIOLET = "#5f6b73", "#7b52c7"
 LOSS_FC, LOSS_EC = "#fdf2e6", "#e67e22"
 DASH = (0, (5, 3))
+BAND_ALPHA = 0.12
 
 SPEC = {
     "vicreg": {
-        "title": "VICReg  ·  ConvNeXt-T 3D  ·  hipocampos 2×32³  ·  receta «geo»",
-        "recipe": "geo", "cache": "hippo_s32", "colors": (rep.COLOR["vicreg"], VIOLET),
-        "aug": ["recorte de 32–35 vóx. en", "posición al azar, reescalado",
-                "a 32³ y rotación ±5° en 3 ejes"],
-        "bands": [("Rama 1", "vista 1 · recibe gradiente"),
-                  ("Rama 2", "vista 2 · la misma red · recibe gradiente")],
-        "encoder": [("ConvNeXt-T 3D · 31.3 M", "ImageNet-1k inflado a 3D")] * 2,
-        "stages": ["96·8³", "192·4³", "384·2³", "768·1³"],
-        "h": "768",
-        "heads": [[("Proyector", "768 → 2048 → 2048 → 2048", "BN · ReLU · dropout 0.1", "10 M")]] * 2,
-        "out": ("z₁", "z₂"),
-        "link": ("shared", "misma red: pesos compartidos"),
-        "probe": 0,
-        "loss": ["Pérdida VICReg", "25 · invarianza:", "z₁ y z₂ deben coincidir",
-                 "+ 25 · varianza: std de cada", "dimensión ≥ 1 en el lote",
-                 "+ 1 · covarianza: dimensiones", "sin correlación entre sí"],
-        "grad": "el gradiente vuelve por\nlas dos ramas (misma red)",
-        "note": "Ninguna rama es especial: las dos vistas pasan por la misma red y la pérdida es simétrica; "
-                "lo que evita el colapso es el término de varianza.",
-        "chips": ["AdamW · lr 10⁻⁴", "weight decay 10⁻⁶", "warmup 20 ép. → coseno hasta 10⁻⁶",
-                  "lote 16 · 100 épocas · bf16", "validación SSL con vistas aumentadas"],
+        "name": "VICReg", "sub": "ConvNeXt-T 3D  ·  hipocampos 2×32³",
+        "recipe": "geo", "aug": "recorte + rotación ±5°", "cache": "hippo_s32",
+        "colors": (rep.COLOR["vicreg"], VIOLET),
+        "bands": [("Rama 1", ""), ("Rama 2", "")],
+        "encoder": ["ConvNeXt-T 3D", "ConvNeXt-T 3D"], "kind": "cnn", "h": "768",
+        "heads": [[("Proyector", "768 → 2048 → 2048 → 2048")]] * 2,
+        "out": ("z₁", "z₂"), "link": "pesos compartidos", "probe": 0,
+        "loss": ["VICReg", "25·inv + 25·var + 1·cov"],
+        "footer": "100 épocas  ·  lote 16  ·  AdamW lr 10⁻⁴",
     },
     "byol": {
-        "title": "BYOL  ·  ResNet-18 3D  ·  hipocampos 2×32³  ·  receta «noise»  ·  cabezas GroupNorm (elegida)",
-        "recipe": "noise", "cache": "hippo_s32", "colors": (rep.COLOR["byol"], SLATE),
-        "aug": ["ruido gaussiano en cada", "vóxel, σ al azar en [0, 0.22];",
-                "sin cambios geométricos"],
-        "bands": [("Rama online", "vista 1 · recibe gradiente"),
-                  ("Rama target", "vista 2 · copia EMA · sin gradiente")],
-        "encoder": [("ResNet-18 3D · 33.2 M", "ImageNet-1k inflado a 3D · sin max-pool"),
-                    ("ResNet-18 3D (EMA)", "copia lenta del encoder online")],
-        "stages": ["64·16³", "128·8³", "256·4³", "512·2³"],
-        "h": "512",
-        "heads": [[("Proyector", "512 → 4096 → 256", "GroupNorm · ReLU", "dropout 0.3 · 3.2 M"),
-                   ("Predictor", "256 → 4096 → 256", "GroupNorm · ReLU", "sin dropout · 2.1 M")],
-                  [("Proyector (EMA)", "512 → 4096 → 256", "copia lenta del", "proyector online"), None]],
-        "out": ("p", "z̄"),
-        "link": ("ema", "EMA: θ′ ← τθ′ + (1 − τ)θ\nτ 0.996 → 1 (coseno)"),
-        "probe": 0,
-        "loss": ["Pérdida BYOL", "2 − 2 · cos(p, z̄)", "la salida p del predictor",
-                 "debe apuntar como z̄,", "la salida del target", "simétrica: se repite con",
-                 "las vistas intercambiadas"],
-        "grad": "sg = sin gradiente: el gradiente\nsolo vuelve por la rama online",
-        "note": "Sin negativos ni término de varianza: lo que evita el colapso es la asimetría "
-                "(predictor solo en la rama online + target lento sin gradiente).",
-        "chips": ["AdamW · lr 10⁻⁴", "weight decay 0.01", "warmup 20 ép. → coseno hasta 10⁻⁶",
-                  "lote 16 · 100 épocas · bf16", "GroupNorm de 32 grupos en proyector y predictor"],
+        "name": "BYOL", "sub": "ResNet-18 3D  ·  hipocampos 2×32³",
+        "recipe": "noise", "aug": "ruido gaussiano σ ≤ 0.22", "cache": "hippo_s32",
+        "colors": (rep.COLOR["byol"], SLATE),
+        "bands": [("Online", "recibe gradiente"), ("Target", "copia EMA · sin gradiente")],
+        "encoder": ["ResNet-18 3D", "ResNet-18 3D"], "kind": "cnn", "h": "512",
+        "heads": [[("Proyector", "512 → 4096 → 256", "GroupNorm", "dropout 0.3"),
+                   ("Predictor", "256 → 4096 → 256", "GroupNorm")],
+                  [("Proyector", "512 → 4096 → 256"), None]],
+        "out": ("p", "z̄"), "link": "EMA", "probe": 0,
+        "loss": ["BYOL", "2 − 2·cos(p, z̄)"],
+        "footer": "100 épocas  ·  lote 16  ·  AdamW lr 10⁻⁴, weight decay 0.01  ·  EMA τ 0.996 → 1",
     },
     "dinov2": {
-        "title": "DINOv2  ·  ViT-S 3D  ·  3 regiones 6×32³  ·  receta «elastic» + máscara iBOT",
-        "recipe": "elastic", "cache": "multi3_s32", "colors": (rep.COLOR["dinov2"], SLATE),
-        "aug": ["deformación elástica 3D", "(TorchIO, 7 puntos de control,",
-                "≤ 2 vóx.); sin crops locales"],
-        "bands": [("Alumno", "vista 1 con parches ocultos · recibe gradiente"),
-                  ("Profesor", "vista 2 completa · copia EMA · sin gradiente")],
-        "encoder": [("ViT-S 3D · 22.5 M", "DeiT-S ImageNet-1k inflado · parche 8³"),
-                    ("ViT-S 3D (EMA)", "copia lenta del alumno")],
-        "stages": None,
-        "h": "384",
-        "heads": [[("Cabeza DINO (CLS)", "384 → 2048 → 2048 → 256 → 4096", "softmax, temperatura 0.1"),
-                   ("Cabeza iBOT (parches)", "misma forma, pesos propios", "softmax, temperatura 0.1")],
-                  [("Cabeza DINO (EMA)", "Sinkhorn-Knopp", "temperatura 0.01"),
-                   ("Cabeza iBOT (EMA)", "Sinkhorn-Knopp", "temperatura 0.01")]],
-        "out": None,  # the heads are already named
-        "link": ("ema", "EMA: θ′ ← τθ′ + (1 − τ)θ\nτ 0.99 → 1 (coseno)"),
-        "probe": 1,
-        "loss": ["Pérdida DINOv2", "DINO: el CLS del alumno", "imita al del profesor",
-                 "(vistas cruzadas)", "+ iBOT: los parches ocultos", "imitan al profesor (misma vista)",
-                 "+ 0.1 · KoLeo: CLS esparcidos"],
-        "grad": "sg = sin gradiente: el gradiente\nsolo vuelve por el alumno",
-        "note": "Cada vista pasa por las dos ramas (la figura muestra un cruce). El probe usa el CLS "
-                "del profesor, no el del alumno.",
-        "chips": ["AdamW · lr 10⁻⁴", "weight decay 0.04 → 0.2", "warmup 20 ép. → coseno",
-                  "lote 16 · 100 épocas · bf16", "recorte de gradiente 3.0 · drop path 0.1",
-                  "máscara: 50 % de las vistas, 10–50 % de los 64 parches"],
+        "name": "DINOv2", "sub": "ViT-S 3D  ·  3 regiones 6×32³",
+        "recipe": "elastic", "aug": "deformación elástica", "cache": "multi3_s32",
+        "colors": (rep.COLOR["dinov2"], SLATE),
+        "bands": [("Alumno", "recibe gradiente · parches ocultos"),
+                  ("Profesor", "copia EMA · sin gradiente")],
+        "encoder": ["ViT-S 3D", "ViT-S 3D"], "kind": "vit", "h": "384",
+        "heads": [[("DINO (CLS)", "4096 prototipos · T 0.1"),
+                   ("iBOT (parches)", "4096 prototipos · T 0.1")],
+                  [("DINO", "T 0.01"), ("iBOT", "T 0.01")]],
+        "out": None, "link": "EMA", "probe": 1,
+        "loss": ["DINOv2", "DINO + iBOT", "+ 0.1·KoLeo"],
+        "footer": "100 épocas  ·  lote 16  ·  AdamW lr 10⁻⁴  ·  EMA τ 0.99 → 1  ·  "
+                  "máscara iBOT 10–50 % de los 64 parches",
     },
 }
 
@@ -133,8 +97,13 @@ def ibot_mask(volume: np.ndarray) -> np.ndarray:
     return out
 
 
-def stack(ax: plt.Axes, volume: np.ndarray, frame: str, hidden: str | None = None) -> None:
-    """The three central planes stacked like cards (as rep.slice_stack), NaN drawn in `hidden`."""
+def stack(ax: plt.Axes, volume: np.ndarray, frame: str, tint: str = "white",
+          hidden: str | None = None) -> None:
+    """The three central planes stacked like cards on a transparent background.
+
+    The slices behind are faded towards `tint` (the band colour); NaN voxels are
+    drawn in `hidden`.
+    """
     cmap = plt.get_cmap("gray").copy()
     cmap.set_bad(hidden or "black")
     n, step = len(rep.STACK), rep.STEP
@@ -146,23 +115,30 @@ def stack(ax: plt.Axes, volume: np.ndarray, frame: str, hidden: str | None = Non
                   interpolation="nearest", zorder=3 * k)
         front = k == n - 1
         if not front:
-            ax.add_patch(Rectangle((off, off), 32, 32, facecolor="white", alpha=0.45 - 0.15 * k,
+            ax.add_patch(Rectangle((off, off), 32, 32, facecolor=tint, alpha=0.5 - 0.15 * k,
                                    edgecolor="none", zorder=3 * k + 1))
-        ax.add_patch(Rectangle((off, off), 32, 32, fill=False, edgecolor=frame if front else INK2,
-                               linewidth=2.0 if front else 0.6, zorder=3 * k + 2))
+        ax.add_patch(Rectangle((off, off), 32, 32, fill=False, edgecolor=frame,
+                               linewidth=2.2 if front else 0.8, zorder=3 * k + 2))
     ax.set_xlim(-1, 32 + (n - 1) * step + 1)
     ax.set_ylim(-1, 32 + (n - 1) * step + 1)
     ax.set_aspect("equal")
+    ax.patch.set_alpha(0.0)  # the band colour shows through
     rep.bare(ax)
+
+
+def band_tint(color: str) -> tuple[float, float, float]:
+    """The opaque colour of a band (its colour at BAND_ALPHA over white)."""
+    r, g, b, _ = to_rgba(color)
+    return tuple(1 - BAND_ALPHA * (1 - v) for v in (r, g, b))
 
 
 def figure(model: str, idx: str) -> None:
     spec = SPEC[model]
-    ema = spec["link"][0] == "ema"
-    fig = plt.figure(figsize=(14, 8.2))
+    ema = spec["link"] == "EMA"
+    fig = plt.figure(figsize=(12.5, 6.8))
     ax = fig.add_axes((0, 0, 1, 1))
     ax.set_xlim(0, 100)
-    ax.set_ylim(0, 58)
+    ax.set_ylim(0, 54)
     ax.axis("off")
 
     def rbox(x, y, w, h, fc="white", ec=INK2, lw=1.0, ls="-", r=0.9, z=2, alpha=1.0):
@@ -170,164 +146,142 @@ def figure(model: str, idx: str) -> None:
                                     fc=to_rgba(fc, alpha) if fc != "none" else "none", ec=ec,
                                     lw=lw, ls=ls, zorder=z))
 
-    def arrow(p, q, c=INK2, ls="-", lw=1.3, style="-|>", z=6):
-        ax.add_patch(FancyArrowPatch(p, q, arrowstyle=style, mutation_scale=12, color=c, lw=lw,
+    def arrow(p, q, c=INK2, ls="-", lw=1.5, style="-|>", z=6):
+        ax.add_patch(FancyArrowPatch(p, q, arrowstyle=style, mutation_scale=13, color=c, lw=lw,
                                      ls=ls, zorder=z, shrinkA=0, shrinkB=0))
 
     def text(x, y, s, **kw):
-        kw.setdefault("fontsize", 8.2)
+        kw.setdefault("fontsize", 9.5)
         kw.setdefault("color", INK)
         kw.setdefault("zorder", 8)
+        kw.setdefault("va", "center")
         return ax.text(x, y, s, **kw)
 
     main_c = spec["colors"][0]
-    ax.text(1.5, 56.0, spec["title"], fontsize=13, fontweight="bold", color=main_c, va="center")
+    title = text(1.5, 51.3, spec["name"], fontsize=17, fontweight="bold", color=main_c)
+    fig.canvas.draw()
+    end = title.get_window_extent(fig.canvas.get_renderer()).transformed(ax.transData.inverted()).x1
+    text(end + 1.5, 51.1, spec["sub"], fontsize=11.5, color=INK2)
 
     # ---- input and the split into two views
     clean, first, second = views(model, idx)
-    inset = ax.inset_axes((1.0, 23.6, 11.0, 12.8), transform=ax.transData)
+    inset = ax.inset_axes((1.0, 20.0, 11.0, 12.6), transform=ax.transData)
     stack(inset, clean, INK)
-    text(6.5, 22.8, "cubo limpio", ha="center", va="top", fontweight="bold")
-    text(6.5, 20.9, "una sesión, 32³ vóx.\n(se muestra el canal\ndel hipocampo izq.)",
-         ha="center", va="top", fontsize=7.4, color=INK2)
-    text(6.5, 48.6, "augmentation", ha="center", fontweight="bold", fontsize=8.6)
-    text(6.5, 46.9, f"«{spec['recipe']}»: dos vistas", ha="center", fontsize=8.0, color=INK2)
-    text(6.5, 45.3, "al azar del mismo cubo", ha="center", fontsize=8.0, color=INK2)
-    for k, line in enumerate(spec["aug"]):
-        text(6.5, 43.0 - 1.5 * k, line, ha="center", fontsize=7.3, color=INK2)
-    mids = (42.0, 18.0)
-    arrow((12.4, 33.0), (14.8, mids[0]), c=spec["colors"][0], lw=1.6)
-    arrow((12.4, 27.0), (14.8, mids[1]), c=spec["colors"][1], lw=1.6)
+    text(6.5, 18.6, "cubo limpio", ha="center", fontsize=9.5, fontweight="bold")
+    text(6.5, 37.4, f"«{spec['recipe']}»", ha="center", fontsize=10.5, fontweight="bold")
+    text(6.5, 35.5, spec["aug"], ha="center", fontsize=8.6, color=INK2)
+    mids = (38.0, 15.0)
+    arrow((12.4, 29.5), (14.8, mids[0]), c=spec["colors"][0], lw=1.8)
+    arrow((12.4, 23.0), (14.8, mids[1]), c=spec["colors"][1], lw=1.8)
 
     # ---- the two branch bands
     for b, mid in enumerate(mids):
         c = spec["colors"][b]
         copy = ema and b == 1
         ls = DASH if copy else "-"
-        fill = "#f6f6f4" if copy else "white"
-        rbox(13.6, mid - 10.0, 67.4, 20.0, fc=c, ec="none", r=1.6, z=1, alpha=0.10)
-        rbox(13.6, mid - 10.0, 67.4, 20.0, fc="none", ec=c, lw=2.0, ls=ls, r=1.6, z=1)
-        name, sub = spec["bands"][b]
-        text(14.6, mid + 8.4, name, fontsize=11, fontweight="bold", color=c, va="center")
-        text(14.6 + 0.62 * len(name) + 1.4, mid + 8.4, sub, fontsize=8.4, color=INK2, va="center")
-        # view
+        rbox(13.6, mid - 10.0, 66.4, 20.0, fc=c, ec="none", r=1.6, z=1, alpha=BAND_ALPHA)
+        rbox(13.6, mid - 10.0, 66.4, 20.0, fc="none", ec=c, lw=2.2, ls=ls, r=1.6, z=1)
+        name, tag = spec["bands"][b]
+        label = text(14.8, mid + 8.0, name, fontsize=12, fontweight="bold", color=c)
+        if tag:
+            fig.canvas.draw()
+            x1 = label.get_window_extent(fig.canvas.get_renderer()).transformed(
+                ax.transData.inverted()).x1
+            text(x1 + 1.2, mid + 7.9, tag, fontsize=9.2, color=INK2)
+        # view on the band colour
         view, hidden = (first if b == 0 else second), None
         if model == "dinov2" and b == 0:
-            view, hidden = ibot_mask(view), to_rgba(c, 0.6)
-        vin = ax.inset_axes((15.0, mid - 7.0, 11.0, 12.6), transform=ax.transData)
-        stack(vin, view, c, hidden)
-        label = f"vista {b + 1}" + (" + parches ocultos" if hidden is not None else "")
-        text(20.5, mid - 8.3, label, ha="center", va="center", fontweight="bold", fontsize=8.2,
+            view, hidden = ibot_mask(view), to_rgba(c, 0.65)
+        vin = ax.inset_axes((15.0, mid - 7.8, 11.0, 12.6), transform=ax.transData)
+        stack(vin, view, c, tint=band_tint(c), hidden=hidden)
+        text(20.5, mid - 8.6, f"vista {b + 1}", ha="center", fontsize=9.5, fontweight="bold",
              color=c)
-        arrow((26.4, mid), (28.4, mid), c=c)
+        arrow((26.4, mid - 1.5), (28.6, mid - 1.5), c=c)
         # encoder
-        ex0, ex1 = 28.5, 50.5
-        rbox(ex0, mid - 7.6, ex1 - ex0, 14.0, fc=fill, ec=c, lw=1.6, ls=ls, z=3)
-        enc_name, enc_sub = spec["encoder"][b]
-        text(ex0 + 1.0, mid + 4.9, enc_name, fontweight="bold", fontsize=8.6, va="center")
-        text(ex0 + 1.0, mid + 3.1, enc_sub, fontsize=7.4, color=INK2, va="center")
-        if spec["stages"]:
-            for k, stage in enumerate(spec["stages"]):
-                bx = ex0 + 1.2 + k * 5.0
-                hh = 5.6 - 1.0 * k
-                rbox(bx, mid - 2.0 - hh / 2, 3.8, hh, fc=c, ec=c, r=0.4, z=4, alpha=0.22 + 0.16 * k)
-                text(bx + 1.9, mid - 6.6, stage, ha="center", va="center", fontsize=6.8)
+        ex0, ex1, ey0, ey1 = 28.7, 47.5, mid - 7.5, mid + 4.5
+        rbox(ex0, ey0, ex1 - ex0, ey1 - ey0, fc="white", ec=c, lw=1.8, ls=ls, z=3)
+        enc = spec["encoder"][b] + (" (EMA)" if copy else "")
+        text((ex0 + ex1) / 2, ey1 - 2.0, enc, ha="center", fontweight="bold", fontsize=10.5)
+        base = ey0 + 1.2
+        if spec["kind"] == "cnn":
+            for k in range(4):
+                hh = 5.4 - 1.0 * k
+                rbox(ex0 + 1.6 + k * 4.4, base + (5.4 - hh) / 2, 3.4, hh, fc=c, ec=c, r=0.4, z=4,
+                     alpha=0.25 + 0.18 * k)
                 if k < 3:
-                    arrow((bx + 3.9, mid - 2.0), (bx + 5.0, mid - 2.0), c=MUTED, lw=0.9)
-            text(ex1 - 0.6, mid - 2.0, "GAP", ha="right", va="center", fontsize=7.0, color=INK2)
+                    arrow((ex0 + 5.1 + k * 4.4, base + 2.7), (ex0 + 5.9 + k * 4.4, base + 2.7),
+                          c=MUTED, lw=1.0)
         else:
-            rbox(ex0 + 1.2, mid - 5.8, 4.6, 7.4, fc=c, ec=c, r=0.4, z=4, alpha=0.28)
-            text(ex0 + 3.5, mid - 0.4, "64", ha="center", va="center", fontsize=7.4,
-                 fontweight="bold")
-            text(ex0 + 3.5, mid - 2.5, "parches", ha="center", va="center", fontsize=6.6)
-            text(ex0 + 3.5, mid - 4.3, "de 8³", ha="center", va="center", fontsize=6.6)
+            rbox(ex0 + 1.4, base, 3.2, 5.4, fc=c, ec=c, r=0.4, z=4, alpha=0.3)
+            text(ex0 + 3.0, base + 2.7, "8³", ha="center", fontsize=8.2)
             for k in range(12):
-                rbox(ex0 + 6.8 + k * 0.92, mid - 5.8, 0.62, 7.4, fc=c, ec=c, r=0.2, z=4,
+                rbox(ex0 + 5.6 + k * 1.0, base, 0.65, 5.4, fc=c, ec=c, r=0.2, z=4,
                      alpha=0.25 + 0.05 * k)
-            text(ex0 + 12.3, mid - 6.7, "12 bloques · dim 384", ha="center", va="center", fontsize=6.8)
-            text(ex1 - 0.5, mid - 2.0, "CLS\n+ parches", ha="right", va="center", fontsize=6.8,
-                 color=INK2)
         # representation h
-        arrow((ex1 + 0.1, mid), (52.0, mid), c=c)
-        rbox(52.1, mid - 4.4, 1.5, 8.8, fc=c, ec=c, r=0.4, z=4, alpha=0.9)
-        text(52.85, mid + 5.4, "h", ha="center", va="center", fontweight="bold", fontsize=9)
-        text(52.85, mid - 5.4, spec["h"], ha="center", va="center", fontsize=7.6)
-        if spec["probe"] == b:
-            text(52.85, mid - 7.6, "→ probe", ha="center", va="center", fontsize=7.6,
-                 fontweight="bold", color=c,
-                 bbox={"boxstyle": "round,pad=0.25", "fc": "white", "ec": c, "lw": 1.1})
+        arrow((ex1 + 0.1, mid - 1.5), (49.6, mid - 1.5), c=c)
+        rbox(49.7, mid - 5.7, 1.6, 8.4, fc=c, ec=c, r=0.4, z=4, alpha=0.9)
+        text(50.5, mid + 3.8, "h", ha="center", fontweight="bold", fontsize=10.5)
+        text(50.5, mid - 6.8, spec["h"], ha="center", fontsize=8.8)
+        if spec["probe"] == b:  # the vector the frozen probe reads
+            text(50.5, mid + 6.4, "probe", ha="center", fontsize=8.8, fontweight="bold", color=c,
+                 bbox={"boxstyle": "round,pad=0.25", "fc": "white", "ec": c, "lw": 1.2})
         # heads
         heads = spec["heads"][b]
-        arrow((53.7, mid), (56.4, mid), c=c)
-        hx0, hx1 = 56.5, 78.5
-        if model == "dinov2":
+        hx0, hx1 = 54.0, 77.6
+        arrow((51.4, mid - 1.5), (hx0 - 0.1, mid - 1.5), c=c)
+        if spec["kind"] == "vit":
             for k, head in enumerate(heads):
-                y0 = mid + 0.3 if k == 0 else mid - 6.9
-                rbox(hx0, y0, hx1 - hx0, 6.6, fc=fill, ec=c, lw=1.3, ls=ls, z=3)
-                for j, line in enumerate(head):
-                    text((hx0 + hx1) / 2, y0 + 5.0 - 1.75 * j, line, ha="center", va="center",
-                         fontsize=8.0 if j == 0 else 7.1, fontweight="bold" if j == 0 else "normal",
-                         color=INK if j == 0 else INK2)
+                y0 = mid - 0.9 if k == 0 else mid - 7.6
+                rbox(hx0, y0, hx1 - hx0, 5.8, fc="white", ec=c, lw=1.4, ls=ls, z=3)
+                text((hx0 + hx1) / 2, y0 + 3.9, head[0], ha="center", fontweight="bold", fontsize=9.6)
+                text((hx0 + hx1) / 2, y0 + 1.7, head[1], ha="center", fontsize=8.6, color=INK2)
         else:
-            width = (hx1 - hx0 - 1.6 * (len(heads) - 1)) / len(heads)
+            width = (hx1 - hx0 - 1.8 * (len(heads) - 1)) / len(heads)
             for k, head in enumerate(heads):
-                x0 = hx0 + k * (width + 1.6)
+                x0 = hx0 + k * (width + 1.8)
                 if head is None:
-                    text(x0 + width / 2, mid + 0.6, "sin predictor:", ha="center", va="center",
-                         fontsize=7.6, color=MUTED, style="italic")
-                    text(x0 + width / 2, mid - 1.2, "la asimetría de BYOL", ha="center",
-                         va="center", fontsize=7.6, color=MUTED, style="italic")
                     continue
-                rbox(x0, mid - 5.0, width, 10.0, fc=fill, ec=c, lw=1.3, ls=ls, z=3)
-                for j, line in enumerate(head):
-                    text(x0 + width / 2, mid + 3.0 - 2.0 * j, line, ha="center", va="center",
-                         fontsize=8.4 if j == 0 else 7.2, fontweight="bold" if j == 0 else "normal",
+                rbox(x0, mid - 6.5, width, 10.0, fc="white", ec=c, lw=1.4, ls=ls, z=3)
+                for j, line in enumerate(head):  # lines centred in the box
+                    text(x0 + width / 2, mid - 1.5 + 1.1 * (len(head) - 1) - 2.2 * j, line,
+                         ha="center",
+                         fontsize=9.8 if j == 0 else 8.6, fontweight="bold" if j == 0 else "normal",
                          color=INK if j == 0 else INK2)
                 if k < len(heads) - 1 and heads[k + 1] is not None:
-                    arrow((x0 + width + 0.05, mid), (x0 + width + 1.55, mid), c=c)
+                    arrow((x0 + width + 0.05, mid - 1.5), (x0 + width + 1.75, mid - 1.5), c=c)
         if spec["out"]:
-            text(hx1 + 0.4, mid + 2.2, spec["out"][b], fontsize=9.5, fontweight="bold", color=c,
-                 va="center")
+            text(hx1 + 0.5, mid + 1.2, spec["out"][b], fontsize=11, fontweight="bold", color=c)
 
-    # ---- link between the branches (encoders, and heads for the EMA copies)
-    kind, label = spec["link"]
-    if kind == "shared":
-        arrow((47.5, 34.3), (47.5, 24.5), c=INK2, style="<|-|>", lw=1.6)
-        text(48.4, 30.0, label, fontsize=8.2, color=INK, va="center", fontweight="bold")
+    # ---- link between the branches
+    if not ema:
+        arrow((38.1, 30.4), (38.1, 19.6), c=INK2, style="<|-|>", lw=1.8)
+        text(39.2, 26.5, spec["link"], fontsize=9.6, fontweight="bold")
     else:
-        arrow((47.5, 34.3), (47.5, 24.5), c=SLATE, ls=(0, (4, 3)), lw=1.5)
-        top_heads = 37.0 if model != "dinov2" else 35.1
-        bottom_heads = 23.0 if model != "dinov2" else 24.9
-        x_heads = 62.0 if model != "dinov2" else 74.0
-        arrow((x_heads, top_heads), (x_heads, bottom_heads), c=SLATE, ls=(0, (4, 3)), lw=1.5)
-        text(48.4, 30.0, label, fontsize=7.9, color=INK2, va="center")
-        text(x_heads + 0.8, 30.0, "EMA", fontsize=7.9, color=INK2, va="center")
+        heads_x = 61.5 if spec["kind"] == "cnn" else 74.5
+        for x in (38.1, heads_x):
+            arrow((x, 30.4 if x == 38.1 else (31.5 if spec["kind"] == "cnn" else 30.4)),
+                  (x, 19.6 if x == 38.1 else (18.5 if spec["kind"] == "cnn" else 19.9)),
+                  c=SLATE, ls=(0, (4, 3)), lw=1.6)
+            text(x + 0.9, 26.5, "EMA", fontsize=9.4, color=SLATE, fontweight="bold")
 
     # ---- loss
-    lx0, lx1, ly0, ly1 = 83.2, 99.2, 18.0, 42.0
-    rbox(lx0, ly0, lx1 - lx0, ly1 - ly0, fc=LOSS_FC, ec=LOSS_EC, lw=1.4, z=3)
-    for k, line in enumerate(spec["loss"]):
-        text((lx0 + lx1) / 2, ly1 - 2.5 - 2.8 * k, line, ha="center", va="center",
-             fontsize=9.2 if k == 0 else 7.7, fontweight="bold" if k == 0 else "normal")
-    arrow((79.2, mids[0]), (lx0 - 0.1, 36.0), c=spec["colors"][0], lw=1.7)
-    arrow((79.2, mids[1]), (lx0 - 0.1, 24.0), c=spec["colors"][1], lw=1.7)
+    lx0, lx1, ly0, ly1 = 83.0, 98.8, 19.5, 33.5
+    rbox(lx0, ly0, lx1 - lx0, ly1 - ly0, fc=LOSS_FC, ec=LOSS_EC, lw=1.5, z=3)
+    lines = spec["loss"]
+    top = (ly0 + ly1) / 2 + 1.3 * (len(lines) - 1)
+    for k, line in enumerate(lines):
+        text((lx0 + lx1) / 2, top - 2.6 * k, line, ha="center",
+             fontsize=12 if k == 0 else 9.6, fontweight="bold" if k == 0 else "normal")
+    arrow((80.0, mids[0] - 1.5), (lx0 - 0.1, 30.5), c=spec["colors"][0], lw=1.9)
+    arrow((80.0, mids[1] - 1.5), (lx0 - 0.1, 22.5), c=spec["colors"][1], lw=1.9)
     if ema:  # stop-gradient on the target / teacher side
-        ax.add_patch(Circle((81.2, 21.0), 0.95, fc="white", ec=LOSS_EC, lw=1.4, zorder=9))
-        text(81.2, 21.0, "sg", ha="center", va="center", fontsize=6.8, fontweight="bold",
-             color=LOSS_EC, zorder=10)
-    text((lx0 + lx1) / 2, 16.8, spec["grad"], ha="center", va="top", fontsize=7.3, color=INK2)
+        ax.add_patch(Circle((81.4, 18.1), 1.05, fc="white", ec=LOSS_EC, lw=1.5, zorder=9))
+        text(81.4, 18.1, "sg", ha="center", fontsize=7.6, fontweight="bold", color=LOSS_EC,
+             zorder=10)
+        text((lx0 + lx1) / 2, 17.4, "sg: sin gradiente", ha="center", fontsize=8.6, color=INK2)
 
-    # ---- note and training chips
-    text(1.5, 5.4, spec["note"], fontsize=8.4, color=INK2, va="center", style="italic")
-    fig.canvas.draw()
-    renderer = fig.canvas.get_renderer()
-    x = 1.5
-    for chip in spec["chips"]:
-        t = text(x, 2.2, chip, fontsize=7.8, va="center", ha="left",
-                 bbox={"boxstyle": "round,pad=0.35,rounding_size=0.6", "fc": "white", "ec": main_c,
-                       "lw": 0.9})
-        box = t.get_window_extent(renderer).transformed(ax.transData.inverted())
-        x = box.x1 + 1.3
+    # ---- key settings
+    text(1.5, 2.2, spec["footer"], fontsize=9.6, color=INK2)
     rep.save(fig, f"arch_{model}.png")
 
 
