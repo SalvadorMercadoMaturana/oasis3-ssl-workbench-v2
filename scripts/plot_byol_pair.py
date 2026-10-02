@@ -1,7 +1,7 @@
 """Compare two BYOL variants and the encoder without SSL: metrics, curves, collapse.
 
-    python scripts/plot_byol_pair.py campaign_ssl3d_runpod/byol_fbn30 \\
-        --a gn_dp0.3_dq0_wd0.01_fbn "BN del backbone congelado" \\
+    python scripts/plot_byol_pair.py campaign_ssl3d_runpod/byol_fbn30
+        --a gn_dp0.3_dq0_wd0.01_fbn "BN del backbone congelado"
         --b gn_dp0.3_dq0_wd0.01 "Elegida (BN del backbone normal)" --prefix byol_fbn
 
 Runs: ``<dir>/byol_*/result.json`` (train.py with ``--identity --collapse-every``);
