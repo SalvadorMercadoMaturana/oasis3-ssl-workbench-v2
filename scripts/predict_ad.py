@@ -12,7 +12,8 @@ cubes are cut at the model's fixed positions (left/right mirrored pairs) and the
 32-voxel cube goes through every seed's encoder and probe. Output per scan: P(AD) (mean
 over seeds; 50/50 prior), the decision at the chosen threshold and an out-of-distribution
 flag (Mahalanobis distance above the training 99th percentile in a majority of seeds:
-treat the prediction as unreliable).
+treat the prediction as unreliable). A scan whose cube intensity falls outside the
+model's QC range (OASIS3's, see ``qc_intensity``) is rejected: decision ``QC``, no P(AD).
 
 ``--calibrate-site`` stores the embedding mean and SD of an unlabeled batch of a new site
 (tens of scans, any mix of patients); ``--site`` then standardizes that site's embeddings
@@ -34,6 +35,17 @@ from scipy.special import expit
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT))
+QC_MARGIN = 0.05
+
+
+def qc_intensity(cubes: np.ndarray, roi_size: int) -> np.ndarray:
+    """Mean intensity of channel 0 over the evaluated (center) cube of each extracted cube.
+
+    ``cubes`` is (n, channels, e, e, e) as cut by ``extend_roi_caches.crop`` from a
+    ``normalize_volume``d MRI; the model accepts only scans inside OASIS3's range.
+    """
+    c = (cubes.shape[-1] - roi_size) // 2
+    return cubes[:, 0, c:c + roi_size, c:c + roi_size, c:c + roi_size].mean(axis=(1, 2, 3))
 
 
 def load_volumes(args: argparse.Namespace) -> tuple[list[str], list[np.ndarray]]:
@@ -79,7 +91,9 @@ def encoders(model: dict, model_dir: Path) -> list:
     return out
 
 
-def embed(model: dict, nets: list, volumes: list[np.ndarray]) -> list[np.ndarray]:
+def embed(model: dict, nets: list, volumes: list[np.ndarray]
+          ) -> tuple[list[np.ndarray], np.ndarray]:
+    """Return every seed's embeddings and the QC intensity of each scan."""
     import torch
 
     sys.path.insert(0, str(ROOT / "scripts"))
@@ -89,11 +103,12 @@ def embed(model: dict, nets: list, volumes: list[np.ndarray]) -> list[np.ndarray
     from t5_ssl.data.roi3d import ROIEval3D
     cube = model["cube"]
     clean = ROIEval3D(model["roi_size"])
-    batch = torch.stack([clean(torch.from_numpy(
-        crop(normalize_volume(v.astype(np.float32)), cube["cube_starts"], cube["extract"])
-        .astype(np.float32))) for v in volumes])
+    cubes = np.stack([crop(normalize_volume(v.astype(np.float32)), cube["cube_starts"],
+                           cube["extract"]).astype(np.float32) for v in volumes])
+    batch = torch.stack([clean(torch.from_numpy(c)) for c in cubes])
     with torch.inference_mode():
-        return [net(batch).float().numpy() for net in nets]
+        return ([net(batch).float().numpy() for net in nets],
+                qc_intensity(cubes, model["roi_size"]))
 
 
 def main() -> None:
@@ -110,7 +125,10 @@ def main() -> None:
     names, volumes = load_volumes(args)
     if not volumes:
         raise SystemExit("no input volumes")
-    embeddings = embed(model, encoders(model, args.model), volumes)
+    embeddings, intensity = embed(model, encoders(model, args.model), volumes)
+    qc = model.get("qc")
+    passed = (np.ones(len(volumes), bool) if qc is None
+              else (intensity >= qc["lo"]) & (intensity <= qc["hi"]))
     if args.calibrate_site:
         if len(volumes) < 20:
             print(f"warning: {len(volumes)} scans is a small calibration batch (use tens)")
@@ -134,15 +152,21 @@ def main() -> None:
     prob = np.mean(probs, axis=0)
     flag = np.mean(flags, axis=0) >= 0.5
     threshold = model["thresholds"][args.threshold]
-    rows = [{"scan": n, "p_ad": f"{p:.4f}", "decision": "AD" if p >= threshold else "HC",
-             "threshold": f"{threshold:.4f}", "out_of_distribution": bool(f)}
-            for n, p, f in zip(names, prob, flag, strict=True)]
+    rows = [{"scan": n, "p_ad": f"{p:.4f}" if ok else "",
+             "decision": ("AD" if p >= threshold else "HC") if ok else "QC",
+             "threshold": f"{threshold:.4f}", "qc_intensity": f"{v:.3f}",
+             "out_of_distribution": bool(f)}
+            for n, p, f, v, ok in zip(names, prob, flag, intensity, passed, strict=True)]
     if args.out:
         with args.out.open("w", newline="", encoding="utf-8") as stream:
             writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
             writer.writeheader()
             writer.writerows(rows)
     for r in rows:
+        if r["decision"] == "QC":
+            print(f"{r['scan']}: qc_rechazada (intensidad {r['qc_intensity']} fuera de "
+                  f"[{qc['lo']:.3f}, {qc['hi']:.3f}]: revisar el preprocesamiento; no se puntúa)")
+            continue
         print(f"{r['scan']}: P(AD)={r['p_ad']} -> {r['decision']}"
               + ("  [fuera de distribución: no confiar]" if r["out_of_distribution"] else ""))
 

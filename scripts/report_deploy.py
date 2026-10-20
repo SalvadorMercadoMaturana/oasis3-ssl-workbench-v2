@@ -19,10 +19,10 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from sklearn.linear_model import LogisticRegression
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import build_deploy_model as bd  # noqa: E402
 import report_bb50 as rb  # noqa: E402
 
 base, plt = rb.base, rb.plt
@@ -47,21 +47,51 @@ def ages() -> tuple[dict[str, float], dict[str, set[str]]]:
 
 
 def age_reference(any_doc: dict) -> dict[str, dict[str, float]]:
-    """Age-only class-balanced logistic regression (train -> each evaluation set)."""
-    age, split = ages()
+    """Score each evaluation set with age itself (older = AD): the age shortcut.
+
+    A logistic fit on the labeled train set cannot serve: train is age-matched 1:1, so the
+    fitted slope is noise and its sign arbitrary (it came out negative). No F1: a threshold
+    would have to be fitted somewhere.
+    """
+    age, _ = ages()
     labels = {s: a for s, (a, _) in rb.predictions(any_doc, "test").items()}
     labels |= {s: a for s, (a, _) in rb.predictions(any_doc, "adni").items()}
-    train = sorted(split["train"] & set(any_doc["subjects"]))
-    y_train = [any_doc["labels"][any_doc["subjects"].index(s)] for s in train]
-    model = LogisticRegression(class_weight="balanced").fit([[age[s]] for s in train], y_train)
     out = {}
     for where in ("test", "agem", "adni"):
         subjects = sorted(rb.predictions(any_doc, where))
         y = np.array([labels[s] for s in subjects])
-        p = model.predict_proba([[age[s]] for s in subjects])[:, 1]
-        out[where] = {"auc": rb.fast_auc(y, p), "aupr": rb.fast_ap(y, p),
-                      "f1": float(rb.f1_score(y, p >= 0.5, average="macro"))}
+        p = np.array([age[s] for s in subjects])
+        out[where] = {"auc": rb.fast_auc(y, p), "aupr": rb.fast_ap(y, p)}
     return out
+
+
+def apply_input_qc(*runs: dict) -> dict[str, int]:
+    """Score ADNI as the deployed model does: without the scans its input QC rejects.
+
+    One scan-level rule for every model (the hippocampal cube, build_deploy_model.qc_range):
+    45 ADNI AD scans carry another intensity normalization. The unfiltered entry stays as
+    ``adni_all``. Returns the AD/HC counts kept and rejected.
+    """
+    qc = bd.qc_range("hippo_s32")
+    ext = list(csv.DictReader((SPLIT / "external_adni.csv").open(encoding="utf-8")))
+    value = bd.cache_intensity("adni_hippo_s32", [r["idx"] for r in ext])
+    keep = {r["subject"] for r, v in zip(ext, value, strict=True) if qc["lo"] <= v <= qc["hi"]}
+    for group in runs:
+        for docs in group.values():
+            for doc in docs:
+                extras = doc["test"]["extra_tests"]
+                extras["adni_all"] = extras["adni"]
+                rows = [r for r in extras["adni_all"]["predictions"] if r["subject"] in keep]
+                y = np.array([r["AD"] for r in rows])
+                p = np.array([r["score"] for r in rows])
+                extras["adni"] = {"predictions": rows, "auc": rb.fast_auc(y, p),
+                                  "average_precision": rb.fast_ap(y, p),
+                                  "f1_macro": float(rb.f1_score(y, p >= 0.5, average="macro"))}
+    groups = {r["subject"]: r["group"] for r in ext}
+    count = lambda subjects, g: sum(groups[s] == g for s in subjects)  # noqa: E731
+    rejected = set(groups) - keep
+    return {"ad": count(keep, "AD"), "hc": count(keep, "HC"),
+            "rejected_ad": count(rejected, "AD"), "rejected_hc": count(rejected, "HC")}
 
 
 def adni_figure(g: dict, variant: dict, age: dict) -> None:
@@ -73,7 +103,7 @@ def adni_figure(g: dict, variant: dict, age: dict) -> None:
              ("Sin SSL", lambda m, bb: g["init"].get((m, bb)), base.BASE, None))
     fig, axes = plt.subplots(1, 2, figsize=(12, 3.8), sharey=True)
     for ax, where, title in ((axes[0], "test", "Test OASIS3 representativo (41 AD + 137 HC)"),
-                             (axes[1], "adni", "ADNI, otro centro (118 AD + 248 HC)")):
+                             (axes[1], "adni", rb.WHERE["adni"])):
         for i, (m, bb) in enumerate(CELLS):
             for k, (label, get, color, hatch) in enumerate(kinds):
                 docs = get(m, bb)
@@ -110,8 +140,8 @@ def model_figure(validation: dict) -> None:
     sets = (("oof", "CV fuera de fold (train+val)", "#52514e"),
             ("oasis3_test", "Test OASIS3 representativo", "#2a78d6"),
             ("oasis3_test_age_matched", "Test OASIS3 emparejado por edad", "#1baf7a"),
-            ("adni_raw", "ADNI sin calibrar", "#eb6834"),
-            ("adni_site_calibrated", "ADNI calibrado por sitio", "#b3261e"))
+            ("adni_qc", "ADNI con QC de entrada", "#eb6834"),
+            ("adni_raw", "ADNI sin QC (incluye 45 AD mal normalizadas)", "#b9b8b3"))
     fig, ax = plt.subplots(figsize=(5.6, 5.0))
     for key, label, color in sets:
         if key not in validation:
@@ -145,6 +175,7 @@ def main() -> None:
     variant_runs = rb.load(args.runs, "dep50a")
     for name in list(main_runs):  # dep50a_* also matches the dep50 prefix
         main_runs[name] = [d for d in main_runs[name] if "/dep50a_ssl/" not in d["experiment_dir"]]
+    qc = apply_input_qc(main_runs, variant_runs)
     g, variant = rb.groups_of(main_runs), rb.groups_of(variant_runs)
     matched = rb.age_matched_test(SPLIT / "manifest.csv")
     rb.AGE_MATCHED.update(matched["subjects"])
@@ -152,7 +183,7 @@ def main() -> None:
     rb.WHERE.update({"cv": "CV (train+val emparejados por edad, 294)",
                      "test": "Test representativo (41 AD + 137 HC)",
                      "agem": f"Test emparejado por edad ({matched['ad']} AD + {matched['hc']} HC)",
-                     "adni": "ADNI externo (118 AD + 248 HC)"})
+                     "adni": f"ADNI externo con QC ({qc['ad']} AD + {qc['hc']} HC)"})
     first = g["ssl"][CELLS[0]][0]
     age = age_reference(first)
     lines = ["# Split de despliegue, 50 épocas", "",

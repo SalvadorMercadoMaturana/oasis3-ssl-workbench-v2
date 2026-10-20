@@ -46,6 +46,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(ROOT / "src"))
+from predict_ad import QC_MARGIN, qc_intensity  # noqa: E402
 from report_bb50 import fast_ap, fast_auc  # noqa: E402
 
 SPLIT = ROOT / "campaign_ssl3d_runpod/split_deploy"
@@ -159,6 +160,47 @@ def load_candidate(runs: Path, name: str, tags: list[str]) -> list[dict]:
     return seeds
 
 
+def fit_set(seeds: list[dict]) -> tuple[list[np.ndarray], np.ndarray, list[str]]:
+    """Return every seed's labeled train+val embeddings, their labels and subjects."""
+    x_fit = [np.concatenate([s["train_x"], s["val_x"]]) for s in seeds]
+    y_fit = np.concatenate([seeds[0]["train_y"], seeds[0]["val_y"]])
+    subjects = list(seeds[0]["train_subjects"]) + list(seeds[0]["val_subjects"])
+    for s in seeds[1:]:
+        assert list(s["train_subjects"]) + list(s["val_subjects"]) == subjects
+    return x_fit, y_fit, subjects
+
+
+def ensemble_oof(seeds: list[dict]) -> np.ndarray:
+    """Out-of-fold probabilities of the deployed recipe: the mean over seeds of each probe."""
+    x_fit, y_fit, _ = fit_set(seeds)
+    return np.mean([oof_proba(x, y_fit, s["seed"]) for x, s in zip(x_fit, seeds, strict=True)],
+                   axis=0)
+
+
+def cache_intensity(cache: str, keys: list[str]) -> np.ndarray:
+    """Return the QC statistic (``predict_ad.qc_intensity``) of cached sessions."""
+    meta = json.loads((ROOT / "data/roi3d" / f"{cache}.json").read_text(encoding="utf-8"))
+    cubes = np.load(ROOT / "data/roi3d" / f"{cache}.npy", mmap_mode="r")
+    row = {k: i for i, k in enumerate(meta["idx"])}
+    return np.array([qc_intensity(np.asarray(cubes[row[k]][None], dtype=np.float32), 32)[0]
+                     for k in keys])
+
+
+def qc_range(cache: str) -> dict:
+    """Return the accepted input range: every OASIS3 session's QC statistic, widened.
+
+    Defined from training data only. It exists because 45 ADNI scans (all AD) come with
+    another intensity normalization, far outside OASIS3; they are not anatomy.
+    """
+    meta = json.loads((ROOT / "data/roi3d" / f"{cache}.json").read_text(encoding="utf-8"))
+    study = {r["idx"]: r["study_name"].strip().upper() for r in
+             csv.DictReader((ROOT / "data/dementia/mni-dataset.csv").open(encoding="utf-8"))}
+    values = cache_intensity(cache, [k for k in meta["idx"] if study.get(k) == "OASIS3"])
+    return {"statistic": "mean intensity of channel 0 over the evaluated (center) cube",
+            "lo": float(values.min() - QC_MARGIN), "hi": float(values.max() + QC_MARGIN),
+            "oasis3_sessions": len(values)}
+
+
 def ages_by_subject() -> dict[str, float]:
     ages = {}
     for path, key in ((SPLIT / "manifest.csv", "idx"), (SPLIT / "external_adni.csv", "idx")):
@@ -196,6 +238,8 @@ def main() -> None:
     parser.add_argument("--runs", type=Path, default=ROOT / "campaign_ssl3d_runpod/deploy/runs")
     parser.add_argument("--out", type=Path, default=ROOT / "deploy/ad_mri_v1")
     parser.add_argument("--candidate", default=None, help="force a candidate (default: by CV)")
+    parser.add_argument("--reason", default=None,
+                        help="why --candidate was forced (Markdown, written into the model card)")
     parser.add_argument("--tags", nargs="+", default=["dep50_ssl", "dep50_init"],
                         help="run directories under --runs holding the candidates")
     args = parser.parse_args()
@@ -203,22 +247,25 @@ def main() -> None:
     pool = {label: load_candidate(args.runs, name, args.tags) for label, name in CANDIDATES.items()}
     pool = {k: v for k, v in pool.items() if v}
     cv = {k: float(np.mean([s["doc"]["cv_auc"] for s in v])) for k, v in pool.items()}
-    lines = ["Selección por AUROC de CV (train+val con etiqueta, emparejados por edad):", ""]
-    lines += [f"- {k}: {cv[k]:.3f} ({len(pool[k])} semillas)" for k in sorted(cv, key=cv.get,
-                                                                               reverse=True)]
-    chosen = args.candidate or max(cv, key=cv.get)
+    oofs = {k: ensemble_oof(v) for k, v in pool.items()}
+    deploy_cv = {k: fast_auc(fit_set(pool[k])[1], p) for k, p in oofs.items()}
+    lines = ["Selección por AUROC fuera de fold del probe que se despliega (ensamble de las "
+             "semillas, C elegido dentro de cada fold; train+val con etiqueta, emparejados por "
+             "edad). Entre paréntesis, la media del AUROC de CV de cada corrida por separado "
+             "(protocolo de la campaña, que no es lo que se despliega):", ""]
+    lines += [f"- {k}: {deploy_cv[k]:.3f} ({cv[k]:.3f}; {len(pool[k])} semillas)"
+              for k in sorted(deploy_cv, key=deploy_cv.get, reverse=True)]
+    chosen = args.candidate or max(deploy_cv, key=deploy_cv.get)
     seeds = pool[chosen]
-    lines += ["", f"Elegido: **{chosen}**", ""]
+    lines += ["", f"Elegido: **{chosen}**" + (f" (SSL: {', '.join(args.tags)})" if args.candidate
+                                                 else ""), ""]
+    if args.reason:
+        lines += [args.reason, ""]
     ages = ages_by_subject()
     # ---- final probes, thresholds, OOD
-    x_fit = [np.concatenate([s["train_x"], s["val_x"]]) for s in seeds]
-    y_fit = np.concatenate([seeds[0]["train_y"], seeds[0]["val_y"]])
-    fit_subjects = list(seeds[0]["train_subjects"]) + list(seeds[0]["val_subjects"])
-    for s in seeds[1:]:
-        assert list(s["train_subjects"]) + list(s["val_subjects"]) == fit_subjects
+    x_fit, y_fit, fit_subjects = fit_set(seeds)
     probes = [Probe(x, y_fit, s["seed"]) for x, s in zip(x_fit, seeds, strict=True)]
-    oof = np.mean([oof_proba(x, y_fit, s["seed"]) for x, s in zip(x_fit, seeds, strict=True)],
-                  axis=0)
+    oof = oofs[chosen]
     grid = np.unique(oof)
     youden = float(max(grid, key=lambda t: sum(threshold_metrics(y_fit, oof, t)[k]
                                                for k in ("sensitivity", "specificity"))))
@@ -246,7 +293,11 @@ def main() -> None:
             flags.append(o.distance((x - mean) / sd) > o.threshold)
         return float(np.mean(np.mean(flags, axis=0) >= 0.5))
 
-    validation: dict = {"candidate": chosen, "cv_auc": cv, "thresholds": thresholds,
+    roi = seeds[0]["doc"]["roi"]
+    cache = "multi3_s32" if roi == "multi3" else "hippo_s32"
+    qc = qc_range(cache)
+    validation: dict = {"candidate": chosen, "cv_auc": cv, "deploy_cv_auc": deploy_cv,
+                        "thresholds": thresholds, "qc": qc,
                         "oof": with_ci(y_fit, oof, thresholds)}
     test_y, test_subjects = seeds[0]["test_y"], list(seeds[0]["test_subjects"])
     p_test = ensemble("test")
@@ -266,6 +317,19 @@ def main() -> None:
                                       adni_site_calibrated=ood_rate("adni", site=True))
         validation["age_only_adni"] = with_ci(
             adni_y, age_only(fit_subjects, y_fit, adni_subjects, ages), {"0.5": 0.5})
+        # Input QC: scans outside the OASIS3 intensity range are rejected, not scored.
+        adni_idx = {r["subject"]: r["idx"] for r in
+                    csv.DictReader((SPLIT / "external_adni.csv").open(encoding="utf-8"))}
+        value = cache_intensity(f"adni_{cache}", [adni_idx[s] for s in adni_subjects])
+        ok = (value >= qc["lo"]) & (value <= qc["hi"])
+        qc["adni_rejected"] = {"AD": int((~ok & (adni_y == 1)).sum()),
+                               "HC": int((~ok & (adni_y == 0)).sum())}
+        validation["adni_qc"] = with_ci(adni_y[ok], ensemble("adni", rows=ok), thresholds)
+        validation["adni_qc_site_calibrated"] = with_ci(
+            adni_y[ok], ensemble("adni", site=True, rows=ok, calib=ok), thresholds)
+        validation["age_only_adni_qc"] = with_ci(
+            adni_y[ok], age_only(fit_subjects, y_fit, list(np.array(adni_subjects)[ok]), ages),
+            {"0.5": 0.5})
         # Calibration from small unlabeled batches with other AD shares (no labels used).
         rng = np.random.default_rng(0)
         pos, neg = np.flatnonzero(adni_y == 1), np.flatnonzero(adni_y == 0)
@@ -285,8 +349,6 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
     for s in seeds:
         shutil.copy2(s["dir"] / "encoder.pt", args.out / f"encoder_s{s['seed']}.pt")
-    roi = seeds[0]["doc"]["roi"]
-    cache = "multi3_s32" if roi == "multi3" else "hippo_s32"
     geometry = json.loads((ROOT / "data/roi3d" / f"{cache}.json").read_text(encoding="utf-8"))
     model = {"name": args.out.name, "candidate": chosen, "roi": roi, "roi_size": 32,
              "cube": {k: geometry[k] for k in ("extract", "cube_starts", "channels")},
@@ -297,7 +359,8 @@ def main() -> None:
                         "ood": {"center": o.center.tolist(), "components": o.components.tolist(),
                                 "var": o.var.tolist(), "threshold": o.threshold}}
                        for s, p, o in zip(seeds, probes, oods, strict=True)],
-             "thresholds": thresholds, "training_prevalence": 0.5,
+             "thresholds": thresholds, "qc": {k: qc[k] for k in ("statistic", "lo", "hi")},
+             "training_prevalence": 0.5,
              "oasis3_prevalence": 203 / 880}
     (args.out / "model.json").write_text(json.dumps(model) + "\n", encoding="utf-8")
     (args.out / "validation.json").write_text(json.dumps(validation, indent=1) + "\n",
@@ -329,9 +392,20 @@ def model_card(chosen: str, v: dict, selection: list[str]) -> str:
              row("Solo edad, test OASIS3", v["age_only_test"]),
              row("Solo edad, test emparejado", v["age_only_test_age_matched"])]
     if "adni_raw" in v:
-        lines += [row("ADNI (otro centro), sin calibrar", v["adni_raw"]),
-                  row("ADNI calibrado por sitio (sin etiquetas)", v["adni_site_calibrated"]),
-                  row("Solo edad, ADNI", v["age_only_adni"]), "",
+        rejected = v["qc"]["adni_rejected"]
+        lines += [row("ADNI (otro centro), con QC de entrada", v["adni_qc"]),
+                  row("ADNI con QC, calibrado por sitio (sin etiquetas)",
+                      v["adni_qc_site_calibrated"]),
+                  row("Solo edad, ADNI con QC", v["age_only_adni_qc"]),
+                  row("ADNI sin QC (todas las MRIs)", v["adni_raw"]),
+                  row("ADNI sin QC, calibrado por sitio", v["adni_site_calibrated"]),
+                  row("Solo edad, ADNI sin QC", v["age_only_adni"]), "",
+                  f"QC de entrada: {v['qc']['statistic']} dentro de [{v['qc']['lo']:.3f}, "
+                  f"{v['qc']['hi']:.3f}] (rango de las {v['qc']['oasis3_sessions']} sesiones "
+                  f"OASIS3 ± {QC_MARGIN}). En ADNI rechaza {rejected['AD']} AD y "
+                  f"{rejected['HC']} HC: MRIs con otra normalización de intensidad (0.85–0.95 "
+                  "contra ≤ 0.72 en OASIS3), todas AD; sin QC el modelo las puntúa como "
+                  "anatomía y el AUROC de ADNI se hunde.", "",
                   "Calibración de sitio con lotes chicos sin etiquetas (AUROC medio / percentil 5, "
                   "50 lotes): " + ", ".join(f"{k}: {m:.3f} / {p:.3f}"
                                              for k, (m, p) in v["adni_calibration_batches"].items())]
@@ -342,8 +416,11 @@ def model_card(chosen: str, v: dict, selection: list[str]) -> str:
               "que mni-dataset.lmdb); `scripts/predict_ad.py` recorta los cubos (hipocampo, o 3 "
               "regiones) en posiciones fijas y devuelve P(AD), la decisión en el umbral elegido "
               "y una alerta fuera de distribución.",
-              "- Centro nuevo: calibrar primero con un lote de sus MRIs sin etiquetas "
-              "(`predict_ad.py --calibrate-site`); sin eso, el desempeño en ADNI cae.",
+              "- QC de entrada obligatorio: una MRI fuera del rango de intensidad de OASIS3 se "
+              "rechaza (`qc_rechazada`) y no se puntúa; hay que revisar su preprocesamiento.",
+              "- Centro nuevo: con el QC, ADNI funciona sin calibrar; la calibración por sitio "
+              "sin etiquetas (`predict_ad.py --calibrate-site`) es opcional y apenas cambia el "
+              "AUROC (ver tabla).",
               "- Entrenado solo con OASIS3 (AD y HC 'puros'); no distingue AD de otras demencias "
               "(LBD, FTD, vascular), que nunca vio con etiqueta.",
               "- Las probabilidades suponen prevalencia 50/50 (probe balanceado); el PPV real "
