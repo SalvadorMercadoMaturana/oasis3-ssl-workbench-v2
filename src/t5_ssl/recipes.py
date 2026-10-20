@@ -115,6 +115,9 @@ ROIS: dict[str, dict] = {
     "48": {"size": 48, "cache": "hippo_s48", "channels": 2},
     "64": {"size": 64, "cache": "hippo_s64", "channels": 2},
     "multi3": {"size": 32, "cache": "multi3_s32", "channels": 6},
+    # multi3 + lateral temporal (inferior/middle temporal gyri) and inferior parietal
+    # (+ supramarginal) cortex: 5 bilateral regions of the usual AD atrophy, 10 channels.
+    "atrophy5": {"size": 32, "cache": "atrophy5_s32", "channels": 10},
 }
 
 

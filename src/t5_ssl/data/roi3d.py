@@ -143,6 +143,10 @@ REGIONS: dict[str, tuple[tuple[int, ...], tuple[int, ...]]] = {
     "entorhinal": ((1006,), (2006,)),
     # posterior + isthmus cingulate and precuneus (posteromedial cortex)
     "posteromedial": ((1023, 1010, 1025), (2023, 2010, 2025)),
+    # inferior + middle temporal gyri (lateral temporal neocortex)
+    "lateral_temporal": ((1009, 1015), (2009, 2015)),
+    # inferior parietal + supramarginal (lateral parietal association cortex)
+    "parietal": ((1008, 1031), (2008, 2031)),
 }
 
 
