@@ -278,7 +278,8 @@ class ROIView3DTransform:
                  noise_std: float = 0.0, intensity_scale: tuple[float, float] = (1.0, 1.0),
                  torchio_transforms: list[dict] | None = None, n_local_crops: int = 0,
                  local_size: int = 16, local_side_range: tuple[float, float] = (0.4, 0.6),
-                 rotation_padding: str = "zeros", centered_crop: bool = False) -> None:
+                 rotation_padding: str = "zeros", centered_crop: bool = False,
+                 defer_crop: bool = False) -> None:
         if rotation_padding not in ("zeros", "border", "reflection"):
             raise ValueError("rotation_padding must be 'zeros', 'border' or 'reflection'")
         self.size, self.side_range = size, side_range
@@ -291,10 +292,23 @@ class ROIView3DTransform:
         self.blur_p, self.blur_sigma = blur_p, blur_sigma
         self.noise_std, self.intensity_scale = noise_std, intensity_scale
         self.torchio_transform = build_torchio_transform(torchio_transforms, spatial_dims=3)
+        # defer_crop: return the whole cached cube (flips only); a GPU deformation of the
+        # cube and the central crop follow (finish_deferred_views). Valid only for views
+        # that are the evaluation cube itself: centered, eval side, no rotation/photometry.
+        self.defer_crop = defer_crop
+        if defer_crop and not (centered_crop and degrees == 0 and torchio_transforms is None
+                               and blur_p == 0 and noise_std == 0 and n_local_crops == 0
+                               and tuple(intensity_scale) == (1.0, 1.0)):
+            raise ValueError("defer_crop needs centered evaluation-cube views without "
+                             "rotation, TorchIO, photometric changes or local crops")
 
     def _make_view(self, cube: torch.Tensor, size: int | None = None,
                    side_range: tuple[float, float] | None = None) -> torch.Tensor:
         size, side_range = size or self.size, side_range or self.side_range
+        if self.defer_crop:
+            if random.random() < self.lr_swap_p:
+                cube = swap_hemispheres(cube)
+            return cube.flip(2) if random.random() < self.ap_flip_p else cube
         if self.torchio_transform is not None:
             cube = self.torchio_transform(cube)
         extract = cube.shape[-1]
@@ -354,9 +368,47 @@ class ROIEvalViews3D(ROIEval3D):
         return first, swap_hemispheres(first)
 
 
+def finish_deferred_views(views: torch.Tensor, spec: dict, size: int) -> torch.Tensor:
+    """TorchIO elastic deformation of whole cubes ``(B, C, E, E, E)``, central crop, clamp."""
+    from t5_ssl.data.gpu_augment import tio_elastic_deform
+    deformed = tio_elastic_deform(views, **spec)
+    margin = (views.shape[-1] - size) // 2
+    crop = deformed[:, :, margin:margin + size, margin:margin + size, margin:margin + size]
+    return crop.clamp(0.0, 1.0)
+
+
+class FinishedViews:
+    """Deferred views finished per sample (CPU analyses: identity, collapse, supervised)."""
+
+    def __init__(self, transform: ROIView3DTransform, spec: dict, size: int) -> None:
+        self.transform, self.spec, self.size = transform, spec, size
+
+    def _finish(self, view: torch.Tensor) -> torch.Tensor:
+        return finish_deferred_views(view[None], self.spec, self.size)[0]
+
+    def _make_view(self, cube: torch.Tensor) -> torch.Tensor:
+        return self._finish(self.transform._make_view(cube))
+
+    def __call__(self, cube: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        return tuple(self._finish(view) for view in self.transform(cube))
+
+
+def analysis_views(cfg: Any) -> Any:
+    """Return the run's own training views as finished samples (deferred GPU recipes too)."""
+    train = build_roi3d_transforms(cfg)[0]
+    spec = cfg.augmentation.get("tio_gpu_elastic")
+    if spec:
+        from omegaconf import OmegaConf
+        return FinishedViews(train, dict(OmegaConf.to_container(spec, resolve=True)),
+                             int(cfg.data.roi_size))
+    return train
+
+
 def build_roi3d_transforms(cfg: Any) -> tuple[ROIView3DTransform, ROIEvalViews3D]:
     aug, size = cfg.augmentation, int(cfg.data.roi_size)
     from omegaconf import OmegaConf
+    if aug.get("tio_gpu_elastic") and str(aug.get("val_views", "fixed")) == "train":
+        raise ValueError("tio_gpu_elastic views are finished on the GPU in training only")
     train = ROIView3DTransform(
         size=size, side_range=tuple(aug.get("side_range", (0.84, 1.0))),
         lr_swap_p=aug.get("lr_swap_p", 0.5), ap_flip_p=aug.get("ap_flip_p", 0.0),
@@ -368,7 +420,8 @@ def build_roi3d_transforms(cfg: Any) -> tuple[ROIView3DTransform, ROIEvalViews3D
         n_local_crops=aug.get("n_local_crops", 0), local_size=aug.get("local_size", 16),
         local_side_range=tuple(aug.get("local_side_range", (0.4, 0.6))),
         rotation_padding=str(aug.get("rotation_padding", "zeros")),
-        centered_crop=bool(aug.get("centered_crop", False)))
+        centered_crop=bool(aug.get("centered_crop", False)),
+        defer_crop=bool(aug.get("tio_gpu_elastic")))
     return train, ROIEvalViews3D(size)
 
 

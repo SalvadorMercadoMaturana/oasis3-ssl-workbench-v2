@@ -244,7 +244,7 @@ def identity_scores(encoder: Any, dm: Any, cfg: Any) -> dict[str, Any]:
     import torch
     from omegaconf import OmegaConf
 
-    from t5_ssl.data.roi3d import ROIEval3D, build_roi3d_transforms
+    from t5_ssl.data.roi3d import ROIEval3D, analysis_views, build_roi3d_transforms
     for attr in ("forward", "forward_tokens"):
         if attr in encoder.__dict__:
             delattr(encoder, attr)
@@ -260,7 +260,9 @@ def identity_scores(encoder: Any, dm: Any, cfg: Any) -> dict[str, Any]:
     if cfg.augmentation.get("gpu_elastic"):  # same deformation, CPU (TorchIO) version
         own_cfg = OmegaConf.create({"data": {"roi_size": size},
                                     "augmentation": recipes.aug_spec("elastic", size)})
-    for name, transform in (("own", build_roi3d_transforms(own_cfg)[0]),
+    own = (analysis_views(cfg) if cfg.augmentation.get("tio_gpu_elastic")
+           else build_roi3d_transforms(own_cfg)[0])
+    for name, transform in (("own", own),
                             ("reference", build_roi3d_transforms(reference)[0])):
         first, second = enc.views(transform, cubes, seed=0)
         out[name] = enc.scores(clean, enc.embed(encoder, first), enc.embed(encoder, second))

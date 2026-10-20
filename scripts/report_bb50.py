@@ -46,7 +46,7 @@ MODELS = ("vicreg", "byol", "dinov2")
 BACKBONES = ("convnext_tiny", "resnet18", "vit_small")
 BB = {"convnext_tiny": "ConvNeXt-T", "resnet18": "ResNet-18", "vit_small": "ViT-S"}
 RECIPE = {"vicreg": ("campaign_augval", "geo", "32"), "byol": ("gn_dp0.3_dq0_wd0.01", "noise", "32"),
-          "dinov2": ("campaign", "elastic", "multi3")}
+          "dinov2": ("campaign", "elastic_tio_gpu", "multi3")}
 SUP_RECIPE = {"vicreg": "geo", "byol": "noise", "dinov2": "elastic_gpu"}
 OWN = recipes.DEFAULT_BACKBONE
 TICK = {"vicreg": "VICReg\ngeo · 32³", "byol": "BYOL\nnoise · 32³ · GN",

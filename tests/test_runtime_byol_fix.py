@@ -216,8 +216,9 @@ def test_dedupe_keeps_the_last_value():
 # ---------------------------------------------------------------- round 2: dropout, recipes
 @pytest.mark.parametrize("recipe", sorted(recipes.AUG_RECIPES))
 def test_every_augmentation_recipe_builds_two_views(recipe):
+    from t5_ssl.data.roi3d import analysis_views  # finished views, GPU-deferred recipes too
     cfg = OmegaConf.create({"data": {"roi_size": 32}, "augmentation": recipes.aug_spec(recipe)})
-    transform = build_roi3d_transforms(cfg)[0]
+    transform = analysis_views(cfg)
     random.seed(0), torch.manual_seed(0)
     views = transform(torch.rand(2, 38, 38, 38))
     assert len(views) == 2 and all(v.shape == (2, 32, 32, 32) for v in views)

@@ -130,7 +130,7 @@ EVAL = "eval"  # side of the probe's central cube in the cache: size / round(1.2
 _NONE = {"side_range": [EVAL, EVAL], "centered_crop": True, "lr_swap_p": 0.5,
          "ap_flip_p": 0.0, "affine_degrees": 0.0, "rotation_padding": "border", "blur_p": 0.0,
          "blur_sigma": [0.1, 1.5], "noise_std": 0.0, "intensity_scale": [1.0, 1.0],
-         "torchio": [], "n_local_crops": 0, "gpu_elastic": None}
+         "torchio": [], "n_local_crops": 0, "gpu_elastic": None, "tio_gpu_elastic": None}
 _TIO = {  # calibrated to RMSE 0.080 (3D campaign strength)
     "bias": {"name": "RandomBiasField", "coefficients": 0.18391731957276947, "order": 2},
     "noise": {"name": "RandomNoise", "std": [0, 0.2153708703252311]},
@@ -173,6 +173,13 @@ AUG_RECIPES: dict[str, dict] = {
     # The same deformation on the GPU (t5_ssl.data.gpu_augment.elastic_deform), calibrated
     # to the same RMSE (0.080): TorchIO's costs ~0.75 s per 64-voxel sample on one core.
     "elastic_gpu": {"gpu_elastic": {"max_displacement": 1.5042, "control_points": 7}},
+    # TorchIO's own deformation (``elastic``) computed on the GPU: identical output for
+    # the same control points (t5_ssl.data.gpu_augment.tio_elastic_deform); the loader
+    # hands over the whole cached cube and the module deforms it and takes the center.
+    "elastic_tio_gpu": {"tio_gpu_elastic": {
+        "num_control_points": _TIO["elastic"]["num_control_points"],
+        "max_displacement": _TIO["elastic"]["max_displacement"],
+        "locked_borders": _TIO["elastic"]["locked_borders"]}},
     # combinations
     "geo": dict(_GEO),
     "artifacts": {"torchio": _one_of(*_ARTIFACTS)},

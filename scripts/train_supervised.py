@@ -104,10 +104,10 @@ class Trainer:
         import torch
         from omegaconf import OmegaConf
 
-        from t5_ssl.data.roi3d import ROIEval3D, build_roi3d_transforms
+        from t5_ssl.data.roi3d import ROIEval3D, analysis_views
         self.cfg, self.dm, self.args = cfg, dm, args
         self.device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
-        self.train_transform = FirstView(build_roi3d_transforms(cfg)[0])
+        self.train_transform = FirstView(analysis_views(cfg))
         self.clean = ROIEval3D(int(cfg.data.roi_size))
         gpu = cfg.augmentation.get("gpu_elastic")
         self.gpu_elastic = dict(OmegaConf.to_container(gpu, resolve=True)) if gpu else None

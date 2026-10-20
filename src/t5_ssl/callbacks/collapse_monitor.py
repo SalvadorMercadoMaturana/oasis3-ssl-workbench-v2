@@ -43,7 +43,9 @@ def view_transforms(cfg: Any) -> Any:
     from omegaconf import OmegaConf
 
     from t5_ssl import recipes
-    from t5_ssl.data.roi3d import build_roi3d_transforms
+    from t5_ssl.data.roi3d import analysis_views, build_roi3d_transforms
+    if cfg.augmentation.get("tio_gpu_elastic"):
+        return analysis_views(cfg)
     if cfg.augmentation.get("gpu_elastic"):
         size = int(cfg.data.roi_size)
         cfg = OmegaConf.create({"data": {"roi_size": size},

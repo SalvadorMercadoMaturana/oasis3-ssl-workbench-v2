@@ -74,6 +74,11 @@ class SSLLightningModule(L.LightningModule):
     # {"max_displacement": ..., "control_points": ...}: elastic deformation of every
     # training view on the GPU (t5_ssl.data.gpu_augment); None = off.
     gpu_elastic: dict | None = None
+    # {"num_control_points", "max_displacement", "locked_borders"}: training views arrive
+    # as whole cached cubes; TorchIO's elastic deformation runs here on the GPU, then the
+    # central ``crop_size`` cube (t5_ssl.data.roi3d.finish_deferred_views); None = off.
+    tio_gpu_elastic: dict | None = None
+    crop_size: int = 32
     # Backbone BatchNorm with frozen statistics: recalibrated once on the training
     # views (``bn_calibration_batches``, None = one epoch) when training starts,
     # then held in eval mode for the whole run, so the encoder normalizes the same
@@ -285,6 +290,18 @@ class SSLLightningModule(L.LightningModule):
                 return image
 
             batch["image"] = deform(batch["image"])
+        if self.tio_gpu_elastic and isinstance(batch, dict) and "image" in batch:
+            from t5_ssl.data.roi3d import finish_deferred_views
+
+            def finish(image: Any) -> Any:
+                if (isinstance(image, torch.Tensor) and image.ndim == 5
+                        and image.shape[-1] != self.crop_size):
+                    return finish_deferred_views(image, self.tio_gpu_elastic, self.crop_size)
+                if isinstance(image, list | tuple):
+                    return type(image)(finish(view) for view in image)
+                return image
+
+            batch["image"] = finish(batch["image"])
         memory_format = self.input_memory_format
         if memory_format is None or not isinstance(batch, dict) or "image" not in batch:
             return batch

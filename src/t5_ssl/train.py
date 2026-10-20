@@ -522,6 +522,9 @@ def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> d
 
     if aug_cfg.get("gpu_elastic"):
         model.gpu_elastic = dict(OmegaConf.to_container(aug_cfg.gpu_elastic, resolve=True))
+    if aug_cfg.get("tio_gpu_elastic"):
+        model.tio_gpu_elastic = dict(OmegaConf.to_container(aug_cfg.tio_gpu_elastic, resolve=True))
+        model.crop_size = int(cfg.data.roi_size)
     if cfg.model.get("freeze_backbone_bn", False):
         model.freeze_backbone_bn = True
         model.bn_calibration_batches = cfg.model.get("bn_calibration_batches", None)
