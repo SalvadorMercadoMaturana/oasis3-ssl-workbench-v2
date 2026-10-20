@@ -21,19 +21,22 @@ from t5_ssl.data.oasis3_datamodule import normalize_volume
 from t5_ssl.data.paths import DEFAULT_CSV, DEFAULT_LMDB
 
 SUBJECT_RE = re.compile(r"^(sub-OAS\d+)ses")
+ADNI_SUBJECT_RE = re.compile(r"^(sub-\d+S\d+)ses")
 _ENVIRONMENTS: dict[str, lmdb.Environment] = {}
 _ENV_PID = os.getpid()
 
 
-def clinical_rows(csv_path: str | Path) -> list[dict[str, str]]:
-    """Select only OASIS3 rows indexed by the original LMDB key."""
+def clinical_rows(csv_path: str | Path, studies: tuple[str, ...] = ("OASIS3",)
+                  ) -> list[dict[str, str]]:
+    """Select the rows of ``studies`` (OASIS3 by default) indexed by the original LMDB key."""
     with Path(csv_path).open(newline="", encoding="utf-8") as stream:
         rows = [row for row in csv.DictReader(stream)
-                if row["study_name"].strip().upper() == "OASIS3"]
+                if row["study_name"].strip().upper() in studies]
     for row in rows:
-        match = SUBJECT_RE.match(row["original_code"])
+        pattern = SUBJECT_RE if row["study_name"].strip().upper() == "OASIS3" else ADNI_SUBJECT_RE
+        match = pattern.match(row["original_code"])
         if match is None:
-            raise ValueError(f"Invalid OASIS3 code: {row['original_code']}")
+            raise ValueError(f"Invalid {row['study_name']} code: {row['original_code']}")
         row["subject"] = match.group(1)
         row["session"] = row["original_code"]
         row["group"] = row["group"].strip().upper()
@@ -51,7 +54,9 @@ def select_rows(csv_path: str | Path, manifest_path: str | Path | None,
     whose diagnosis no probe or supervised model may use (SSL-only). Such rows
     carry ``labeled="0"``.
     """
-    rows = clinical_rows(csv_path)
+    # A manifest may add ADNI sessions (SSL-only train subjects: labels never come from them;
+    # the datamodules read diagnoses from the OASIS3 rows only).
+    rows = clinical_rows(csv_path, studies=("OASIS3", "ADNI") if manifest_path else ("OASIS3",))
     indexed = {row["idx"]: row for row in rows}
     selected: dict[str, list[dict[str, str]]] = {name: [] for name in ("train", "val", "test")}
     if manifest_path is not None:

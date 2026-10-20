@@ -164,7 +164,31 @@ def main() -> None:
         print(f"ADNI {diagnosis}: {len(ages)} subjects, age {np.mean(ages):.1f} ± {np.std(ages):.1f}")
     (out / "adni_sessions.txt").write_text("\n".join(e["idx"] for e in external) + "\n",
                                            encoding="utf-8")
+    # ---- variant: the ADNI subjects that are neither AD nor HC (SCC, mixed) as SSL-only
+    # train subjects with every session, so the encoder sees a second site's scanners
+    # without touching the 366 external test subjects or any label.
+    test_subjects = {e["subject"] for e in external}
+    adni_rows = [{"split": "train", "subject": subject, "idx": r["idx"],
+                  "session": r["original_code"], "group": r["group"].strip().upper(),
+                  "primary": "0", "labeled": "0"}
+                 for subject, rs in sorted(adni_sessions.items()) if subject not in test_subjects
+                 for r in rs]
+    variant = ROOT / f"{args.out}_adni"
+    variant.mkdir(parents=True, exist_ok=True)
+    with (variant / "manifest.csv").open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=FIELDS)
+        writer.writeheader()
+        writer.writerows(out_rows + adni_rows)
+    n_adni = len({r["subject"] for r in adni_rows})
+    (variant / "SPLIT.md").write_text(
+        f"# Split de despliegue + ADNI solo-SSL\n\nIgual que `{Path(args.out).name}` más {n_adni} "
+        f"sujetos ADNI que no son AD ni HC ({len(adni_rows)} sesiones: SCC y diagnóstico mixto) "
+        "en train como solo-SSL. Los 366 sujetos AD/HC de ADNI (external_adni.csv) no aparecen: "
+        "siguen siendo el test externo.\n", encoding="utf-8")
+    print(f"variant {variant.name}: + {n_adni} ADNI SSL-only subjects, {len(adni_rows)} sessions")
     cached = set(json.loads(CACHE_META.read_text(encoding="utf-8"))["idx"])
+    (variant / "new_sessions.txt").write_text(
+        "\n".join(sorted({r["idx"] for r in adni_rows} - cached)) + "\n", encoding="utf-8")
     missing = sorted({r["idx"] for r in out_rows} - cached)
     (out / "new_sessions.txt").write_text("\n".join(missing) + "\n", encoding="utf-8")
     print(f"{len(missing)} OASIS3 sessions missing from the ROI caches; "

@@ -326,6 +326,45 @@ def matrix_figure(g: dict) -> None:
     print("wrote bb50_matriz.png")
 
 
+def backbone_figure(g: dict) -> None:
+    """One line per method across the three encoders: CV, test, age-matched test, SSL gain."""
+    panels = (("cv", "auc", "AUROC CV (split 361, 329 sujetos)", False),
+              ("test", "auc", "AUROC test balanceado (84)", False),
+              ("agem", "auc", "AUROC test emparejado por edad", False),
+              ("test", "auc", "Ganancia del SSL: SSL − sin SSL (AUROC test)", True))
+    fig, axes = plt.subplots(1, 4, figsize=(15, 3.9))
+    x = np.arange(len(BACKBONES))
+    for ax, (where, key, title, gain) in zip(axes, panels, strict=True):
+        for k, m in enumerate(MODELS):
+            means, sds = [], []
+            for bb in BACKBONES:
+                ssl = g["ssl"].get((m, bb), [])
+                v = [value(d, where, key) for d in ssl]
+                if gain and g["init"].get((m, bb)):
+                    v = [u - value(g["init"][(m, bb)][0], where, key) for u in v]
+                means.append(np.mean(v) if v else np.nan)
+                sds.append(np.std(v) if v else np.nan)
+            dx = (k - 1) * 0.06
+            ax.errorbar(x + dx, means, yerr=sds, color=base.COLOR[m], marker="o", markersize=5,
+                        linewidth=2, capsize=3, label=base.LABEL[m])
+            own = BACKBONES.index(OWN[m])
+            ax.plot(own + dx, means[own], "o", markersize=12, markerfacecolor="none",
+                    markeredgecolor=base.COLOR[m], markeredgewidth=1.5)
+        if gain:
+            ax.axhline(0, color=base.INK2, linewidth=1)
+        ax.set_xticks(x, [BB[b] for b in BACKBONES], fontsize=8.5)
+        ax.set_title(title, fontsize=9.2)
+        base.style(ax)
+    axes[3].legend(frameon=False, fontsize=8, loc="lower left")
+    fig.suptitle("El backbone solo cambia mucho el resultado de DINOv2 (y de BYOL con ViT, que se "
+                 "vuelve inestable); VICReg es plano. Media ± DE de 3 semillas; círculo = "
+                 "pareja original", fontsize=10, color=base.INK)
+    fig.tight_layout(rect=(0, 0, 1, 0.92))
+    fig.savefig(base.FIGURES / "bb50_backbones.png", dpi=160)
+    plt.close(fig)
+    print("wrote bb50_backbones.png")
+
+
 def threshold_figure(sets: dict[str, dict], out: str, title: str) -> None:
     """Sensitivity, specificity, PPV and F1(AD) at 0.5 on the 1:6 test, champions."""
     keys = (("sensitivity", "Sensibilidad"), ("specificity", "Especificidad"),
@@ -454,6 +493,7 @@ def main() -> None:
                            f"Backbone {BB[bb]} 3D en los tres métodos, split 361, 50 épocas",
                            f"bb50_metricas_{bb}.png", age.get("bb50", {}))
         matrix_figure(phase1)
+        backbone_figure(phase1)
     # ---- B: champions on the 1:6 test
     if all(phase1["ssl"].get(c) for c in diag):
         lines += ["", "## B. Test 1:6 con la configuración del split 361 (pareja original)", ""]
