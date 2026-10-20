@@ -134,14 +134,97 @@ def adni_figure(g: dict, variant: dict, age: dict) -> None:
     print("wrote dep50_adni.png")
 
 
+def split_figure() -> None:
+    """Split_deploy at a glance: subjects per partition and class, SSL-only pool, ages."""
+    clinical = {r["idx"]: r for r in csv.DictReader(
+        (base.ROOT / "data/dementia/mni-dataset.csv").open(encoding="utf-8"))}
+    rows = list(csv.DictReader((SPLIT / "manifest.csv").open(encoding="utf-8")))
+    groups: dict[str, set[str]] = {}
+    for r in rows:
+        groups.setdefault(r["subject"], set()).add(r["group"])
+    labeled = {k: [r for r in rows if r["split"] == k and r["labeled"] == "1"]
+               for k in ("train", "val", "test")}
+    ssl_rows = [r for r in rows if r["labeled"] == "0"]
+    ssl_subjects = sorted({r["subject"] for r in ssl_rows})
+
+    def kind(s: str) -> str:
+        only = next(iter(groups[s]))
+        return only if len(groups[s]) == 1 and only in ("AD", "HC") else "otro"
+
+    ssl_count = {k: sum(kind(s) == k for s in ssl_subjects) for k in ("HC", "AD", "otro")}
+    count = {k: {g: sum(r["group"] == g for r in v) for g in ("AD", "HC")}
+             for k, v in labeled.items()}
+    ad_c, hc_c, other_c = "#c4314b", "#2a78d6", "#b9b8b3"
+    fig, (ax, bx) = plt.subplots(1, 2, figsize=(13, 4.8), gridspec_kw={"width_ratios": [1.6, 1]})
+    bars = [(f"Solo SSL, sin etiqueta\n{len(ssl_subjects)} sujetos · {len(ssl_rows)} sesiones\n"
+             f"({ssl_count['HC']} HC · {ssl_count['AD']} AD · {ssl_count['otro']} otro dx o "
+             "desconocido)",
+             [(ssl_count["HC"], hc_c, "HC"), (ssl_count["AD"], ad_c, "AD"),
+              (ssl_count["otro"], other_c, "otro dx / desconocido")], 0.45),
+            (f"Train con etiqueta\n{len(labeled['train'])} sujetos · 1 sesión c/u",
+             [(count["train"]["AD"], ad_c, "AD"), (count["train"]["HC"], hc_c, "HC")], 1.0),
+            (f"Validación\n{len(labeled['val'])} sujetos",
+             [(count["val"]["AD"], ad_c, "AD"), (count["val"]["HC"], hc_c, "HC")], 1.0),
+            (f"Test representativo\n{len(labeled['test'])} sujetos",
+             [(count["test"]["AD"], ad_c, "AD"), (count["test"]["HC"], hc_c, "HC")], 1.0)]
+    for y, (_, parts, alpha) in enumerate(bars):
+        left = 0
+        for n, color, name in parts:
+            ax.barh(y, n, left=left, color=color, alpha=alpha, edgecolor="white", height=0.62)
+            if n >= 25:
+                ax.text(left + n / 2, y, f"{n} {name}" if n >= 60 and len(name) <= 3 else str(n),
+                        ha="center",
+                        va="center", fontsize=8, color="white" if alpha == 1.0 else base.INK)
+            left += n
+    ax.set_yticks(range(len(bars)), [b[0] for b in bars], fontsize=8.5)
+    ax.invert_yaxis()
+    ax.set_xlabel("sujetos")
+    n_ssl = len(ssl_subjects) + len(labeled["train"])
+    ax.text(max(len(ssl_subjects), 1) + 15, 0.5,
+            f"Preentrenamiento SSL: {n_ssl} sujetos\n({len(ssl_subjects)} solo-SSL + "
+            f"{len(labeled['train'])} de train;\nlas etiquetas no se usan)", fontsize=8.2,
+            va="center", color=base.INK)
+    cv_ad = count["train"]["AD"] + count["val"]["AD"]
+    cv_hc = count["train"]["HC"] + count["val"]["HC"]
+    ax.text(max(len(ssl_subjects), 1) + 15, 1.6,
+            f"CV del probe (5×5): train + val =\n{cv_ad + cv_hc} con etiqueta "
+            f"({cv_ad} AD + {cv_hc} HC, 50/50)", fontsize=8.2, va="center", color=base.INK)
+    ax.text(max(len(ssl_subjects), 1) + 15, 3,
+            "Prevalencia real de OASIS3 (23 % AD),\nnunca visto en SSL ni en el probe",
+            fontsize=8.2, va="center", color=base.INK)
+    ax.set_xlim(0, len(ssl_subjects) + 260)
+    ax.set_title("Particiones (OASIS3, un sujeto en una sola partición)", fontsize=9.5)
+    base.style(ax)
+    # ages: matched in train/val, real in test
+    data, ticks, colors = [], [], []
+    for name, subset in (("Train + val", labeled["train"] + labeled["val"]),
+                         ("Test", labeled["test"])):
+        for g, color in (("AD", ad_c), ("HC", hc_c)):
+            ages = [float(clinical[r["idx"]]["age"]) for r in subset if r["group"] == g]
+            data.append(ages)
+            ticks.append(f"{name}\n{g} (n={len(ages)})\n{np.mean(ages):.1f} años")
+            colors.append(color)
+    box = bx.boxplot(data, patch_artist=True, widths=0.55, medianprops={"color": base.INK})
+    for patch, color in zip(box["boxes"], colors, strict=True):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.75)
+    bx.set_xticks(range(1, len(data) + 1), ticks, fontsize=8)
+    bx.set_ylabel("edad en la sesión evaluada")
+    bx.set_title("Edad: emparejada 1:1 en train/val, real en test", fontsize=9.5)
+    base.style(bx)
+    fig.suptitle("Split de despliegue: test representativo, entrenamiento sin atajo de edad",
+                 fontsize=11, color=base.INK)
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    fig.savefig(base.FIGURES / "dep50_split.png", dpi=160)
+    plt.close(fig)
+    print("wrote dep50_split.png")
+
+
 def model_figure(validation: dict) -> None:
     """ROC curves of the deployed ensemble on each validation set, with its operating points."""
     from sklearn.metrics import roc_curve
     sets = (("oof", "CV fuera de fold (train+val)", "#52514e"),
-            ("oasis3_test", "Test OASIS3 representativo", "#2a78d6"),
-            ("oasis3_test_age_matched", "Test OASIS3 emparejado por edad", "#1baf7a"),
-            ("adni_qc", "ADNI con QC de entrada", "#eb6834"),
-            ("adni_raw", "ADNI sin QC (incluye 45 AD mal normalizadas)", "#b9b8b3"))
+            ("oasis3_test", "Test representativo (41 AD + 137 HC)", "#2a78d6"))
     fig, ax = plt.subplots(figsize=(5.6, 5.0))
     for key, label, color in sets:
         if key not in validation:
@@ -221,9 +304,11 @@ def main() -> None:
                 lines.append(f"| {base.LABEL[m]} {name} | — | {rb.fmt(rb.bootstrap(a, b, 'test'))} | "
                              f"{rb.fmt(rb.bootstrap(a, b, 'agem'))} | "
                              f"{rb.fmt(rb.bootstrap(a, b, 'adni'))} |")
-    rb.metrics_figure(g, CELLS, "Split de despliegue (edad neutralizada en train/val), 50 épocas",
-                      "dep50_metricas.png", age, wheres=("cv", "test", "agem", "adni"))
+    rb.AGE_LABEL, rb.TICK_BACKBONE = "Solo edad (la edad como puntaje)", False
+    rb.metrics_figure(g, CELLS, "Split de despliegue, 50 épocas: CV y test representativo",
+                      "dep50_metricas.png", age, wheres=("cv", "test"))
     adni_figure(g, variant, age)
+    split_figure()
     validation_path = args.model / "validation.json"
     if validation_path.is_file():
         validation = json.loads(validation_path.read_text(encoding="utf-8"))
