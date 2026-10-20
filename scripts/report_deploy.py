@@ -117,7 +117,7 @@ def model_figure(validation: dict) -> None:
         if key not in validation:
             continue
         d = validation[key]
-        fpr, tpr, thr = roc_curve(d["y"], d["p"])
+        fpr, tpr, _ = roc_curve(d["y"], d["p"])
         ax.plot(fpr, tpr, color=color, linewidth=2,
                 label=f"{label}: AUROC {d['auc']:.2f} [{d['auc_ci'][0]:.2f}, {d['auc_ci'][1]:.2f}]")
         at = d["at"]["youden"]
