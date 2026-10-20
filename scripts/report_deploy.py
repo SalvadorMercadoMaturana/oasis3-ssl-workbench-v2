@@ -134,6 +134,61 @@ def adni_figure(g: dict, variant: dict, age: dict) -> None:
     print("wrote dep50_adni.png")
 
 
+def metrics_figure(g: dict) -> None:
+    """CV and representative-test metrics: supervised, SSL and sin SSL per method, values on top."""
+    from matplotlib.colors import to_rgb
+    from matplotlib.patches import Patch
+
+    def pale(color: str) -> tuple[float, float, float]:
+        return tuple(0.3 * c + 0.7 for c in to_rgb(color))
+
+    kinds = (("sup", "Supervisado (end-to-end)"), ("ssl", "SSL 50 épocas, congelado + probe"),
+             ("init", "Sin SSL: mismo encoder antes del SSL + probe"))
+    rows = (("cv", "CV (train + val emparejados por edad, 294)"),
+            ("test", "Test representativo (41 AD + 137 HC)"))
+    cols = (("auc", "AUROC"), ("f1", "F1-macro"), ("aupr", "AUPR"))
+    fig, axes = plt.subplots(len(rows), len(cols), figsize=(15, 8.6), sharey=True)
+    width = 0.28
+    for r, (where, row_title) in enumerate(rows):
+        for c, (key, metric) in enumerate(cols):
+            ax = axes[r, c]
+            for i, (m, bb) in enumerate(CELLS):
+                for k, (kind, _) in enumerate(kinds):
+                    docs = g[kind].get((m, bb))
+                    if not docs:
+                        continue
+                    v = [rb.value(d, where, key) for d in docs]
+                    x, mean = i + (k - 1) * (width + 0.02), float(np.mean(v))
+                    sd = float(np.std(v)) if len(v) > 1 else 0.0
+                    style = {"sup": {"color": rb.SUP_COLOR, "hatch": "///", "edgecolor": "white"},
+                             "ssl": {"color": base.COLOR[m], "edgecolor": "white"},
+                             "init": {"color": pale(base.COLOR[m]), "edgecolor": base.COLOR[m],
+                                      "linewidth": 1.0}}[kind]
+                    ax.bar(x, mean, width=width, **style)
+                    if sd:
+                        ax.errorbar(x, mean, yerr=sd, color=base.INK, capsize=2.5, linewidth=1)
+                    ax.text(x, mean + sd + 0.015, f"{mean:.3f}", ha="center", va="bottom",
+                            fontsize=9.5, fontweight="bold" if kind == "ssl" else "normal",
+                            color=base.INK)
+            ax.axhline(0.5, color=base.INK2, linewidth=1.1, linestyle=":", zorder=0)
+            ax.set_ylim(0, 1.0)
+            ax.set_xticks(range(len(CELLS)), [TICK[m] for m, _ in CELLS], fontsize=9.5)
+            ax.set_title(f"{metric} — {row_title}", fontsize=10)
+            base.style(ax)
+    handles = [Patch(facecolor=rb.SUP_COLOR, hatch="///", edgecolor="white", label=kinds[0][1]),
+               Patch(facecolor=base.COLOR["vicreg"], label=kinds[1][1] + " (color del método)"),
+               Patch(facecolor=pale(base.COLOR["vicreg"]), edgecolor=base.COLOR["vicreg"],
+                     label=kinds[2][1]),
+               plt.Line2D([], [], color=base.INK2, linestyle=":", label="0.5")]
+    fig.legend(handles=handles, loc="lower center", ncol=4, frameon=False, fontsize=9.5)
+    fig.suptitle("Split de despliegue, 50 épocas: CV y test representativo (media de 3 "
+                 "semillas ± DE; sin SSL = 1 encoder)", fontsize=11.5, color=base.INK)
+    fig.tight_layout(rect=(0, 0.05, 1, 0.95))
+    fig.savefig(base.FIGURES / "dep50_metricas.png", dpi=160)
+    plt.close(fig)
+    print("wrote dep50_metricas.png")
+
+
 def split_figure() -> None:
     """Split_deploy at a glance: subjects per partition and class, SSL-only pool, ages."""
     clinical = {r["idx"]: r for r in csv.DictReader(
@@ -304,9 +359,7 @@ def main() -> None:
                 lines.append(f"| {base.LABEL[m]} {name} | — | {rb.fmt(rb.bootstrap(a, b, 'test'))} | "
                              f"{rb.fmt(rb.bootstrap(a, b, 'agem'))} | "
                              f"{rb.fmt(rb.bootstrap(a, b, 'adni'))} |")
-    rb.AGE_LABEL, rb.TICK_BACKBONE = "Solo edad (la edad como puntaje)", False
-    rb.metrics_figure(g, CELLS, "Split de despliegue, 50 épocas: CV y test representativo",
-                      "dep50_metricas.png", age, wheres=("cv", "test"))
+    metrics_figure(g)
     adni_figure(g, variant, age)
     split_figure()
     validation_path = args.model / "validation.json"

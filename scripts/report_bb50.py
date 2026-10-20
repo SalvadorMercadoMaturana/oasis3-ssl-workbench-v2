@@ -85,10 +85,6 @@ def load(runs: Path, prefix: str) -> dict[str, list[dict]]:
 # Age-matched subset of test + test_imb ("agem"), filled by main(): AD with up to two HC
 # of nearly the same age, so age alone cannot separate the classes there.
 AGE_MATCHED: set[str] = set()
-# metrics_figure: legend of the age line, and whether ticks name the backbone (with the
-# method's original pairing marked); report_deploy changes both.
-AGE_LABEL = "Solo edad (regresión logística)"
-TICK_BACKBONE = True
 
 
 def value(doc: dict, where: str, key: str) -> float:
@@ -275,15 +271,15 @@ def metrics_figure(g: dict, cells: list[tuple[str, str]], title: str, out: str,
                              label if i == 0 else None, hatch, low)
             if where != "cv" and key in age.get(where, {}):
                 ax.axhline(age[where][key], color=AGE_COLOR, linewidth=1.1, linestyle="--",
-                           label=AGE_LABEL if c == 0 else None)
+                           label="Solo edad (regresión logística)" if c == 0 else None)
             if where != "cv" and key == "aupr":
                 labels = [a for a, _ in predictions(g["ssl"][present[0]][0], where).values()]
                 chance = float(np.mean(labels))
                 ax.axhline(chance, color=base.INK2, linewidth=1, linestyle=":")
                 ax.text(-0.45, chance + 0.01, f"azar {chance:.2f}", ha="left",
                         fontsize=7, color=base.INK2)
-            ticks = [TICK[m] + (f"\n{BB[bb]}" + (" (original)" if OWN[m] == bb else "")
-                                if TICK_BACKBONE else "") for m, bb in present]
+            ticks = [TICK[m] + f"\n{BB[bb]}" + (" (original)" if OWN[m] == bb else "")
+                     for m, bb in present]
             ax.set_xticks(range(len(present)), ticks, fontsize=7.2)
             ax.set_ylim(low, 0.99)
             ax.set_title(f"{METRIC[key]} — {WHERE[where]}", fontsize=9.2)
