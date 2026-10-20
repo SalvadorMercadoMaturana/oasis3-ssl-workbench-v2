@@ -168,11 +168,12 @@ def make_jobs(args: argparse.Namespace) -> list[dict[str, Any]]:
 
     if args.preset:
         triples = [(m, v, None) for m, v in PRESETS[args.preset]]
-    elif args.specs:  # explicit model:recipe[:roi[:variant]] jobs (e.g. a screen's winners)
-        parts = [[*spec.split(":"), "", ""][:4] for spec in args.specs]
+    elif args.specs:  # explicit model:recipe[:roi[:variant[:backbone]]] jobs (e.g. a screen's winners)
+        parts = [[*spec.split(":"), "", "", ""][:5] for spec in args.specs]
         triples = [(m, v or variant_of(m), r if r not in ("", "-") else None)
-                   for m, r, _, v in parts]
-        spec_roi = {i: roi for i, (_, _, roi, _) in enumerate(parts) if roi}
+                   for m, r, _, v, _ in parts]
+        spec_roi = {i: roi for i, (_, _, roi, _, _) in enumerate(parts) if roi}
+        spec_backbone = {i: bb for i, (*_, bb) in enumerate(parts) if bb}
     else:  # recipe-major, models interleaved so concurrent jobs mix heavy and light models
         triples = [(m, variant_of(m), r) for r in (args.aug_recipes or [None])
                    for m in args.models]
@@ -180,10 +181,13 @@ def make_jobs(args: argparse.Namespace) -> list[dict[str, Any]]:
     jobs = []
     rois = args.rois or [None]
     spec_roi = locals().get("spec_roi", {})
+    spec_backbone = locals().get("spec_backbone", {})
     for seed in args.seeds:  # seed-major: every model of seed 1 starts first
         for backbone, roi, (model, variant, recipe) in (
-                (b, spec_roi.get(i, r), t) for b in (args.backbones or [None]) for r in rois
-                for i, t in enumerate(triples)):
+                (spec_backbone.get(i, b), spec_roi.get(i, r), t) for b in (args.backbones or [None])
+                for r in rois for i, t in enumerate(triples)):
+            if backbone is not None and backbone not in recipes.BACKBONES:
+                raise SystemExit(f"Unknown backbone '{backbone}' in --specs")
             name = recipes.run_name(model, variant, seed, recipe, roi, backbone)
             argv = ["--model", model, "--variant", variant, "--seed", str(seed),
                     "--epochs", str(args.epochs), "--tag", args.tag,
