@@ -152,11 +152,15 @@ def epoch_metrics(exp_dir: Path | str) -> dict[str, list[float]]:
 def score(encoder: torch.nn.Module, dm: Any, clean: Any) -> dict[str, Any]:
     import run_roi3d
     import screen_aug_equal as screen2
-    from evaluate_frozen_probe import evaluate
+    from evaluate_frozen_probe import concat_splits, evaluate
     x, y, subjects = screen2.embed(encoder, dm, clean)
     cv = screen2.cv_probe(x, y, {"clean": x})
-    test = evaluate(*(run_roi3d.split_embeddings(encoder, dm, clean, s)
-                      for s in ("train", "val", "test")))
+    splits = [run_roi3d.split_embeddings(encoder, dm, clean, s) for s in ("train", "val", "test")]
+    # Extra held-out splits test_<name>: test + those subjects, scored as "<name>".
+    extra = {name.removeprefix("test_"): concat_splits(
+        splits[2], run_roi3d.split_embeddings(encoder, dm, clean, name))
+        for name in getattr(dm, "extra_test_splits", [])}
+    test = evaluate(*splits, extra_tests=extra or None)
     return {"subjects": subjects, "labels": y.tolist(), "cv": cv, "test": test,
             "effective_rank": effective_rank(x)}
 

@@ -87,6 +87,24 @@ VARIANTS["byol"]["gn_dp0.3_dq0_wd0.01_fbn"] = (VARIANTS["byol"]["gn_dp0.3_dq0_wd
                                                + ["++model.freeze_backbone_bn=true"])
 
 
+# ---------------------------------------------------------------- backbones
+# Encoder swaps (``backbone=``) on top of any model/variant: the method keeps its
+# heads, loss, optimizer and views; only ``model.backbone`` changes. Each is the
+# start one of the methods already used (ImageNet torchvision / DeiT-S weights
+# inflated to 3D), so ``DEFAULT_BACKBONE`` reproduces the original pairing. With a
+# CNN, DINOv2 drops its iBOT branch (no patch tokens to mask): CLS distillation,
+# Sinkhorn-Knopp and KoLeo stay (t5_ssl.models.dinov2_module).
+BACKBONES: dict[str, list[str]] = {
+    "convnext_tiny": ["model.backbone.variant=convnext_tiny_3d", "model.backbone.pretrained=true"],
+    "resnet18": ["model.backbone.variant=resnet18_3d", "model.backbone.pretrained=true"],
+    "vit_small": ["model.backbone.variant=vit_small_3d", "model.backbone.pretrained=deit_small_in1k",
+                  "++model.backbone.patch_size=8", "++model.backbone.embed_dim=384",
+                  "++model.backbone.depth=12", "++model.backbone.num_heads=6",
+                  "++model.backbone.drop_path=0.1"],
+}
+DEFAULT_BACKBONE = {"vicreg": "convnext_tiny", "byol": "resnet18", "dinov2": "vit_small"}
+
+
 # ---------------------------------------------------------------- regions of interest
 # ROI configurations: cube side (voxels of 2 mm) and cache. "multi3" stacks three
 # bilateral 32-voxel regions as 6 channels: hippocampus, lateral ventricle and
@@ -211,7 +229,7 @@ def warmup_epochs(epochs: int) -> int:
 def overrides(model: str, variant: str = "campaign", *, epochs: int = 30, seed: int = 1,
               fast: bool = True, checkpoints: bool = False, accelerator: str = "auto",
               log_root: str | None = None, run_name: str | None = None,
-              aug_recipe: str | None = None, roi: str = "32",
+              aug_recipe: str | None = None, roi: str = "32", backbone: str | None = None,
               extra: list[str] | None = None) -> list[str]:
     """Hydra overrides for one run (later entries win, so ``extra`` overrides anything)."""
     if model not in BASE:
@@ -220,6 +238,8 @@ def overrides(model: str, variant: str = "campaign", *, epochs: int = 30, seed: 
         raise ValueError(f"Unknown {model} variant '{variant}'. Choose from {list(VARIANTS[model])}.")
     if roi not in ROIS:
         raise ValueError(f"Unknown ROI '{roi}'. Choose from {list(ROIS)}.")
+    if backbone is not None and backbone not in BACKBONES:
+        raise ValueError(f"Unknown backbone '{backbone}'. Choose from {list(BACKBONES)}.")
     out = ["data=oasis3_roi3d", *roi_overrides(roi), f"data.manifest_path={MANIFEST}",
            "trainer=full50", f"trainer.accelerator={accelerator}", "trainer.deterministic=false",
            "trainer.enable_progress_bar=false", "trainer.early_stopping_patience=null",
@@ -229,6 +249,8 @@ def overrides(model: str, variant: str = "campaign", *, epochs: int = 30, seed: 
     if model == "dinov2":
         out.append(f"loss.teacher_temp_warmup_epochs={max(1, round(0.3 * epochs))}")
     out += VARIANTS[model][variant]
+    if backbone:
+        out += BACKBONES[backbone]
     if aug_recipe:
         out += aug_overrides(aug_recipe, ROIS[roi]["size"])
     out += FAST_RUNTIME if fast else CAMPAIGN_RUNTIME
@@ -252,6 +274,7 @@ def dedupe(items: list[str]) -> list[str]:
 
 
 def run_name(model: str, variant: str, seed: int, aug_recipe: str | None = None,
-             roi: str | None = None) -> str:
+             roi: str | None = None, backbone: str | None = None) -> str:
     return (f"{model}_{variant}" + (f"__{aug_recipe}" if aug_recipe else "")
+            + (f"__bb{backbone}" if backbone else "")
             + (f"__roi{roi}" if roi else "") + f"_s{seed}")

@@ -12,7 +12,7 @@ from torch import nn
 
 from t5_ssl.losses.dinov2 import DINOv2Loss
 from t5_ssl.models.masking import sample_masks
-from t5_ssl.models.ssl_module import SSLLightningModule
+from t5_ssl.models.ssl_module import SSLLightningModule, disable_stochastic_depth
 
 
 class DINOv2LightningModule(SSLLightningModule):
@@ -47,9 +47,9 @@ class DINOv2LightningModule(SSLLightningModule):
         self.teacher_backbone = copy.deepcopy(backbone).requires_grad_(False)
         self.teacher_projector = copy.deepcopy(projector).requires_grad_(False)
         self.teacher_patch_head = copy.deepcopy(patch_head).requires_grad_(False)
-        for module in self.teacher_backbone.modules():  # the teacher never drops paths
-            if hasattr(module, "drop_prob"):
-                module.drop_prob = 0.0
+        disable_stochastic_depth(self.teacher_backbone)  # the teacher never drops paths
+        # CNN backbones have no patch tokens: no iBOT term, CLS (pooled) distillation only.
+        self.has_tokens = hasattr(backbone, "forward_tokens")
         self.mask_probability = float(mask_probability)
         self.mask_ratio_min_max = (low, high)
         self.min_mask_block = int(min_mask_block)
@@ -126,6 +126,8 @@ class DINOv2LightningModule(SSLLightningModule):
         if not isinstance(images, list | tuple) or len(images) < 2:
             raise ValueError("DINOv2 requires two global views.")
         globals_, locals_ = images[:2], images[2:]
+        if not self.has_tokens:
+            return self._cls_step(globals_, locals_, stage)
         student_cls, backbone_cls, student_patches, patch_weights, masks = [], [], [], [], []
         for view, image in enumerate(globals_):
             # Spatial dims after (B, C): (H, W) for slices, (D, H, W) for volumes.
@@ -147,6 +149,26 @@ class DINOv2LightningModule(SSLLightningModule):
                 cls, patches = self.teacher_backbone.forward_tokens(image)
                 teacher_cls.append(self.teacher_projector(cls))
                 teacher_patches.append(self.teacher_patch_head(patches[mask]))
+        return self._loss(student_cls, teacher_cls, student_patches, teacher_patches,
+                          patch_weights, backbone_cls, stage)
+
+    def _cls_step(self, globals_: list[torch.Tensor], locals_: list[torch.Tensor],
+                  stage: str) -> torch.Tensor:
+        """CNN backbones: the pooled embedding plays the CLS token; empty iBOT terms."""
+        backbone_cls = [self.backbone(image) for image in globals_]
+        student_cls = [self.projector(cls) for cls in backbone_cls]
+        student_cls += [self.projector(self.backbone(image)) for image in locals_]
+        with torch.no_grad():
+            teacher_cls = [self.teacher_projector(self.teacher_backbone(image))
+                           for image in globals_]
+        empty = student_cls[0].new_zeros((0, student_cls[0].shape[1]))
+        return self._loss(student_cls, teacher_cls, [empty], [empty], [empty[:, 0]],
+                          backbone_cls, stage)
+
+    def _loss(self, student_cls: list[torch.Tensor], teacher_cls: list[torch.Tensor],
+              student_patches: list[torch.Tensor], teacher_patches: list[torch.Tensor],
+              patch_weights: list[torch.Tensor], backbone_cls: list[torch.Tensor],
+              stage: str) -> torch.Tensor:
         loss, metrics = self.loss_fn(
             student_cls, teacher_cls, student_patches, teacher_patches, patch_weights,
             backbone_cls, update_center=stage == "train",

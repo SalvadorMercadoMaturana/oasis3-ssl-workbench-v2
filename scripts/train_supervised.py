@@ -66,6 +66,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--model", required=True, choices=sorted(recipes.BASE))
     parser.add_argument("--roi", default="32", choices=sorted(recipes.ROIS))
     parser.add_argument("--aug-recipe", default=None, choices=sorted(recipes.AUG_RECIPES))
+    parser.add_argument("--backbone", default=None, choices=sorted(recipes.BACKBONES),
+                        help="encoder instead of the model's own (t5_ssl.recipes.BACKBONES)")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--epochs", type=int, default=100, help="schedule length and max epochs")
     parser.add_argument("--patience", type=int, default=20)
@@ -89,7 +91,8 @@ def compose(args: argparse.Namespace) -> tuple[Any, list[str]]:
     from hydra import initialize_config_dir
     overrides = recipes.overrides(args.model, "campaign", epochs=args.epochs, seed=args.seed,
                                   accelerator="cpu" if args.cpu else "auto",
-                                  aug_recipe=args.aug_recipe, roi=args.roi, extra=list(args.set))
+                                  aug_recipe=args.aug_recipe, roi=args.roi,
+                                  backbone=args.backbone, extra=list(args.set))
     with initialize_config_dir(config_dir=str(ROOT / "configs"), version_base="1.3"):
         return hydra_compose(config_name="train", overrides=overrides), overrides
 
@@ -274,6 +277,14 @@ def run(args: argparse.Namespace) -> int:
                                 for s, a, p in zip(val_subjects, y_val, p_val, strict=True)],
             "test_predictions": [{"subject": s, "AD": int(a), "score": float(p)}
                                  for s, a, p in zip(test_subjects, y_test, p_test, strict=True)]}
+    # Extra held-out sets (test_<name> splits): test + those subjects, same calibration.
+    from evaluate_frozen_probe import held_out_metrics
+    extra = {}
+    for split in dm.extra_test_splits:
+        names, logit, labels = trainer.predict(main["model"], records("test", split))
+        extra[split.removeprefix("test_")] = held_out_metrics(labels, calibrate(logit), names)
+    if extra:
+        test["extra_tests"] = extra
     print(f"[sup] best epoch {stop}: val_auc={test['val_auc']:.3f} "
           f"test_auc={test['test_auc']:.3f}", flush=True)
     del main["model"]
@@ -299,12 +310,13 @@ def run(args: argparse.Namespace) -> int:
                     "per_fold": [scores(y[t], oof[t]) for _, t in folds],
                     "pooled_uncalibrated": scores(y, raw)}}
     name = (f"{args.model}_supervised" + (f"__{args.aug_recipe}" if args.aug_recipe else "")
-            + f"__roi{args.roi}_s{args.seed}")
+            + (f"__bb{args.backbone}" if args.backbone else "") + f"__roi{args.roi}_s{args.seed}")
     exp_dir = Path(args.out_root) / args.tag / name
     exp_dir.mkdir(parents=True, exist_ok=True)
     cv_m = cv["clean"]["metrics"]
     doc = {"model": args.model, "variant": "supervised", "seed": args.seed, "epochs": stop,
            "max_epochs": args.epochs, "aug_recipe": args.aug_recipe, "roi": args.roi,
+           "backbone": args.backbone or recipes.DEFAULT_BACKBONE[args.model],
            "overrides": overrides, "hyperparameters": {k: getattr(args, k) for k in (
                "batch_size", "lr", "head_lr", "weight_decay", "warmup_epochs", "patience",
                "folds")},

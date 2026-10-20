@@ -10,7 +10,7 @@ import torch
 from torch import nn
 
 from t5_ssl.losses.byol import BYOLLoss
-from t5_ssl.models.ssl_module import SSLLightningModule
+from t5_ssl.models.ssl_module import SSLLightningModule, disable_stochastic_depth
 
 
 class BYOLLightningModule(SSLLightningModule):
@@ -39,6 +39,7 @@ class BYOLLightningModule(SSLLightningModule):
         self.target_projector = copy.deepcopy(projector)
         self.target_backbone.requires_grad_(False)
         self.target_projector.requires_grad_(False)
+        disable_stochastic_depth(self.target_backbone)  # no-op for ResNet; ViT/ConvNeXt swaps
         # Projector dropout regularizes the online branch only: the EMA target
         # gives deterministic regression targets (as DINOv2's teacher drops no paths).
         for module in self.target_projector.modules():

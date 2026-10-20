@@ -74,8 +74,52 @@ def extract_subjects(backbone: torch.nn.Module, dataset: object,
     return x, y, subjects
 
 
-def evaluate(train: tuple, val: tuple, test: tuple) -> dict:
-    """Fit train only, choose L2 on validation, score test once."""
+def threshold_metrics(labels: np.ndarray, scores: np.ndarray, threshold: float = 0.5) -> dict:
+    """Confusion-based metrics of AD (positive) vs HC at one score threshold."""
+    predicted = scores >= threshold
+    tp = int(np.sum(predicted & (labels == 1)))
+    fp = int(np.sum(predicted & (labels == 0)))
+    fn = int(np.sum(~predicted & (labels == 1)))
+    tn = int(np.sum(~predicted & (labels == 0)))
+    ratio = lambda a, b: float(a / b) if b else float("nan")  # noqa: E731
+    denominator = ((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn)) ** 0.5
+    return {"tp": tp, "fp": fp, "fn": fn, "tn": tn,
+            "accuracy": float(accuracy_score(labels, predicted)),
+            "balanced_accuracy": float(balanced_accuracy_score(labels, predicted)),
+            "f1_macro": float(f1_score(labels, predicted, average="macro")),
+            "f1_ad": float(f1_score(labels, predicted, zero_division=0)),
+            "sensitivity": ratio(tp, tp + fn), "specificity": ratio(tn, tn + fp),
+            "ppv": ratio(tp, tp + fp), "npv": ratio(tn, tn + fn),
+            "mcc": ratio(tp * tn - fp * fn, denominator)}
+
+
+def held_out_metrics(labels: np.ndarray, scores: np.ndarray, subjects: list[str]) -> dict:
+    """Rank and threshold (0.5) metrics of one held-out set, with its predictions."""
+    return {"subjects": len(labels), "ad": int(labels.sum()),
+            "prevalence": float(labels.mean()),
+            "auc": float(roc_auc_score(labels, scores)),
+            "average_precision": float(average_precision_score(labels, scores)),
+            "brier_score": float(brier_score_loss(labels, scores)),
+            **threshold_metrics(labels, scores),
+            "predictions": [{"subject": s, "AD": int(a), "score": float(p)}
+                            for s, a, p in zip(subjects, labels, scores, strict=True)]}
+
+
+def concat_splits(*splits: tuple) -> tuple:
+    """Join (x, y, subjects) splits; subjects stay sorted within each part."""
+    return (np.concatenate([s[0] for s in splits]), np.concatenate([s[1] for s in splits]),
+            [subject for s in splits for subject in s[2]])
+
+
+def evaluate(train: tuple, val: tuple, test: tuple,
+             extra_tests: dict[str, tuple] | None = None) -> dict:
+    """Fit train only, choose L2 on validation, score test once.
+
+    ``extra_tests`` maps a name to another held-out (x, y, subjects) set, scored
+    with the same probe (``extra_tests[name]``) and with an unweighted refit at
+    the selected C (``extra_tests[name]["unweighted_probe"]``: the training class
+    ratio as prior instead of the class-balanced one, which moves the 0.5 threshold).
+    """
     x_train, y_train, _ = train
     x_val, y_val, val_subjects = val
     x_test, y_test, subjects = test
@@ -98,7 +142,20 @@ def evaluate(train: tuple, val: tuple, test: tuple) -> dict:
     spectrum = spectrum / max(float(spectrum.sum()), 1e-12)
     positive = spectrum[spectrum > 0]
     effective_rank = float(np.exp(-np.sum(positive * np.log(positive))))
-    return {"train_subjects": len(y_train), "val_subjects": len(y_val),
+    extra: dict[str, dict] = {}
+    if extra_tests:
+        unweighted = make_pipeline(StandardScaler(), LogisticRegression(
+            C=best[1], max_iter=1000, random_state=42)).fit(x_train, y_train)
+        for name, (x_extra, y_extra, extra_subjects) in extra_tests.items():
+            extra[name] = held_out_metrics(y_extra, best[2].predict_proba(x_extra)[:, 1],
+                                           extra_subjects)
+            plain = unweighted.predict_proba(x_extra)[:, 1]
+            extra[name]["unweighted_probe"] = {
+                "auc": float(roc_auc_score(y_extra, plain)),
+                "average_precision": float(average_precision_score(y_extra, plain)),
+                **threshold_metrics(y_extra, plain)}
+    return {**({"extra_tests": extra} if extra else {}),
+            "train_subjects": len(y_train), "val_subjects": len(y_val),
             "test_subjects": len(y_test), "selected_C": best[1],
             "embedding_dim": int(x_train.shape[1]),
             "embedding_mean_feature_std": float(centered.std(axis=0).mean()),

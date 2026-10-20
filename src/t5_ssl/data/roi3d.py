@@ -448,6 +448,8 @@ class ROI3DDataModule(L.LightningDataModule):
         self.subject_labels: dict[str, str] = {}
         self.cubes: dict[str, np.ndarray] = {}
         self.train_dataset = self.val_dataset = self.test_dataset = None
+        self.unlabeled_subjects: list[str] = []
+        self.extra_test_splits: list[str] = []
 
     def prepare_data(self) -> None:
         if not Path(self.cache_path).is_file():
@@ -463,6 +465,13 @@ class ROI3DDataModule(L.LightningDataModule):
                                if len(v) == 1 and next(iter(v)) in ("AD", "HC")}
         selected, self.split_subject_ids = select_rows(self.csv_path, self.manifest_path, False,
                                                        self.seed, 0.7, 0.15)
+        # SSL-only train subjects (manifest labeled=0): hidden from probes and supervised models.
+        self.unlabeled_subjects = sorted({row["subject"] for row in selected["train"]
+                                          if row.get("labeled") == "0"})
+        for subject in self.unlabeled_subjects:
+            self.subject_labels.pop(subject, None)
+        # Extra held-out splits (test_<name>): each is scored together with test.
+        self.extra_test_splits = [split for split in selected if split.startswith("test_")]
         cubes = np.load(self.cache_path, mmap_mode="r")
         meta_path = Path(self.cache_path).with_suffix(".json")
         order = json.loads(meta_path.read_text(encoding="utf-8"))["idx"]

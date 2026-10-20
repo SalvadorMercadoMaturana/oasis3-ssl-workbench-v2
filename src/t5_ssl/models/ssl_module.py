@@ -17,6 +17,15 @@ from t5_ssl.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def disable_stochastic_depth(module: nn.Module) -> None:
+    """Turn off stochastic depth in an EMA copy (ViT ``DropPath``, torchvision ``StochasticDepth``)."""
+    for child in module.modules():
+        if hasattr(child, "drop_prob"):
+            child.drop_prob = 0.0
+        elif type(child).__name__ == "StochasticDepth":
+            child.p = 0.0
+
+
 class SSLLightningModule(L.LightningModule):
     """Modular PyTorch Lightning Module coordinating SSL training.
 

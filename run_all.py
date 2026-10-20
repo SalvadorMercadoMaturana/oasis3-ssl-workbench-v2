@@ -181,18 +181,20 @@ def make_jobs(args: argparse.Namespace) -> list[dict[str, Any]]:
     rois = args.rois or [None]
     spec_roi = locals().get("spec_roi", {})
     for seed in args.seeds:  # seed-major: every model of seed 1 starts first
-        for roi, (model, variant, recipe) in (
-                (spec_roi.get(i, r), t) for r in rois for i, t in enumerate(triples)):
-            name = recipes.run_name(model, variant, seed, recipe, roi)
+        for backbone, roi, (model, variant, recipe) in (
+                (b, spec_roi.get(i, r), t) for b in (args.backbones or [None]) for r in rois
+                for i, t in enumerate(triples)):
+            name = recipes.run_name(model, variant, seed, recipe, roi, backbone)
             argv = ["--model", model, "--variant", variant, "--seed", str(seed),
                     "--epochs", str(args.epochs), "--tag", args.tag,
                     "--out-root", args.out_root, "--workers", str(args.workers),
                     "--batch-size", str(args.batch_size), "--accumulate", str(args.accumulate),
                     "--compile", args.compile, "--precision", args.precision,
                     *(["--aug-recipe", recipe] if recipe else []),
-                    *(["--roi", roi] if roi else []), *args.train_args]
+                    *(["--roi", roi] if roi else []),
+                    *(["--backbone", backbone] if backbone else []), *args.train_args]
             jobs.append({"name": name, "model": model, "variant": variant, "recipe": recipe,
-                         "roi": roi,
+                         "roi": roi, "backbone": backbone,
                          "seed": seed, "argv": argv, "batch_size": args.batch_size,
                          "accumulate": args.accumulate})
     if args.init_controls:
@@ -289,7 +291,7 @@ def report(args: argparse.Namespace, jobs: list[dict[str, Any]], wall_seconds: f
         rows.append({
             "job": job["name"], "model": job["model"], "variant": job["variant"],
             "recipe": ((job.get("recipe") or "") + (f" @roi{job['roi']}" if job.get("roi") else "")
-                       or None),
+                       + (f" [{job['backbone']}]" if job.get("backbone") else "") or None),
             "seed": job["seed"], "status": "ok" if doc else "failed",
             "cv_auc": doc.get("cv_auc"), "test_auc": doc.get("test_auc"),
             "var_subject_over_aug": own.get("between_over_within"),
@@ -402,6 +404,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="repeat every job for these regions of interest (listed order)")
     parser.add_argument("--specs", nargs="+", default=None, metavar="MODEL:RECIPE",
                         help="explicit model:recipe jobs (recipe '-' = the model's own views)")
+    parser.add_argument("--backbones", nargs="+", default=None, choices=sorted(recipes.BACKBONES),
+                        help="repeat every job with each encoder (t5_ssl.recipes.BACKBONES)")
     parser.add_argument("--byol-variant", default="campaign")
     parser.add_argument("--vicreg-variant", default="campaign")
     parser.add_argument("--seeds", nargs="+", type=int, default=[1])

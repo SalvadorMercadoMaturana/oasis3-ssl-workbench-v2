@@ -79,6 +79,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="replace the views by a recipe of t5_ssl.recipes.AUG_RECIPES")
     parser.add_argument("--roi", default=None, choices=sorted(recipes.ROIS),
                         help="region of interest: 32 (default), 48, 64 or multi3")
+    parser.add_argument("--backbone", default=None, choices=sorted(recipes.BACKBONES),
+                        help="swap the method's encoder (t5_ssl.recipes.BACKBONES)")
     parser.add_argument("--collapse-every", type=int, default=0,
                         help="collapse metrics on held-out subjects every N epochs (0 = off)")
     parser.add_argument("--identity", action="store_true",
@@ -115,15 +117,17 @@ def build_overrides(args: argparse.Namespace, batch_size: int, accumulate: int,
         if fast:
             extra.append("perf.monitor=false")
     tag_root = Path(args.out_root) / ("bench" if bench else args.tag)
-    name = recipes.run_name(args.model, args.variant, args.seed, args.aug_recipe, args.roi)
+    name = recipes.run_name(args.model, args.variant, args.seed, args.aug_recipe, args.roi,
+                            args.backbone)
     if args.init_only:
-        name = f"{args.model}_init" + (f"__roi{args.roi}" if args.roi else "") + f"_s{args.seed}"
+        name = (f"{args.model}_init" + (f"__bb{args.backbone}" if args.backbone else "")
+                + (f"__roi{args.roi}" if args.roi else "") + f"_s{args.seed}")
     return recipes.overrides(
         args.model, args.variant, epochs=args.epochs, seed=args.seed, fast=fast,
         checkpoints=not (args.no_checkpoints or bench or args.init_only),
         accelerator="cpu" if args.cpu else "auto", log_root=tag_root.as_posix(),
         run_name=name, aug_recipe=args.aug_recipe, roi=args.roi or "32",
-        extra=extra + list(args.set))
+        backbone=args.backbone, extra=extra + list(args.set))
 
 
 def compose(overrides: list[str]) -> Any:
@@ -386,7 +390,10 @@ def write_result(exp_dir: Path, args: argparse.Namespace, overrides: list[str],
                            "retries": attempts, "minutes": (time.time() - started) / 60,
                            "experiment_dir": exp_dir.as_posix(),
                            "aug_recipe": getattr(args, "aug_recipe", None),
-                           "roi": getattr(args, "roi", None) or "32", "identity": identity}
+                           "roi": getattr(args, "roi", None) or "32",
+                           "backbone": (getattr(args, "backbone", None)
+                                        or recipes.DEFAULT_BACKBONE[args.model]),
+                           "identity": identity}
     if scored:
         main = scored.pop("main")
         doc.update(main)

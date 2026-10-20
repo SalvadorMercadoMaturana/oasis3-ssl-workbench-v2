@@ -43,7 +43,14 @@ def clinical_rows(csv_path: str | Path) -> list[dict[str, str]]:
 def select_rows(csv_path: str | Path, manifest_path: str | Path | None,
                 primary_only: bool, seed: int, train_ratio: float,
                 val_ratio: float) -> tuple[dict[str, list[dict[str, str]]], dict[str, list[str]]]:
-    """Validate a fixed subject manifest, or form deterministic full-data splits."""
+    """Validate a fixed subject manifest, or form deterministic full-data splits.
+
+    Besides train/val/test a manifest may hold extra held-out splits named
+    ``test_<name>`` (subjects added to test for a second test set, e.g. a
+    class-imbalanced one) and a ``labeled`` column: ``0`` marks a train subject
+    whose diagnosis no probe or supervised model may use (SSL-only). Such rows
+    carry ``labeled="0"``.
+    """
     rows = clinical_rows(csv_path)
     indexed = {row["idx"]: row for row in rows}
     selected: dict[str, list[dict[str, str]]] = {name: [] for name in ("train", "val", "test")}
@@ -52,13 +59,17 @@ def select_rows(csv_path: str | Path, manifest_path: str | Path | None,
             manifest = list(csv.DictReader(stream))
         for item in manifest:
             split = item["split"]
-            if split not in selected:
+            if split not in selected and not split.startswith("test_"):
                 raise ValueError(f"Unexpected split {split}")
             row = indexed.get(item["idx"])
             if row is None or row["subject"] != item["subject"] or row["session"] != item["session"]:
                 raise ValueError(f"Manifest/clinical mismatch for LMDB key {item['idx']}")
+            if item.get("labeled", "1") == "0":
+                if split != "train":
+                    raise ValueError(f"Unlabeled subject {item['subject']} outside train")
+                row = {**row, "labeled": "0"}
             if not primary_only or item["primary"] == "1":
-                selected[split].append(row)
+                selected.setdefault(split, []).append(row)
     else:
         labels: dict[str, set[str]] = defaultdict(set)
         for row in rows:
@@ -86,8 +97,7 @@ def select_rows(csv_path: str | Path, manifest_path: str | Path | None,
     subjects = {name: sorted({row["subject"] for row in split_rows})
                 for name, split_rows in selected.items()}
     sets = {name: set(ids) for name, ids in subjects.items()}
-    if any(sets[a] & sets[b] for a, b in
-           (("train", "val"), ("train", "test"), ("val", "test"))):
+    if any(sets[a] & sets[b] for a in sets for b in sets if a < b):
         raise RuntimeError("Subject leakage across LMDB splits")
     if not all(selected.values()):
         raise ValueError("LMDB splits must each contain at least one record")
