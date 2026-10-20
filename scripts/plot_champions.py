@@ -101,6 +101,9 @@ def curves_figures(champions: dict) -> None:
                 ax.axhline(math.log(4096), color="#b3261e", linewidth=1, linestyle=":")
                 ax.text(0.98, math.log(4096), "ln K", color="#b3261e", fontsize=7.5,
                         ha="right", va="bottom", transform=ax.get_yaxis_transform())
+            if model == "byol":  # drops ~100x in two epochs: only a log axis shows the rest
+                ax.set_yscale("log")
+                title += " (escala log)"
             ax.set_title(title, fontsize=9)
             ax.set_xlabel("época")
             base.style(ax)

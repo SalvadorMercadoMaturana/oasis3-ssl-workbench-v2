@@ -134,8 +134,10 @@ def adni_figure(g: dict, variant: dict, age: dict) -> None:
     print("wrote dep50_adni.png")
 
 
-def metrics_figure(g: dict) -> None:
+def metrics_figure(g: dict, title: str = "Split de despliegue, 50 épocas",
+                   out: str = "dep50_metricas.png", ticks: dict[str, str] | None = None) -> None:
     """CV and representative-test metrics: supervised, SSL and sin SSL per method, values on top."""
+    ticks = ticks or TICK
     from matplotlib.colors import to_rgb
     from matplotlib.patches import Patch
 
@@ -172,7 +174,7 @@ def metrics_figure(g: dict) -> None:
                             color=base.INK)
             ax.axhline(0.5, color=base.INK2, linewidth=1.1, linestyle=":", zorder=0)
             ax.set_ylim(0, 1.0)
-            ax.set_xticks(range(len(CELLS)), [TICK[m] for m, _ in CELLS], fontsize=9.5)
+            ax.set_xticks(range(len(CELLS)), [ticks[m] for m, _ in CELLS], fontsize=9.5)
             ax.set_title(f"{metric} — {row_title}", fontsize=10)
             base.style(ax)
     handles = [Patch(facecolor=rb.SUP_COLOR, hatch="///", edgecolor="white", label=kinds[0][1]),
@@ -181,12 +183,26 @@ def metrics_figure(g: dict) -> None:
                      label=kinds[2][1]),
                plt.Line2D([], [], color=base.INK2, linestyle=":", label="0.5")]
     fig.legend(handles=handles, loc="lower center", ncol=4, frameon=False, fontsize=9.5)
-    fig.suptitle("Split de despliegue, 50 épocas: CV y test representativo (media de 3 "
-                 "semillas ± DE; sin SSL = 1 encoder)", fontsize=11.5, color=base.INK)
+    fig.suptitle(f"{title}: CV y test representativo (media de 3 semillas ± DE; sin SSL = 1 "
+                 "encoder)", fontsize=11.5, color=base.INK)
     fig.tight_layout(rect=(0, 0.05, 1, 0.95))
-    fig.savefig(base.FIGURES / "dep50_metricas.png", dpi=160)
+    fig.savefig(base.FIGURES / out, dpi=160)
     plt.close(fig)
-    print("wrote dep50_metricas.png")
+    print(f"wrote {out}")
+
+
+def ssl_curves(g: dict, prefix: str, title: str, inputs: dict[str, str]) -> None:
+    """SSL loss curves (train/validation, 3 seeds) and collapse checks, as in earlier rounds."""
+    champ = rb.champ
+    by_name = {}
+    for m, bb in CELLS:
+        if g["ssl"].get((m, bb)):
+            champ.CHAMPION[m] = f"{prefix}{m}"
+            by_name[f"{prefix}{m}"] = g["ssl"][(m, bb)]
+            champ.TICK[m] = f"{base.LABEL[m]}\n{rb.BB[bb]} · {inputs[m]}"
+    champ.PREFIX, champ.TITLE = prefix, title
+    champ.curves_figures(by_name)
+    champ.collapse_figure(by_name)
 
 
 def split_figure() -> None:
@@ -362,6 +378,8 @@ def main() -> None:
     metrics_figure(g)
     adni_figure(g, variant, age)
     split_figure()
+    ssl_curves(g, "dep50_", "split de despliegue, 50 épocas",
+               {"vicreg": "hipocampo", "byol": "hipocampo", "dinov2": "3 regiones"})
     validation_path = args.model / "validation.json"
     if validation_path.is_file():
         validation = json.loads(validation_path.read_text(encoding="utf-8"))
