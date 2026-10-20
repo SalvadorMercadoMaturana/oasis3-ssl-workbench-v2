@@ -18,6 +18,7 @@ crops and rotations have margin. Evaluation uses the central ``size`` cube.
 from __future__ import annotations
 
 import contextlib
+import csv
 import json
 import math
 import pickle
@@ -366,6 +367,28 @@ class ROIEvalViews3D(ROIEval3D):
     def __call__(self, cube: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:  # type: ignore[override]
         first = super().__call__(cube)
         return first, swap_hemispheres(first)
+
+
+def load_external(name: str, csv_path: str | Path, cache_path: str | Path) -> dict[str, Any]:
+    """Load an external labeled test set (another cohort) for the probes.
+
+    ``csv_path`` rows (subject, idx, group AD/HC); the cubes live in ``<name>_<cache>``
+    next to ``cache_path`` (scripts/extend_roi_caches.py --into).
+    """
+    cache = Path(cache_path)
+    cache = cache.with_name(f"{name}_{cache.name}")
+    order = json.loads(cache.with_suffix(".json").read_text(encoding="utf-8"))["idx"]
+    array = np.load(cache, mmap_mode="r")
+    cubes = {idx: array[i] for i, idx in enumerate(order)}
+    with Path(csv_path).open(encoding="utf-8") as stream:
+        rows = [r for r in csv.DictReader(stream) if r["group"] in ("AD", "HC")]
+    missing = [r["idx"] for r in rows if r["idx"] not in cubes]
+    if missing:
+        raise ValueError(f"{len(missing)} external sessions missing from {cache}")
+    records = [{"subject": r["subject"], "idx": r["idx"], "session": r.get("session", r["idx"]),
+                "group": r["group"]} for r in rows]
+    return {"records": records, "cubes": cubes,
+            "labels": {r["subject"]: int(r["group"] == "AD") for r in rows}}
 
 
 def finish_deferred_views(views: torch.Tensor, spec: dict, size: int) -> torch.Tensor:

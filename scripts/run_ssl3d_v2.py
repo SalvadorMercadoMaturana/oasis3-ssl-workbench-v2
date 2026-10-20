@@ -149,7 +149,32 @@ def epoch_metrics(exp_dir: Path | str) -> dict[str, list[float]]:
     return {key: [values[e] for e in sorted(values)] for key, values in series.items()}
 
 
-def score(encoder: torch.nn.Module, dm: Any, clean: Any) -> dict[str, Any]:
+def external_embeddings(encoder: torch.nn.Module, external: dict, clean: Any
+                        ) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    """Mean embedding per subject of an external set (t5_ssl.data.roi3d.load_external)."""
+    from collections import defaultdict
+
+    import numpy as np
+    import torch
+    from torch.utils.data import DataLoader
+
+    from t5_ssl.data.roi3d import ROI3DDataset
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    encoder = encoder.to(device).eval()
+    features: dict[str, list[np.ndarray]] = defaultdict(list)
+    dataset = ROI3DDataset(external["records"], external["cubes"], clean)
+    with torch.inference_mode():
+        for batch in DataLoader(dataset, batch_size=32, shuffle=False):
+            out = encoder(batch["image"].to(device)).float().cpu().numpy()
+            for subject, vector in zip(batch["subject"], out, strict=True):
+                features[subject].append(vector)
+    subjects = sorted(features)
+    return (np.stack([np.mean(features[s], axis=0) for s in subjects]),
+            np.array([external["labels"][s] for s in subjects]), subjects)
+
+
+def score(encoder: torch.nn.Module, dm: Any, clean: Any,
+          keep_embeddings: bool = False) -> dict[str, Any]:
     import run_roi3d
     import screen_aug_equal as screen2
     from evaluate_frozen_probe import concat_splits, evaluate
@@ -160,9 +185,16 @@ def score(encoder: torch.nn.Module, dm: Any, clean: Any) -> dict[str, Any]:
     extra = {name.removeprefix("test_"): concat_splits(
         splits[2], run_roi3d.split_embeddings(encoder, dm, clean, name))
         for name in getattr(dm, "extra_test_splits", [])}
+    # External labeled sets (another cohort): scored on their own with the same probe.
+    for name, external in getattr(dm, "external_sets", {}).items():
+        extra[name] = external_embeddings(encoder, external, clean)
     test = evaluate(*splits, extra_tests=extra or None)
-    return {"subjects": subjects, "labels": y.tolist(), "cv": cv, "test": test,
-            "effective_rank": effective_rank(x)}
+    out = {"subjects": subjects, "labels": y.tolist(), "cv": cv, "test": test,
+           "effective_rank": effective_rank(x)}
+    if keep_embeddings:
+        out["_embeddings"] = {"cv": (x, y, subjects), "train": splits[0], "val": splits[1],
+                              "test": splits[2], **extra}
+    return out
 
 
 def run_one(run: str, seed: int) -> None:

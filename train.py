@@ -73,6 +73,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--no-eval", action="store_true", help="skip the frozen probes")
     parser.add_argument("--spatial-probe", action="store_true",
                         help="also probe the pre-GAP feature map pooled to 2^3 (H4)")
+    parser.add_argument("--external", action="append", default=[], metavar="NAME=CSV",
+                        help="external labeled test set (subject, idx, group) whose cubes are in "
+                             "data/roi3d/<NAME>_<cache>; scored with the same probe (repeatable)")
+    parser.add_argument("--save-embeddings", action="store_true",
+                        help="embeddings.npz: probe features of every split and external set")
+    parser.add_argument("--export-encoder", action="store_true",
+                        help="encoder.pt: the evaluated encoder only (fp16) + overrides")
     parser.add_argument("--export-encoders", action="store_true",
                         help="save encoder state_dicts to encoders.pt (for analyses)")
     parser.add_argument("--aug-recipe", default=None, choices=sorted(recipes.AUG_RECIPES),
@@ -196,7 +203,7 @@ def spatial_encoder(backbone: Any) -> Any:
 
 
 def evaluate(model_name: str, encoders: dict[str, Any], dm: Any, cfg: Any,
-             spatial: bool) -> dict[str, Any]:
+             spatial: bool, keep_embeddings: bool = False) -> dict[str, Any]:
     """Score each encoder as campaign_ssl3d_v2 (CV 5x5 on train+val, test probe)."""
     import warnings
 
@@ -216,7 +223,7 @@ def evaluate(model_name: str, encoders: dict[str, Any], dm: Any, cfg: Any,
                 delattr(encoder, attr)
         encoder = encoder.float().to(memory_format=torch.contiguous_format)
         start = time.time()
-        out[role] = v2.score(encoder, dm, clean)
+        out[role] = v2.score(encoder, dm, clean, keep_embeddings and role == "main")
         if spatial:
             spatial_scores = v2.score(spatial_encoder(encoder), dm, clean)
             out[role]["spatial"] = {k: v for k, v in spatial_scores.items()
@@ -313,10 +320,13 @@ def run(args: argparse.Namespace) -> int:
             clean = ROIEval3D(int(cfg.data.roi_size))
             dm = build_datamodule(cfg, clean, clean)
             dm.setup()
-            scored = evaluate(args.model, {"main": build_backbone(cfg)}, dm, cfg,
-                              args.spatial_probe)
+            attach_externals(dm, args, cfg)
+            encoder = build_backbone(cfg)
+            scored = evaluate(args.model, {"main": encoder}, dm, cfg,
+                              args.spatial_probe, args.save_embeddings)
             exp_dir = Path(cfg.log_root) / cfg.run_name
             exp_dir.mkdir(parents=True, exist_ok=True)
+            save_artifacts(exp_dir, args, overrides, scored, encoder, "backbone")
             write_result(exp_dir, args, overrides, scored, None, started, attempts, init=True)
             return 0
         callbacks = []
@@ -372,12 +382,42 @@ def run(args: argparse.Namespace) -> int:
                 state[name] = getattr(model, name).state_dict()
         torch.save({"overrides": overrides, "state": state}, exp_dir / "encoders.pt")
     scored = None
+    attach_externals(dm, args, cfg)
     if not args.no_eval:
-        scored = evaluate(args.model, encoders, dm, cfg, args.spatial_probe)
+        scored = evaluate(args.model, encoders, dm, cfg, args.spatial_probe, args.save_embeddings)
+    save_artifacts(exp_dir, args, overrides, scored, encoders["main"],
+                   "teacher_backbone" if args.model == "dinov2" else "backbone")
     identity = identity_scores(encoders["main"], dm, cfg) if args.identity else None
     write_result(exp_dir, args, overrides, scored, result.get("runtime"), started, attempts,
                  identity=identity)
     return 0
+
+
+def attach_externals(dm: Any, args: argparse.Namespace, cfg: Any) -> None:
+    """``--external NAME=CSV`` sets as ``dm.external_sets`` (cubes from <NAME>_<cache>)."""
+    from t5_ssl.data.roi3d import load_external
+    dm.external_sets = {}
+    for spec in args.external:
+        name, csv_path = spec.split("=", 1)
+        dm.external_sets[name] = load_external(name, csv_path, cfg.data.cache_path)
+
+
+def save_artifacts(exp_dir: Path, args: argparse.Namespace, overrides: list[str],
+                   scored: dict | None, encoder: Any, role: str) -> None:
+    """``embeddings.npz`` (probe features per split) and ``encoder.pt`` (fp16 weights)."""
+    import numpy as np
+    import torch
+    embeddings = (scored or {}).get("main", {}).pop("_embeddings", None)
+    if embeddings is not None:
+        arrays = {}
+        for name, (x, y, subjects) in embeddings.items():
+            arrays.update({f"{name}_x": x.astype(np.float32), f"{name}_y": y,
+                           f"{name}_subjects": np.array(subjects)})
+        np.savez_compressed(exp_dir / "embeddings.npz", **arrays)
+    if args.export_encoder:
+        state = {k: v.detach().cpu().half() if v.is_floating_point() else v.detach().cpu()
+                 for k, v in encoder.state_dict().items()}
+        torch.save({"overrides": overrides, "role": role, "state": state}, exp_dir / "encoder.pt")
 
 
 def write_result(exp_dir: Path, args: argparse.Namespace, overrides: list[str],

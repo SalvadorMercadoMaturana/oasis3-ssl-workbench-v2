@@ -82,12 +82,23 @@ def load(runs: Path, prefix: str) -> dict[str, list[dict]]:
     return groups
 
 
+# Age-matched subset of test + test_imb ("agem"), filled by main(): AD with up to two HC
+# of nearly the same age, so age alone cannot separate the classes there.
+AGE_MATCHED: set[str] = set()
+
+
 def value(doc: dict, where: str, key: str) -> float:
     if where == "cv":
         return doc["cv"]["clean"]["metrics"][key]
     if where == "test":
         return doc["test"][{"auc": "test_auc", "f1": "test_f1_macro",
                             "aupr": "test_average_precision"}[key]]
+    if where == "agem":
+        rows = predictions(doc, "agem")
+        labels = np.array([a for a, _ in rows.values()])
+        scores = np.array([s for _, s in rows.values()])
+        return {"auc": fast_auc, "aupr": fast_ap,
+                "f1": lambda y, p: float(f1_score(y, p >= 0.5, average="macro"))}[key](labels, scores)
     imb = doc["test"]["extra_tests"]["imb"]
     return imb[{"auc": "auc", "f1": "f1_macro", "aupr": "average_precision"}.get(key, key)]
 
@@ -95,7 +106,36 @@ def value(doc: dict, where: str, key: str) -> float:
 def predictions(doc: dict, where: str) -> dict[str, tuple[int, float]]:
     rows = doc["test"]["test_predictions"] if where == "test" else \
         doc["test"]["extra_tests"]["imb"]["predictions"]
+    if where == "agem":
+        rows = [r for r in rows if r["subject"] in AGE_MATCHED]
     return {r["subject"]: (r["AD"], r["score"]) for r in rows}
+
+
+def age_matched_test(manifest: Path, per_ad: int = 2, caliper: float = 2.5) -> dict:
+    """Greedy nearest-age matching (oldest AD first) of HC to the AD of test + test_imb."""
+    clinical = clinical_rows(base.ROOT / "data/dementia/mni-dataset.csv")
+    by_idx = {r["idx"]: r for r in clinical}
+    groups: dict[str, set[str]] = defaultdict(set)
+    for r in clinical:
+        groups[r["subject"]].add(r["group"])
+    ages = {row["subject"]: float(by_idx[row["idx"]]["age"])
+            for row in csv.DictReader(manifest.open(encoding="utf-8"))
+            if row["split"] in ("test", "test_imb")}
+    ad = sorted((s for s in ages if groups[s] == {"AD"}), key=lambda s: -ages[s])
+    free = sorted(s for s in ages if groups[s] == {"HC"})
+    matches: dict[str, list[str]] = {s: [] for s in ad}
+    for _ in range(per_ad):
+        for s in ad:
+            best = min(free, key=lambda h: (abs(ages[h] - ages[s]), h), default=None)
+            if best is not None and abs(ages[best] - ages[s]) <= caliper:
+                matches[s].append(best)
+                free.remove(best)
+    kept_ad = [s for s, hc in matches.items() if hc]
+    kept_hc = [h for s in kept_ad for h in matches[s]]
+    return {"subjects": set(kept_ad) | set(kept_hc), "ad": len(kept_ad), "hc": len(kept_hc),
+            "age_ad": float(np.mean([ages[s] for s in kept_ad])),
+            "age_hc": float(np.mean([ages[h] for h in kept_hc])),
+            "ages": ages}
 
 
 def mean_sd(docs: list[dict], where: str, key: str) -> str:
@@ -103,10 +143,30 @@ def mean_sd(docs: list[dict], where: str, key: str) -> str:
     return f"{np.mean(v):.3f} ± {np.std(v):.3f}" if len(v) > 1 else f"{v[0]:.3f}"
 
 
+def fast_auc(labels: np.ndarray, scores: np.ndarray) -> float:
+    """AUROC from average ranks (Mann-Whitney), as sklearn with ties."""
+    from scipy.stats import rankdata
+    ranks = rankdata(scores)
+    pos = labels == 1
+    n_pos, n_neg = pos.sum(), (~pos).sum()
+    return float((ranks[pos].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg))
+
+
+def fast_ap(labels: np.ndarray, scores: np.ndarray) -> float:
+    """Average precision with sklearn's definition (one step per distinct score)."""
+    order = np.argsort(-scores, kind="mergesort")
+    s, y = scores[order], labels[order]
+    last = np.r_[np.flatnonzero(np.diff(s)), len(s) - 1]  # end of each tied block
+    tp = np.cumsum(y)[last]
+    precision = tp / (last + 1)
+    recall = tp / max(1, y.sum())
+    return float(np.sum(np.diff(np.r_[0, recall]) * precision))
+
+
 def bootstrap(a: list[dict], b: list[dict], where: str, metric: str = "auc",
               draws: int = 2000) -> tuple[float, float, float]:
     """Paired, class-stratified bootstrap over subjects of the seed-averaged difference."""
-    score = roc_auc_score if metric == "auc" else average_precision_score
+    score = fast_auc if metric == "auc" else fast_ap
     if where == "cv":
         labels = np.array(a[0]["labels"])
         sa = [np.asarray(d["cv"]["clean"]["oof_mean"]) for d in a]
@@ -157,8 +217,14 @@ def age_baseline(manifest: Path) -> dict[str, dict[str, float]]:
     x, y = xy("train")
     probe = LogisticRegression(class_weight="balanced").fit(x, y)
     out = {}
-    for where, splits in (("test", ("test",)), ("imb", ("test", "test_imb"))):
-        xt, yt = xy(*splits)
+    matched = {k: v for k, v in sorted(ages["test"].items()) + sorted(ages["test_imb"].items())
+               if k in AGE_MATCHED}
+    for where, splits in (("test", ("test",)), ("imb", ("test", "test_imb")), ("agem", None)):
+        if splits is None:
+            xt = np.array([[np.mean(a)] for a in matched.values()])
+            yt = np.array([int(next(iter(groups[s])) == "AD") for s in matched])
+        else:
+            xt, yt = xy(*splits)
         p = probe.predict_proba(xt)[:, 1]
         out[where] = {"auc": float(roc_auc_score(yt, p)), "aupr": float(average_precision_score(yt, p)),
                       "f1": float(f1_score(yt, p >= 0.5, average="macro"))}
@@ -205,7 +271,7 @@ def metrics_figure(g: dict, cells: list[tuple[str, str]], title: str, out: str,
                            label="Solo edad (regresión logística)" if c == 0 else None)
             if where == "imb" and key == "aupr":
                 ax.axhline(41 / 287, color=base.INK2, linewidth=1, linestyle=":")
-                ax.text(len(present) - 0.55, 41 / 287 + 0.01, "azar 0.143", ha="right",
+                ax.text(-0.45, 41 / 287 + 0.01, "azar 0.143", ha="left",
                         fontsize=7, color=base.INK2)
             ticks = [TICK[m] + f"\n{BB[bb]}" + (" (original)" if OWN[m] == bb else "")
                      for m, bb in present]
@@ -306,7 +372,7 @@ def groups_of(runs: dict[str, list[dict]]) -> dict[str, dict]:
 
 def summary_rows(g: dict, cells: list[tuple[str, str]]) -> list[str]:
     lines = ["| Método | Backbone | Modelo | AUROC CV | AUROC test | AUROC 1:6 | AUPR 1:6 | "
-             "F1-macro 1:6 |", "|---|---|---|---:|---:|---:|---:|---:|"]
+             "F1-macro 1:6 | AUROC emp. edad |", "|---|---|---|---:|---:|---:|---:|---:|---:|"]
     for m, bb in cells:
         for kind, name in (("sup", "Supervisado"), ("ssl", "SSL"), ("init", "Sin SSL")):
             docs = g[kind].get((m, bb))
@@ -314,7 +380,7 @@ def summary_rows(g: dict, cells: list[tuple[str, str]]) -> list[str]:
                 lines.append(f"| {base.LABEL[m]} | {BB[bb]}{' (orig.)' if OWN[m] == bb else ''} | "
                              f"{name} | {mean_sd(docs, 'cv', 'auc')} | {mean_sd(docs, 'test', 'auc')} | "
                              f"{mean_sd(docs, 'imb', 'auc')} | {mean_sd(docs, 'imb', 'aupr')} | "
-                             f"{mean_sd(docs, 'imb', 'f1')} |")
+                             f"{mean_sd(docs, 'imb', 'f1')} | {mean_sd(docs, 'agem', 'auc')} |")
     return lines
 
 
@@ -341,6 +407,9 @@ def main() -> None:
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
     phase1, phase2 = groups_of(load(args.runs, "bb50")), groups_of(load(args.runs, "am50"))
+    matched = age_matched_test(MANIFESTS["bb50"])
+    AGE_MATCHED.update(matched["subjects"])
+    WHERE["agem"] = (f"Test emparejado por edad ({matched['ad']} AD + {matched['hc']} HC)")
     age = {k: age_baseline(p) for k, p in MANIFESTS.items() if p.is_file()}
     diag = [(m, OWN[m]) for m in MODELS]
     lines = ["# Backbones, test 1:6 y split emparejado por edad (50 épocas)", "",
@@ -349,17 +418,22 @@ def main() -> None:
              "con edades como los HC de test. Sin SSL = el encoder de partida (ImageNet / DeiT "
              "inflados), congelado. Supervisado = encoder + capa lineal end-to-end, época por "
              "AUROC de validación. Δ = bootstrap pareado y estratificado por clase sobre "
-             "sujetos (IC 95 %, * = excluye 0). 3 semillas.", ""]
+             "sujetos (IC 95 %, * = excluye 0). 3 semillas.", "",
+             f"Test emparejado por edad: de test + test_imb, cada AD con hasta 2 HC de edad a "
+             f"≤ 2.5 años (vecino más cercano, AD mayores primero): {matched['ad']} AD "
+             f"({matched['age_ad']:.1f} años) + {matched['hc']} HC ({matched['age_hc']:.1f} años). "
+             "Ahí la edad ya no separa las clases.", ""]
     for key, ref in age.items():
         lines.append(f"Solo edad ({key}): AUROC test {ref['test']['auc']:.3f}, AUROC 1:6 "
                      f"{ref['imb']['auc']:.3f}, AUPR 1:6 {ref['imb']['aupr']:.3f}, F1-macro 1:6 "
-                     f"{ref['imb']['f1']:.3f}.")
+                     f"{ref['imb']['f1']:.3f}, AUROC emparejado por edad {ref['agem']['auc']:.3f}.")
     # ---- A: backbone factor
     if phase1["ssl"]:
         lines += ["", "## A. Mismo backbone para los tres métodos (split 361)", ""]
         cells = [(m, bb) for bb in BACKBONES for m in MODELS]
         lines += summary_rows(phase1, cells)
-        lines += ["", "| Δ AUROC | CV | Test | Test 1:6 | Δ AUPR test 1:6 |", "|---|---:|---:|---:|---:|"]
+        lines += ["", "| Δ AUROC | CV | Test | Test 1:6 | Δ AUPR test 1:6 | Test emp. edad |",
+                  "|---|---:|---:|---:|---:|---:|"]
         for m, bb in cells:
             ssl = phase1["ssl"].get((m, bb))
             if not ssl:
@@ -373,7 +447,8 @@ def main() -> None:
                     cv = fmt(bootstrap(ssl, ref, "cv")) if ref[0]["subjects"] == ssl[0]["subjects"] else "—"
                     lines.append(f"| {base.LABEL[m]} {BB[bb]} − {ref_name} | {cv} | "
                                  f"{fmt(bootstrap(ssl, ref, 'test'))} | {fmt(bootstrap(ssl, ref, 'imb'))} | "
-                                 f"{fmt(bootstrap(ssl, ref, 'imb', 'aupr'))} |")
+                                 f"{fmt(bootstrap(ssl, ref, 'imb', 'aupr'))} | "
+                                 f"{fmt(bootstrap(ssl, ref, 'agem'))} |")
         for bb in BACKBONES:
             metrics_figure(phase1, [(m, bb) for m in MODELS],
                            f"Backbone {BB[bb]} 3D en los tres métodos, split 361, 50 épocas",
@@ -388,8 +463,8 @@ def main() -> None:
                 "sin SSL": {m: phase1["init"].get((m, OWN[m])) for m in MODELS}}
         lines += ["", "Umbral 0.5 en el test 1:6:", "", *threshold_rows(sets)]
         metrics_figure(phase1, diag, "Pareja original, split 361, 50 épocas: test balanceado "
-                       "vs test 1:6", "bb50_desbalanceado.png", age.get("bb50", {}),
-                       wheres=("test", "imb"))
+                       "vs test 1:6 vs test emparejado por edad", "bb50_desbalanceado.png",
+                       age.get("bb50", {}), wheres=("test", "imb", "agem"))
         threshold_figure(sets, "bb50_umbral_1a6.png",
                          "Test 1:6 (41 AD + 246 HC), umbral 0.5 del probe balanceado")
         champ.CHAMPION.update({m: ssl_name(m, OWN[m]) for m in MODELS})
@@ -406,18 +481,33 @@ def main() -> None:
                 "SSL": {m: phase2["ssl"].get((m, OWN[m])) for m in MODELS},
                 "sin SSL": {m: phase2["init"].get((m, OWN[m])) for m in MODELS}}
         lines += ["", "Umbral 0.5 en el test 1:6:", "", *threshold_rows(sets)]
+        lines += ["", "Dentro del split emparejado (mismos sujetos de CV):", "",
+                  "| Δ AUROC | CV | Test | Test 1:6 | Test emp. edad |", "|---|---:|---:|---:|---:|"]
+        for m in MODELS:
+            g2 = {k: phase2[k].get((m, OWN[m])) for k in ("ssl", "sup", "init")}
+            for a_kind, b_kind, name in (("ssl", "init", "SSL − sin SSL"),
+                                         ("ssl", "sup", "SSL − supervisado"),
+                                         ("sup", "init", "supervisado − sin SSL")):
+                a, b = g2[a_kind], g2[b_kind]
+                if a and b:
+                    cv = fmt(bootstrap(a, b, "cv")) if a[0]["subjects"] == b[0]["subjects"] else "—"
+                    lines.append(f"| {base.LABEL[m]} {name} | {cv} | {fmt(bootstrap(a, b, 'test'))} | "
+                                 f"{fmt(bootstrap(a, b, 'imb'))} | {fmt(bootstrap(a, b, 'agem'))} |")
         lines += ["", "Split emparejado − split 361 (mismos sujetos de test; la CV no es "
                   "comparable: otros sujetos):", "",
-                  "| Δ | AUROC test | AUROC 1:6 | AUPR 1:6 |", "|---|---:|---:|---:|"]
+                  "| Δ | AUROC test | AUROC 1:6 | AUPR 1:6 | AUROC emp. edad |",
+                  "|---|---:|---:|---:|---:|"]
         for m in MODELS:
             for kind, name in (("ssl", "SSL"), ("sup", "supervisado"), ("init", "sin SSL")):
                 a, b = phase2[kind].get((m, OWN[m])), phase1[kind].get((m, OWN[m]))
                 if a and b:
                     lines.append(f"| {base.LABEL[m]} {name} | {fmt(bootstrap(a, b, 'test'))} | "
                                  f"{fmt(bootstrap(a, b, 'imb'))} | "
-                                 f"{fmt(bootstrap(a, b, 'imb', 'aupr'))} |")
+                                 f"{fmt(bootstrap(a, b, 'imb', 'aupr'))} | "
+                                 f"{fmt(bootstrap(a, b, 'agem'))} |")
         metrics_figure(phase2, diag, "Split emparejado por edad 55/45 + sujetos solo-SSL, "
-                       "50 épocas", "am50_metricas.png", age.get("am50", {}))
+                       "50 épocas", "am50_metricas.png", age.get("am50", {}),
+                       wheres=("cv", "test", "imb", "agem"))
         threshold_figure(sets, "am50_umbral_1a6.png",
                          "Split emparejado: test 1:6, umbral 0.5 del probe balanceado")
         if all(phase2["ssl"].get(c) for c in diag):

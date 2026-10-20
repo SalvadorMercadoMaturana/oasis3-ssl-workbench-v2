@@ -51,6 +51,9 @@ def main() -> None:
     parser.add_argument("caches", nargs="+", help="cache names in data/roi3d (e.g. hippo_s32)")
     parser.add_argument("--verify", type=int, default=8)
     parser.add_argument("--no-backup", action="store_true")
+    parser.add_argument("--into", default=None, metavar="PREFIX",
+                        help="write only the listed sessions to a new cache <PREFIX><name> "
+                             "(same cube positions; e.g. another cohort), leave <name> as is")
     args = parser.parse_args()
     wanted = [line.strip() for line in args.sessions.read_text().splitlines() if line.strip()]
     env = lmdb.open(str(LMDB), readonly=True, lock=False, readahead=False)
@@ -62,7 +65,7 @@ def main() -> None:
         starts, extract = meta["cube_starts"], int(meta["extract"])
         if old.shape[1:] != (len(starts), extract, extract, extract):
             raise RuntimeError(f"{name}: cache shape {old.shape} does not match its metadata")
-        present = set(meta["idx"])
+        present = set() if args.into else set(meta["idx"])
         new = [idx for idx in wanted if idx not in present]
         with env.begin() as txn:
             def volume(idx: str) -> np.ndarray:
@@ -73,16 +76,25 @@ def main() -> None:
                 if not np.array_equal(crop(volume(meta["idx"][row]), starts, extract), old[row]):
                     raise RuntimeError(f"{name}: re-crop of cached row {row} differs")
             print(f"{name}: crop reproduces {args.verify} cached sessions exactly", flush=True)
-            target = npy.with_suffix(".tmp.npy")
+            kept = 0 if args.into else len(old)
+            target = (npy.with_name(f"{args.into}{name}.npy") if args.into
+                      else npy.with_suffix(".tmp.npy"))
             cubes = np.lib.format.open_memmap(target, mode="w+", dtype=np.float16,
-                                              shape=(len(meta["idx"]) + len(new), *old.shape[1:]))
-            cubes[:len(old)] = old
+                                              shape=(kept + len(new), *old.shape[1:]))
+            cubes[:kept] = old[:kept]
             for i, idx in enumerate(new):
-                cubes[len(old) + i] = crop(volume(idx), starts, extract)
+                cubes[kept + i] = crop(volume(idx), starts, extract)
             cubes.flush()
             del cubes
         del old
         source = args.sessions.resolve()
+        if args.into:
+            meta.update(idx=new, sessions=len(new), source_cache=name, extended=[])
+            target.with_suffix(".json").write_text(json.dumps(meta, indent=2) + "\n",
+                                                   encoding="utf-8")
+            print(f"{args.into}{name}: {len(new)} sessions ({time.time() - start:.0f} s)",
+                  flush=True)
+            continue
         meta.setdefault("extended", []).append(
             {"added": len(new), "date": time.strftime("%Y-%m-%d"),
              "from": (source.relative_to(ROOT) if source.is_relative_to(ROOT) else source).as_posix()})

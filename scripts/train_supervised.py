@@ -66,6 +66,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--model", required=True, choices=sorted(recipes.BASE))
     parser.add_argument("--roi", default="32", choices=sorted(recipes.ROIS))
     parser.add_argument("--aug-recipe", default=None, choices=sorted(recipes.AUG_RECIPES))
+    parser.add_argument("--external", action="append", default=[], metavar="NAME=CSV",
+                        help="external labeled test set (see train.py --external)")
     parser.add_argument("--backbone", default=None, choices=sorted(recipes.BACKBONES),
                         help="encoder instead of the model's own (t5_ssl.recipes.BACKBONES)")
     parser.add_argument("--seed", type=int, default=1)
@@ -132,7 +134,8 @@ class Trainer:
         import torch
         return torch.autocast("cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda")
 
-    def predict(self, model: Any, records: list[dict]) -> tuple[list[str], Any, Any]:
+    def predict(self, model: Any, records: list[dict], cubes: dict | None = None,
+                labels: dict | None = None) -> tuple[list[str], Any, Any]:
         """Mean logit over each subject's sessions, subjects sorted."""
         import numpy as np
         import torch
@@ -141,7 +144,8 @@ class Trainer:
         from t5_ssl.data.roi3d import ROI3DDataset
         model.eval()
         logits: dict[str, list[float]] = defaultdict(list)
-        loader = DataLoader(ROI3DDataset(records, self.dm.cubes, self.clean), batch_size=32)
+        loader = DataLoader(ROI3DDataset(records, cubes or self.dm.cubes, self.clean),
+                            batch_size=32)
         with torch.inference_mode(), self.autocast():
             for batch in loader:
                 out = self.forward(model, batch["image"].to(self.device)).float().cpu().numpy()
@@ -149,7 +153,7 @@ class Trainer:
                     logits[subject].append(float(value))
         subjects = sorted(logits)
         return (subjects, np.array([np.mean(logits[s]) for s in subjects]),
-                np.array([self.label(s) for s in subjects]))
+                np.array([labels[s] if labels else self.label(s) for s in subjects]))
 
     def fit(self, records: list[dict], seed: int, stop_epoch: int | None = None,
             val_records: list[dict] | None = None) -> dict[str, Any]:
@@ -283,6 +287,13 @@ def run(args: argparse.Namespace) -> int:
     for split in dm.extra_test_splits:
         names, logit, labels = trainer.predict(main["model"], records("test", split))
         extra[split.removeprefix("test_")] = held_out_metrics(labels, calibrate(logit), names)
+    from t5_ssl.data.roi3d import load_external
+    for spec in args.external:
+        name, csv_path = spec.split("=", 1)
+        external = load_external(name, csv_path, cfg.data.cache_path)
+        names, logit, labels = trainer.predict(main["model"], external["records"],
+                                               external["cubes"], external["labels"])
+        extra[name] = held_out_metrics(labels, calibrate(logit), names)
     if extra:
         test["extra_tests"] = extra
     print(f"[sup] best epoch {stop}: val_auc={test['val_auc']:.3f} "
