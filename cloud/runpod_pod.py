@@ -46,7 +46,7 @@ PREFERENCE = [
     ("NVIDIA RTX A6000", "COMMUNITY"),
     ("NVIDIA GeForce RTX 3090", "SECURE"),
 ]
-VCPU_STEPS = (16, 12, 8)
+VCPU_STEPS = (32, 24, 16, 12, 8)
 
 
 def api_key() -> str:
