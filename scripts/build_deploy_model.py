@@ -141,13 +141,14 @@ def with_ci(y: np.ndarray, p: np.ndarray, thresholds: dict[str, float],
     for k in ("auc", "aupr"):
         point[f"{k}_ci"] = [float(v) for v in np.percentile(samples[k], [2.5, 97.5])]
     point["at"] = {name: threshold_metrics(y, p, t) for name, t in thresholds.items()}
+    point["y"], point["p"] = y.astype(int).tolist(), [float(v) for v in p]  # ROC curves
     return point
 
 
 # ---------------------------------------------------------------- data
-def load_candidate(runs: Path, name: str) -> list[dict]:
+def load_candidate(runs: Path, name: str, tags: list[str]) -> list[dict]:
     seeds = []
-    for result in sorted(runs.glob(f"*/{name}_s*/result.json")):
+    for result in sorted(r for tag in tags for r in runs.glob(f"{tag}/{name}_s*/result.json")):
         run = result.parent
         if not (run / "embeddings.npz").is_file():
             continue
@@ -195,9 +196,11 @@ def main() -> None:
     parser.add_argument("--runs", type=Path, default=ROOT / "campaign_ssl3d_runpod/deploy/runs")
     parser.add_argument("--out", type=Path, default=ROOT / "deploy/ad_mri_v1")
     parser.add_argument("--candidate", default=None, help="force a candidate (default: by CV)")
+    parser.add_argument("--tags", nargs="+", default=["dep50_ssl", "dep50_init"],
+                        help="run directories under --runs holding the candidates")
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
-    pool = {label: load_candidate(args.runs, name) for label, name in CANDIDATES.items()}
+    pool = {label: load_candidate(args.runs, name, args.tags) for label, name in CANDIDATES.items()}
     pool = {k: v for k, v in pool.items() if v}
     cv = {k: float(np.mean([s["doc"]["cv_auc"] for s in v])) for k, v in pool.items()}
     lines = ["Selección por AUROC de CV (train+val con etiqueta, emparejados por edad):", ""]

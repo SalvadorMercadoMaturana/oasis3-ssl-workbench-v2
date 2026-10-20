@@ -99,13 +99,16 @@ def value(doc: dict, where: str, key: str) -> float:
         scores = np.array([s for _, s in rows.values()])
         return {"auc": fast_auc, "aupr": fast_ap,
                 "f1": lambda y, p: float(f1_score(y, p >= 0.5, average="macro"))}[key](labels, scores)
-    imb = doc["test"]["extra_tests"]["imb"]
-    return imb[{"auc": "auc", "f1": "f1_macro", "aupr": "average_precision"}.get(key, key)]
+    extra = doc["test"]["extra_tests"][where]  # imb (test + test_imb), adni, ...
+    return extra[{"auc": "auc", "f1": "f1_macro", "aupr": "average_precision"}.get(key, key)]
 
 
 def predictions(doc: dict, where: str) -> dict[str, tuple[int, float]]:
-    rows = doc["test"]["test_predictions"] if where == "test" else \
-        doc["test"]["extra_tests"]["imb"]["predictions"]
+    extras = doc["test"].get("extra_tests", {})
+    if where == "test" or (where == "agem" and "imb" not in extras):
+        rows = doc["test"]["test_predictions"]
+    else:
+        rows = extras["imb" if where == "agem" else where]["predictions"]
     if where == "agem":
         rows = [r for r in rows if r["subject"] in AGE_MATCHED]
     return {r["subject"]: (r["AD"], r["score"]) for r in rows}
@@ -269,9 +272,11 @@ def metrics_figure(g: dict, cells: list[tuple[str, str]], title: str, out: str,
             if where != "cv" and key in age.get(where, {}):
                 ax.axhline(age[where][key], color=AGE_COLOR, linewidth=1.1, linestyle="--",
                            label="Solo edad (regresión logística)" if c == 0 else None)
-            if where == "imb" and key == "aupr":
-                ax.axhline(41 / 287, color=base.INK2, linewidth=1, linestyle=":")
-                ax.text(-0.45, 41 / 287 + 0.01, "azar 0.143", ha="left",
+            if where != "cv" and key == "aupr":
+                labels = [a for a, _ in predictions(g["ssl"][present[0]][0], where).values()]
+                chance = float(np.mean(labels))
+                ax.axhline(chance, color=base.INK2, linewidth=1, linestyle=":")
+                ax.text(-0.45, chance + 0.01, f"azar {chance:.2f}", ha="left",
                         fontsize=7, color=base.INK2)
             ticks = [TICK[m] + f"\n{BB[bb]}" + (" (original)" if OWN[m] == bb else "")
                      for m, bb in present]
