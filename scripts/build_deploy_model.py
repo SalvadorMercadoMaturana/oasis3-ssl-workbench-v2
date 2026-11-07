@@ -191,13 +191,8 @@ def qc_range(cache: str) -> dict:
 
 
 def ages_by_subject() -> dict[str, float]:
-    ages = {}
-    for path, key in ((SPLIT / "manifest.csv", "idx"), (SPLIT / "external_adni.csv", "idx")):
-        idx = {r[key]: r["subject"] for r in csv.DictReader(path.open(encoding="utf-8"))}
-        for row in csv.DictReader((ROOT / "data/dementia/mni-dataset.csv").open(encoding="utf-8")):
-            if row["idx"] in idx:
-                ages.setdefault(idx[row["idx"]], float(row["age"]))
-    return ages
+    """Age at the evaluated (primary) session, as probe_protocol, plus ADNI."""
+    return pp.session_ages(SPLIT / "manifest.csv", external=SPLIT / "external_adni.csv")
 
 
 def age_matched(subjects: list[str], y: np.ndarray, ages: dict[str, float],
@@ -282,6 +277,8 @@ def main() -> None:
     cache = "multi3_s32" if roi == "multi3" else "hippo_s32"
     qc = qc_range(cache)
     validation: dict = {"candidate": chosen, "selection_mean3": score,
+                        "cv_rep_out_of_fold": {k: ens[chosen]["cv_rep"][k]
+                                               for k in ("auc", "aupr", "f1_macro", "mean3")},
                         "thresholds": thresholds, "qc": qc,
                         "oof": with_ci(y_rep, oof, thresholds),
                         "oof_matched": with_ci(y_rep[:n_lab], oof[:n_lab], thresholds)}
@@ -378,6 +375,11 @@ def model_card(chosen: str, v: dict, selection: list[str]) -> str:
              "(emparejados por edad, 50/50); salida = media de las semillas. Umbrales elegidos "
              f"en la CV representativa fuera de fold: F1-macro máximo {t['f1']:.3f} (decisión por "
              f"defecto), Youden {t['youden']:.3f}, sensibilidad ≥ 0.80 {t['sens80']:.3f}.",
+             "", "La fila de la CV representativa usa los umbrales elegidos en esos mismos "
+             "datos (F1 optimista); con el umbral elegido fuera de fold, como en la selección: "
+             f"AUROC {v['cv_rep_out_of_fold']['auc']:.3f}, AUPR "
+             f"{v['cv_rep_out_of_fold']['aupr']:.3f}, F1-macro "
+             f"{v['cv_rep_out_of_fold']['f1_macro']:.3f}.",
              "", "| Conjunto | Sujetos | AUROC [IC 95 %] | AUPR [IC 95 %] | F1-macro | "
              "Umbral F1: sens / espec / PPV / NPV | Sens ≥ 0.80: sens / espec / PPV |",
              "|---|---|---|---|---|---|---|",
@@ -415,9 +417,11 @@ def model_card(chosen: str, v: dict, selection: list[str]) -> str:
               "y una alerta fuera de distribución.",
               "- QC de entrada obligatorio: una MRI fuera del rango de intensidad de OASIS3 se "
               "rechaza (`qc_rechazada`) y no se puntúa; hay que revisar su preprocesamiento.",
-              "- Centro nuevo: con el QC, ADNI funciona sin calibrar; la calibración por sitio "
-              "sin etiquetas (`predict_ad.py --calibrate-site`) es opcional y apenas cambia el "
-              "AUROC (ver tabla).",
+              *(["- Centro nuevo: con el QC, ADNI funciona sin calibrar; la calibración por "
+                 "sitio sin etiquetas (`predict_ad.py --calibrate-site`) es opcional y apenas "
+                 "cambia el AUROC (ver tabla)."] if "adni_raw" in v else
+                ["- Centro nuevo: no validado con este modelo (ADNI no se evaluó en v2; ver "
+                 "deploy/ad_mri_v1 para el efecto del QC y la calibración por sitio)."]),
               "- Entrenado solo con OASIS3 (AD y HC 'puros'); no distingue AD de otras demencias "
               "(LBD, FTD, vascular), que nunca vio con etiqueta.",
               "- Las probabilidades suponen prevalencia 50/50 (probe balanceado); el umbral F1 "

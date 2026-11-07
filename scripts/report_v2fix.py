@@ -171,7 +171,7 @@ def metrics_figure(ens: dict[str, dict], seeds: dict[str, list[dict]], keys: lis
                 ax.axhline(chance[where], color=base.INK2, linewidth=1, linestyle=":")
             ax.set_xticks(range(len(keys)), [GROUPS[g][0].replace(" · ", "\n", 1) for g in keys],
                           fontsize=6.5, rotation=90)
-            ax.set_ylim(0.3, 1.0)
+            ax.set_ylim(0.3, 1.12)
             ax.set_title(f"{name} — {row_title}", fontsize=9)
             base.style(ax)
     fig.suptitle("Métricas sensibles al desbalance a la prevalencia real (barra = ensamble de "
@@ -203,7 +203,7 @@ def series(doc: dict, stage: str, term: str) -> list[float] | None:
 def curves_figure(seeds: dict[str, list[dict]], rows: list[str], method: str, out: str,
                   log: bool = False) -> None:
     terms = CURVE_TERMS[method]
-    fig, axes = plt.subplots(len(rows), len(terms), figsize=(3.6 * len(terms) + 1.5,
+    fig, axes = plt.subplots(len(rows), len(terms), figsize=(max(11.0, 3.6 * len(terms) + 1.5),
                                                               3.2 * len(rows)), squeeze=False)
     for r, g in enumerate(rows):
         for c, (term, title) in enumerate(terms):
