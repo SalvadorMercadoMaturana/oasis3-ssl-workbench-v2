@@ -395,10 +395,14 @@ def load_external(name: str, csv_path: str | Path, cache_path: str | Path) -> di
             "labels": {r["subject"]: int(r["group"] == "AD") for r in rows}}
 
 
-def finish_deferred_views(views: torch.Tensor, spec: dict, size: int) -> torch.Tensor:
-    """TorchIO elastic deformation of whole cubes ``(B, C, E, E, E)``, central crop, clamp."""
+def finish_deferred_views(views: torch.Tensor, spec: dict, size: int,
+                          generator: torch.Generator | None = None) -> torch.Tensor:
+    """TorchIO elastic deformation of whole cubes ``(B, C, E, E, E)``, central crop, clamp.
+
+    ``generator`` (on the views' device) fixes the deformation, e.g. for validation views.
+    """
     from t5_ssl.data.gpu_augment import tio_elastic_deform
-    deformed = tio_elastic_deform(views, **spec)
+    deformed = tio_elastic_deform(views, **spec, generator=generator)
     margin = (views.shape[-1] - size) // 2
     crop = deformed[:, :, margin:margin + size, margin:margin + size, margin:margin + size]
     return crop.clamp(0.0, 1.0)
@@ -434,8 +438,6 @@ def analysis_views(cfg: Any) -> Any:
 def build_roi3d_transforms(cfg: Any) -> tuple[ROIView3DTransform, ROIEvalViews3D]:
     aug, size = cfg.augmentation, int(cfg.data.roi_size)
     from omegaconf import OmegaConf
-    if aug.get("tio_gpu_elastic") and str(aug.get("val_views", "fixed")) == "train":
-        raise ValueError("tio_gpu_elastic views are finished on the GPU in training only")
     train = ROIView3DTransform(
         size=size, side_range=tuple(aug.get("side_range", (0.84, 1.0))),
         lr_swap_p=aug.get("lr_swap_p", 0.5), ap_flip_p=aug.get("ap_flip_p", 0.0),
@@ -514,8 +516,14 @@ class ROI3DDataModule(L.LightningDataModule):
                  one_session_per_subject_train: bool = True, seed: int = 42,
                  train_transform: Any = None, eval_transform: Any = None,
                  prefetch_factor: int | None = None, val_transform: Any = None,
-                 val_view_seed: int | None = None) -> None:
+                 val_view_seed: int | None = None, train_monitor_subjects: int = 0) -> None:
         super().__init__()
+        # train_monitor_subjects > 0 (with val_transform): a second validation loader with
+        # that many training subjects (one session each, fixed random choice) under the
+        # same fixed validation views, so the SSL objective on training subjects is
+        # measured exactly like the validation one (eval mode, same view distribution).
+        self.train_monitor_subjects = int(train_monitor_subjects)
+        self.train_monitor_dataset: ROI3DDataset | None = None
         self.prefetch_factor = prefetch_factor
         # Validation SSL views: ``eval_transform`` unless ``val_transform`` is given
         # (e.g. the training augmentations, made fixed per record by ``val_view_seed``).
@@ -569,6 +577,16 @@ class ROI3DDataModule(L.LightningDataModule):
             setattr(self, f"{split}_dataset", ROI3DDataset(
                 rows, self.cubes, transform, view_seed=view_seed,
                 one_session_per_subject=split == "train" and self.one_session_per_subject_train))
+        if self.val_transform is not None and self.train_monitor_subjects > 0:
+            first: dict[str, dict] = {}
+            for row in sorted(selected["train"], key=lambda r: (r["subject"], r["session"])):
+                first.setdefault(row["subject"], row)
+            rng = random.Random(0)
+            chosen = sorted(rng.sample(sorted(first), min(self.train_monitor_subjects,
+                                                          len(first))))
+            self.train_monitor_dataset = ROI3DDataset(
+                [first[s] for s in chosen], self.cubes, self.val_transform,
+                view_seed=(self.val_view_seed or 0) + 500_000)
 
     def _loader(self, dataset: ROI3DDataset | None, shuffle: bool) -> DataLoader:
         if dataset is None:
@@ -582,7 +600,10 @@ class ROI3DDataModule(L.LightningDataModule):
     def train_dataloader(self) -> DataLoader:
         return self._loader(self.train_dataset, True)
 
-    def val_dataloader(self) -> DataLoader:
+    def val_dataloader(self) -> DataLoader | list[DataLoader]:
+        if self.train_monitor_dataset is not None:
+            return [self._loader(self.val_dataset, False),
+                    self._loader(self.train_monitor_dataset, False)]
         return self._loader(self.val_dataset, False)
 
     def test_dataloader(self) -> DataLoader:

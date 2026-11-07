@@ -179,7 +179,8 @@ class SSLLightningModule(L.LightningModule):
 
         return total_loss
 
-    def validation_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
+    def validation_step(self, batch: dict[str, Any], batch_idx: int,
+                        dataloader_idx: int = 0) -> torch.Tensor:
         """Execute a validation evaluation step.
 
         Parameters
@@ -188,6 +189,8 @@ class SSLLightningModule(L.LightningModule):
             Dictionary containing input images and metadata.
         batch_idx:
             Index of the current validation batch.
+        dataloader_idx:
+            0 = validation subjects, 1 = the fixed training subset (logged ``trainval/``).
 
         Returns
         -------
@@ -277,26 +280,74 @@ class SSLLightningModule(L.LightningModule):
             self._calibrate_backbone_bn()
             self.train(True)
 
+    # ---- validation on augmented views (augmentation.val_views=train)
+    # The validation loaders yield the training views, made fixed per session on the CPU
+    # (ROI3DDataset view_seed); ``augment_val`` makes the GPU deformations fixed too, from a
+    # generator seeded per validation batch (``val_view_seed``), so every epoch sees the
+    # same views. A second validation loader (``trainval``) scores a fixed subset of
+    # training subjects the same way, in eval mode: train and validation become comparable.
+    augment_val: bool = False
+    val_view_seed: int = 12345
+    _val_stage: str = "val"
+    _val_batches: dict[int, int] | None = None
+
+    def log(self, name: str, value: Any, *args: Any, **kwargs: Any) -> None:
+        """Name metrics of the second validation loader ``trainval/...``; no loader suffix."""
+        if self._val_stage != "val" and name.startswith("val/"):
+            name = f"{self._val_stage}/{name[4:]}"
+        kwargs.setdefault("add_dataloader_idx", False)
+        super().log(name, value, *args, **kwargs)
+
+    def on_validation_epoch_start(self) -> None:
+        self._val_batches = {}
+
+    def on_validation_batch_start(self, batch: Any, batch_idx: int,
+                                  dataloader_idx: int = 0) -> None:
+        self._val_stage = "val" if dataloader_idx == 0 else "trainval"
+
+    def on_validation_epoch_end(self) -> None:
+        self._val_stage = "val"
+
+    def _val_generator(self, device: torch.device, dataloader_idx: int) -> torch.Generator:
+        counts = self._val_batches if self._val_batches is not None else {}
+        count = counts.get(dataloader_idx, 0)
+        counts[dataloader_idx] = count + 1
+        self._val_batches = counts
+        seed = self.val_view_seed + 1_000_003 * dataloader_idx + 7919 * count
+        return torch.Generator(device=device).manual_seed(seed)
+
     def on_after_batch_transfer(self, batch: Any, dataloader_idx: int) -> Any:
-        """Apply the GPU elastic deformation (training only), then ``input_memory_format``."""
-        if self.gpu_elastic and self.training and isinstance(batch, dict) and "image" in batch:
+        """Apply the GPU elastic deformations, then ``input_memory_format``.
+
+        Training views get fresh random deformations; validation views (``augment_val``)
+        get the same deformation every epoch.
+        """
+        has_image = isinstance(batch, dict) and "image" in batch
+        validating = not self.training
+        generator = None
+        if has_image and validating and self.augment_val and (self.gpu_elastic
+                                                              or self.tio_gpu_elastic):
+            first = batch["image"][0] if isinstance(batch["image"], list | tuple) else batch["image"]
+            generator = self._val_generator(first.device, dataloader_idx)
+        if self.gpu_elastic and has_image and (self.training or generator is not None):
             from t5_ssl.data.gpu_augment import elastic_deform
 
             def deform(image: Any) -> Any:
                 if isinstance(image, torch.Tensor) and image.ndim == 5:
-                    return elastic_deform(image, **self.gpu_elastic)
+                    return elastic_deform(image, **self.gpu_elastic, generator=generator)
                 if isinstance(image, list | tuple):
                     return type(image)(deform(view) for view in image)
                 return image
 
             batch["image"] = deform(batch["image"])
-        if self.tio_gpu_elastic and isinstance(batch, dict) and "image" in batch:
+        if self.tio_gpu_elastic and has_image:
             from t5_ssl.data.roi3d import finish_deferred_views
 
             def finish(image: Any) -> Any:
                 if (isinstance(image, torch.Tensor) and image.ndim == 5
                         and image.shape[-1] != self.crop_size):
-                    return finish_deferred_views(image, self.tio_gpu_elastic, self.crop_size)
+                    return finish_deferred_views(image, self.tio_gpu_elastic, self.crop_size,
+                                                 generator=generator)
                 if isinstance(image, list | tuple):
                     return type(image)(finish(view) for view in image)
                 return image

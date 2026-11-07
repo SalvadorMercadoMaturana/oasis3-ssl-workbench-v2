@@ -183,7 +183,8 @@ class DINOv2LightningModule(SSLLightningModule):
         """Update student from two masked global and the local crops."""
         return self._step(batch, "train", batch_idx)
 
-    def validation_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
+    def validation_step(self, batch: dict[str, Any], batch_idx: int,
+                        dataloader_idx: int = 0) -> torch.Tensor:
         """Measure the objective with fixed masks and without EMA updates."""
         return self._step(batch, "val", batch_idx)
 

@@ -223,7 +223,11 @@ def evaluate(model_name: str, encoders: dict[str, Any], dm: Any, cfg: Any,
                 delattr(encoder, attr)
         encoder = encoder.float().to(memory_format=torch.contiguous_format)
         start = time.time()
-        out[role] = v2.score(encoder, dm, clean, keep_embeddings and role == "main")
+        out[role] = v2.score(encoder, dm, clean, role == "main")
+        if role == "main":
+            out[role]["protocol_v2"] = protocol_v2(encoder, dm, cfg, out[role]["_embeddings"])
+            if not keep_embeddings:
+                out[role].pop("_embeddings")
         if spatial:
             spatial_scores = v2.score(spatial_encoder(encoder), dm, clean)
             out[role]["spatial"] = {k: v for k, v in spatial_scores.items()
@@ -234,6 +238,44 @@ def evaluate(model_name: str, encoders: dict[str, Any], dm: Any, cfg: Any,
               + (f" | spatial cv={mean3_cv(out[role]['spatial']):.3f} "
                  f"test={mean3_test(out[role]['spatial']):.3f}" if spatial else ""), flush=True)
     return out
+
+
+def protocol_v2(encoder: Any, dm: Any, cfg: Any, embeddings: dict) -> dict[str, Any]:
+    """Score the encoder with probe protocol v2 (scripts/probe_protocol.py).
+
+    Representative CV with the SSL-only AD/HC subjects of train, out-of-sample F1
+    thresholds, AUPR/F1 at the cohort prevalence.
+
+    Adds the pool embeddings to ``embeddings`` (saved as ``pool_*`` with --save-embeddings).
+    """
+    import numpy as np
+    import probe_protocol as pp
+    import torch
+
+    from t5_ssl.data.roi3d import ROIEval3D
+    manifest = Path(cfg.data.manifest_path)
+    records = pp.pool_records(manifest)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    encoder = encoder.to(device).eval()
+    clean = ROIEval3D(int(cfg.data.roi_size))
+    chunks = []
+    with torch.inference_mode():
+        for start in range(0, len(records), 64):
+            batch = torch.stack([clean(torch.from_numpy(
+                np.asarray(dm.cubes[r["idx"]], dtype=np.float32))) for r in records[start:start + 64]])
+            chunks.append(encoder(batch.to(device)).float().cpu().numpy())
+    dim = embeddings["cv"][0].shape[1]
+    x_pool = np.concatenate(chunks) if chunks else np.zeros((0, dim), np.float32)
+    embeddings["pool"] = (x_pool, np.array([r["label"] for r in records], dtype=int),
+                          [r["subject"] for r in records])
+    ages = pp.session_ages(manifest)
+    extra = {k: v for k, v in embeddings.items() if k not in ("cv", "train", "val", "test", "pool")}
+    doc = pp.evaluate(embeddings["cv"], embeddings["pool"], embeddings["test"], ages, extra)
+    r, t = doc["cv_rep"], doc["test"]
+    print(f"[eval v2] rep CV AUROC {r['auc']:.3f} AUPR {r['aupr']:.3f} F1 {r['f1_macro']:.3f} "
+          f"mean3 {r['mean3']:.3f} | test {t['auc']:.3f}/{t['aupr']:.3f}/{t['f1_macro']:.3f}",
+          flush=True)
+    return doc
 
 
 def identity_scores(encoder: Any, dm: Any, cfg: Any) -> dict[str, Any]:

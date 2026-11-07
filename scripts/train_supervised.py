@@ -11,18 +11,20 @@ class-balanced BCE on the AD/HC subjects of the train split, one random session
 per subject per epoch (AdamW, warmup + cosine over ``--epochs``, bf16 on CUDA).
 The epoch with the best val AUROC (subject score = mean logit over its
 sessions) is kept, with early stopping after ``--patience`` epochs without
-improvement, and scored on test. The CV row trains ``--folds`` folds
-(StratifiedKFold, shuffle, random_state=0, on the sorted train+val AD/HC
-subjects, the same subjects as the frozen-probe CV) with the same schedule,
-stopped at that best epoch, and pools the out-of-fold scores.
+improvement, and scored on test. The CV row (protocol v2, 2026-11-07) trains
+``--folds`` folds (the folds of scripts/probe_protocol.fold_plan, repeat 0); each fold
+holds out 20 % of its training subjects as an inner validation that picks its epoch
+with the same early stopping, so no fold inherits an epoch chosen on its own held-out
+subjects. Every fold model also scores its share of the SSL-only AD/HC subjects of
+train: ``protocol_v2.cv_rep`` is the representative CV (cohort prevalence and ages).
 
-Scores are calibrated like the frozen probe's class-balanced logistic regression:
-each trained model gets a balanced Platt scaling fit on its own training
-subjects' logits (no val/test labels). Without it every fold model has its own
-bias (median probability 0.0 to 0.98 at the early selected epochs), which drags
-the pooled CV AUROC down and breaks the 0.5 threshold of F1; rank metrics of a
-single model (test AUROC/AUPR) are unchanged. ``cv.clean.per_fold`` keeps the
-within-fold metrics and ``cv.clean.pooled_uncalibrated`` the raw pooled ones.
+Scores are calibrated with a balanced Platt scaling fit on held-out logits: the
+inner validation of each fold model, the validation subjects for the main model
+(until 2026-11-07 the model's own training subjects, where an overfit model's logits
+are extreme). Predictions run in fp32: in bf16 the logits of models still near their
+bias tied (13 distinct test scores of 178 in one run; CV folds at AUROC 0.500).
+``cv.clean.per_fold`` keeps the within-fold metrics and ``cv.clean.pooled_uncalibrated``
+the raw pooled ones.
 
 ``<out-root>/<tag>/<model>_supervised[__<recipe>]__roi<roi>_s<seed>/result.json``
 has the ``subjects``/``labels``/``cv``/``test`` fields of the train.py probe
@@ -146,7 +148,9 @@ class Trainer:
         logits: dict[str, list[float]] = defaultdict(list)
         loader = DataLoader(ROI3DDataset(records, cubes or self.dm.cubes, self.clean),
                             batch_size=32)
-        with torch.inference_mode(), self.autocast():
+        # fp32, not bf16: bf16 keeps ~3 significant digits, so the logits of a model still
+        # near its bias tied (13 distinct test scores of 178; CV folds at AUROC 0.500).
+        with torch.inference_mode():
             for batch in loader:
                 out = self.forward(model, batch["image"].to(self.device)).float().cpu().numpy()
                 for subject, value in zip(batch["subject"], out, strict=True):
@@ -236,7 +240,6 @@ def run(args: argparse.Namespace) -> int:
         f1_score,
         roc_auc_score,
     )
-    from sklearn.model_selection import StratifiedKFold
 
     from t5_ssl.train import build_datamodule
     started = time.time()
@@ -265,7 +268,7 @@ def run(args: argparse.Namespace) -> int:
     stop = main["best_epoch"]
     val_subjects, val_logit, y_val = trainer.predict(main["model"], records("val"))
     test_subjects, test_logit, y_test = trainer.predict(main["model"], records("test"))
-    calibrate = calibrator(main["model"], records("train"))
+    calibrate = calibrator(main["model"], records("val"))
     p_val, p_test = calibrate(val_logit), calibrate(test_logit)
     test = {"train_subjects": len({r["subject"] for r in records("train")}),
             "val_subjects": len(val_subjects), "test_subjects": len(test_subjects),
@@ -299,27 +302,73 @@ def run(args: argparse.Namespace) -> int:
     print(f"[sup] best epoch {stop}: val_auc={test['val_auc']:.3f} "
           f"test_auc={test['test_auc']:.3f}", flush=True)
     del main["model"]
-    # 2. CV over train+val AD/HC subjects, each fold stopped at the selected epoch.
+    # 2. CV over train+val AD/HC subjects (protocol v2, scripts/probe_protocol.py). Each
+    # fold holds out an inner validation (20 % of its training subjects, stratified) that
+    # picks the epoch (best AUROC, early stopping as the main run) and fits the balanced
+    # Platt calibration; the fold model scores its held-out labeled subjects and its share
+    # of the SSL-only AD/HC subjects (never trained on): representative CV.
+    import probe_protocol as pp
+    from sklearn.model_selection import train_test_split
     pool = records("train", "val")
     subjects = sorted({r["subject"] for r in pool})
     y = np.array([trainer.label(s) for s in subjects])
-    oof, raw = np.zeros(len(subjects)), np.zeros(len(subjects))
-    folds = list(StratifiedKFold(args.folds, shuffle=True, random_state=0).split(subjects, y))
+    manifest = Path(cfg.data.manifest_path)
+    pool_rows = pp.pool_records(manifest)
+    pool_records = [{k: r[k] for k in ("subject", "idx", "session", "group")} for r in pool_rows]
+    y_pool = np.array([r["label"] for r in pool_rows], dtype=int)
+    pool_labels = {r["subject"]: r["label"] for r in pool_rows}
+    plan = pp.fold_plan(y, y_pool, repeats=1, folds=args.folds)
+    oof, raw = np.zeros(len(subjects) + len(pool_rows)), np.zeros(len(subjects) + len(pool_rows))
     position = {s: i for i, s in enumerate(subjects)}
-    for fold, (train_idx, test_idx) in enumerate(folds):
-        fit_subjects = {subjects[i] for i in train_idx}
-        held = {subjects[i] for i in test_idx}
-        fit_records = [r for r in pool if r["subject"] in fit_subjects]
-        fitted = trainer.fit(fit_records, args.seed + 1000 * (fold + 1), stop_epoch=stop)
+    position.update({r["subject"]: len(subjects) + i for i, r in enumerate(pool_rows)})
+    fold_epochs = []
+    for fold in range(args.folds):
+        fit_idx = np.flatnonzero(plan[0, :len(subjects)] != fold)
+        inner_train, inner_val = train_test_split(
+            fit_idx, test_size=0.2, stratify=y[fit_idx], random_state=fold)
+        inner_train_set = {subjects[i] for i in inner_train}
+        inner_val_set = {subjects[i] for i in inner_val}
+        fitted = trainer.fit([r for r in pool if r["subject"] in inner_train_set],
+                             args.seed + 1000 * (fold + 1),
+                             val_records=[r for r in pool if r["subject"] in inner_val_set])
+        fold_epochs.append(fitted["best_epoch"])
+        calibrate_fold = calibrator(fitted["model"],
+                                    [r for r in pool if r["subject"] in inner_val_set])
+        held = {subjects[i] for i in np.flatnonzero(plan[0, :len(subjects)] == fold)}
         names, logit, _ = trainer.predict(fitted["model"], [r for r in pool if r["subject"] in held])
+        held_pool = [pool_records[i] for i in np.flatnonzero(plan[0, len(subjects):] == fold)]
+        if held_pool:
+            pool_names, pool_logit, _ = trainer.predict(fitted["model"], held_pool,
+                                                        labels=pool_labels)
+            names, logit = names + pool_names, np.concatenate([logit, pool_logit])
         where = [position[s] for s in names]
-        oof[where] = calibrator(fitted["model"], fit_records)(logit)
+        oof[where] = calibrate_fold(logit)
         raw[where] = sigmoid(logit)
-        print(f"[sup] fold {fold + 1}/{args.folds} done "
+        print(f"[sup] fold {fold + 1}/{args.folds} done, epoch {fitted['best_epoch']} "
               f"({(time.time() - started) / 60:.1f} min)", flush=True)
-    cv = {"clean": {"metrics": scores(y, oof), "oof_mean": oof.tolist(),
-                    "per_fold": [scores(y[t], oof[t]) for _, t in folds],
-                    "pooled_uncalibrated": scores(y, raw)}}
+        del fitted
+    n_lab = len(subjects)
+    folds = [(np.flatnonzero(plan[0, :n_lab] != k), np.flatnonzero(plan[0, :n_lab] == k))
+             for k in range(args.folds)]
+    cv = {"clean": {"metrics": scores(y, oof[:n_lab]), "oof_mean": oof[:n_lab].tolist(),
+                    "per_fold": [scores(y[t], oof[:n_lab][t]) for _, t in folds],
+                    "pooled_uncalibrated": scores(y, raw[:n_lab]), "fold_epochs": fold_epochs}}
+    ages = pp.session_ages(manifest)
+    cv_subjects = subjects + [r["subject"] for r in pool_rows]
+    age_all = np.array([ages.get(s, np.nan) for s in cv_subjects])
+    v2 = pp.summarize(y, y_pool, oof[None], plan, age_all)
+    age_test = np.array([ages.get(s, np.nan) for s in test_subjects])
+    v2["test"] = pp.held_out(y_test, p_test, v2["threshold_rep"], age_test)
+    matched = pp.age_matched_subset(test_subjects, y_test, ages)
+    v2["test_agem"] = pp.held_out(y_test[matched], p_test[matched], v2["threshold_rep"],
+                                  age_test[matched])
+    v2["scores"] = {"cv_subjects": cv_subjects, "cv_y": np.concatenate([y, y_pool]).tolist(),
+                    "n_lab": n_lab, "cv_oof": oof[None].tolist(), "plan": plan.tolist(),
+                    "test_subjects": test_subjects, "test_y": y_test.tolist(),
+                    "test_p": p_test.tolist()}
+    print(f"[sup v2] rep CV AUROC {v2['cv_rep']['auc']:.3f} AUPR {v2['cv_rep']['aupr']:.3f} "
+          f"F1 {v2['cv_rep']['f1_macro']:.3f} | matched {v2['cv_matched']['auc']:.3f} | "
+          f"test {v2['test']['auc']:.3f}", flush=True)
     name = (f"{args.model}_supervised" + (f"__{args.aug_recipe}" if args.aug_recipe else "")
             + (f"__bb{args.backbone}" if args.backbone else "") + f"__roi{args.roi}_s{args.seed}")
     exp_dir = Path(args.out_root) / args.tag / name
@@ -332,6 +381,7 @@ def run(args: argparse.Namespace) -> int:
                "batch_size", "lr", "head_lr", "weight_decay", "warmup_epochs", "patience",
                "folds")},
            "subjects": subjects, "labels": y.tolist(), "cv": cv, "test": test,
+           "protocol_v2": v2,
            "best_epoch": stop, "best_val_auc": main["best_val_auc"], "history": main["history"],
            "cv_auc": cv_m["auc"], "test_auc": test["test_auc"],
            "cv_mean3": (cv_m["auc"] + cv_m["f1"] + cv_m["aupr"]) / 3,

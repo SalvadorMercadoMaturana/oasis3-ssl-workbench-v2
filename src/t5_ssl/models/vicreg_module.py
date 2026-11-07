@@ -87,6 +87,7 @@ class VICRegLightningModule(SSLLightningModule):
         """Update online parameters, then push this batch's projections into the queue."""
         return self._step(batch, "train")
 
-    def validation_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
+    def validation_step(self, batch: dict[str, Any], batch_idx: int,
+                        dataloader_idx: int = 0) -> torch.Tensor:
         """Score VICReg on the current batch alone, without touching the queue."""
         return self._step(batch, "val")

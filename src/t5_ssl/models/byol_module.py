@@ -81,7 +81,8 @@ class BYOLLightningModule(SSLLightningModule):
         """Predict the other view using only the online branch for gradients."""
         return self._step(batch, "train")
 
-    def validation_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
+    def validation_step(self, batch: dict[str, Any], batch_idx: int,
+                        dataloader_idx: int = 0) -> torch.Tensor:
         """Evaluate the BYOL objective without changing the target."""
         return self._step(batch, "val")
 

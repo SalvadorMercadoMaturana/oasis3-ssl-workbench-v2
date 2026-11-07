@@ -233,7 +233,8 @@ def build_datamodule(cfg: DictConfig, train_transform: Any,
             seed=data_cfg.get("seed", 42), train_transform=train_transform,
             eval_transform=eval_transform, prefetch_factor=data_cfg.get("prefetch_factor", None),
             val_transform=train_transform if augmented_val else None,
-            val_view_seed=int(cfg.augmentation.get("val_view_seed", 12345)) if augmented_val else None)
+            val_view_seed=int(cfg.augmentation.get("val_view_seed", 12345)) if augmented_val else None,
+            train_monitor_subjects=int(data_cfg.get("train_monitor_subjects", 0)) if augmented_val else 0)
     common = dict(
         csv_path=data_cfg.get("csv_path", DEFAULT_CSV),
         batch_size=data_cfg.get("batch_size", 16),
@@ -525,6 +526,9 @@ def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> d
     if aug_cfg.get("tio_gpu_elastic"):
         model.tio_gpu_elastic = dict(OmegaConf.to_container(aug_cfg.tio_gpu_elastic, resolve=True))
         model.crop_size = int(cfg.data.roi_size)
+    if str(aug_cfg.get("val_views", "fixed")) == "train":  # fixed GPU deformations in validation
+        model.augment_val = True
+        model.val_view_seed = int(aug_cfg.get("val_view_seed", 12345))
     if cfg.model.get("freeze_backbone_bn", False):
         model.freeze_backbone_bn = True
         model.bn_calibration_batches = cfg.model.get("bn_calibration_batches", None)

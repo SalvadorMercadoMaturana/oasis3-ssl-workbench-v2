@@ -70,7 +70,8 @@ class MAELightningModule(SSLLightningModule):
         """Reconstruct masked patches from one augmented view."""
         return self._step(batch, "train")
 
-    def validation_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
+    def validation_step(self, batch: dict[str, Any], batch_idx: int,
+                        dataloader_idx: int = 0) -> torch.Tensor:
         """Score reconstruction on one augmented view without updating weights."""
         return self._step(batch, "val")
 
@@ -174,6 +175,7 @@ class MAEVICRegLightningModule(SSLLightningModule):
         """Jointly optimize per-view reconstruction and cross-view VICReg."""
         return self._step(batch, "train")
 
-    def validation_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
+    def validation_step(self, batch: dict[str, Any], batch_idx: int,
+                        dataloader_idx: int = 0) -> torch.Tensor:
         """Score the joint objective without updating weights or the queue."""
         return self._step(batch, "val")

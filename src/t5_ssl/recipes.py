@@ -232,6 +232,15 @@ FAST_RUNTIME = ["+perf=rtx4090", "trainer.precision=bf16-mixed", "data.num_worke
 CAMPAIGN_RUNTIME = ["trainer.precision=32-true"]
 
 
+# SSL validation on the training views, fixed per session (and per batch for the GPU
+# deformations), plus the same measurement on 120 training subjects (``trainval/``): the
+# validation loss is then the training objective on unseen subjects, on the same scale.
+# Until 2026-11-07 only VICReg ``campaign_augval`` did this; BYOL and DINOv2 validated on
+# the clean cube and its mirror, which made their validation loss incomparable with the
+# training loss. ``--set ++augmentation.val_views=fixed`` restores the old validation.
+AUGMENTED_VALIDATION = ["++augmentation.val_views=train", "++data.train_monitor_subjects=120"]
+
+
 def warmup_epochs(epochs: int) -> int:
     return max(1, round(epochs / 5))  # 6 of 30, as campaign_ssl3d; 10 of 50
 
@@ -251,6 +260,7 @@ def overrides(model: str, variant: str = "campaign", *, epochs: int = 30, seed: 
     if backbone is not None and backbone not in BACKBONES:
         raise ValueError(f"Unknown backbone '{backbone}'. Choose from {list(BACKBONES)}.")
     out = ["data=oasis3_roi3d", *roi_overrides(roi), f"data.manifest_path={MANIFEST}",
+           *AUGMENTED_VALIDATION,
            "trainer=full50", f"trainer.accelerator={accelerator}", "trainer.deterministic=false",
            "trainer.enable_progress_bar=false", "trainer.early_stopping_patience=null",
            "trainer.enable_health_check=false", f"trainer.enable_checkpointing={str(checkpoints).lower()}",
