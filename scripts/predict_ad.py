@@ -2,7 +2,7 @@
 
     python scripts/predict_ad.py --model deploy/ad_mri_v1 --lmdb-keys 001303 002151
     python scripts/predict_ad.py --model deploy/ad_mri_v1 --volumes scan1.nii.gz scan2.npy \
-        [--site site.json] [--threshold youden|sens80] [--out predictions.csv]
+        [--site site.json] [--threshold f1|youden|sens80] [--out predictions.csv]
     python scripts/predict_ad.py --model deploy/ad_mri_v1 --volumes new_site/*.nii.gz \
         --calibrate-site site.json            # unlabeled batch of a new site, no prediction
 
@@ -116,7 +116,8 @@ def main() -> None:
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--lmdb-keys", nargs="*", default=[])
     parser.add_argument("--volumes", nargs="*", default=[])
-    parser.add_argument("--threshold", default="youden")
+    parser.add_argument("--threshold", default=None,
+                        help="f1 | youden | sens80 (default: the model's decision_threshold, else youden)")
     parser.add_argument("--site", type=Path, default=None, help="site.json from --calibrate-site")
     parser.add_argument("--calibrate-site", type=Path, default=None)
     parser.add_argument("--out", type=Path, default=None)
@@ -151,7 +152,7 @@ def main() -> None:
         flags.append(np.sqrt((p**2 / np.array(ood["var"])).sum(1)) > ood["threshold"])
     prob = np.mean(probs, axis=0)
     flag = np.mean(flags, axis=0) >= 0.5
-    threshold = model["thresholds"][args.threshold]
+    threshold = model["thresholds"][args.threshold or model.get("decision_threshold", "youden")]
     rows = [{"scan": n, "p_ad": f"{p:.4f}" if ok else "",
              "decision": ("AD" if p >= threshold else "HC") if ok else "QC",
              "threshold": f"{threshold:.4f}", "qc_intensity": f"{v:.3f}",

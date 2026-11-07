@@ -18,10 +18,11 @@ with the same early stopping, so no fold inherits an epoch chosen on its own hel
 subjects. Every fold model also scores its share of the SSL-only AD/HC subjects of
 train: ``protocol_v2.cv_rep`` is the representative CV (cohort prevalence and ages).
 
-Scores are calibrated with a balanced Platt scaling fit on held-out logits: the
-inner validation of each fold model, the validation subjects for the main model
-(until 2026-11-07 the model's own training subjects, where an overfit model's logits
-are extreme). Predictions run in fp32: in bf16 the logits of models still near their
+Scores are calibrated with a balanced, monotone Platt scaling fit on held-out
+standardized logits: the inner validation of each fold model, the validation subjects
+for the main model (until 2026-11-07 the model's own training subjects, where an
+overfit model's logits are extreme, with default L2 that flattened near-constant
+logits to one probability). Predictions run in fp32: in bf16 the logits of models still near their
 bias tied (13 distinct test scores of 178 in one run; CV folds at AUROC 0.500).
 ``cv.clean.per_fold`` keeps the within-fold metrics and ``cv.clean.pooled_uncalibrated``
 the raw pooled ones.
@@ -257,11 +258,22 @@ def run(args: argparse.Namespace) -> int:
     sigmoid = lambda x: 1 / (1 + np.exp(-x))  # noqa: E731
 
     def calibrator(model: Any, fit_records: list[dict]) -> Any:
-        """Balanced Platt scaling on the model's own training subjects."""
+        """Balanced Platt scaling on held-out logits, monotone increasing.
+
+        The logits are standardized first and the fit is barely regularized: a model still
+        near its bias has logits that vary by ~1e-3, and the default L2 fit stopped at slope 0
+        (constant probabilities: test AUROC 0.500 although the val AUROC was 0.756). A slope
+        <= 0 keeps the model's own ranking (standardized logit through the sigmoid).
+        """
         from sklearn.linear_model import LogisticRegression
         _, logit, labels = trainer.predict(model, fit_records)
-        platt = LogisticRegression(class_weight="balanced").fit(logit[:, None], labels)
-        return lambda z: platt.predict_proba(np.asarray(z)[:, None])[:, 1]
+        mu, sd = float(np.mean(logit)), float(np.std(logit)) or 1.0
+        platt = LogisticRegression(C=1e4, class_weight="balanced", max_iter=1000).fit(
+            ((logit - mu) / sd)[:, None], labels)
+        a, b = float(platt.coef_[0, 0]), float(platt.intercept_[0])
+        if a <= 0:
+            a, b = 1.0, 0.0
+        return lambda z: sigmoid(a * (np.asarray(z, dtype=np.float64) - mu) / sd + b)
 
     # 1. Train split, best val-AUROC epoch, scored on test.
     main = trainer.fit(records("train"), args.seed, val_records=records("val"))
@@ -282,8 +294,9 @@ def run(args: argparse.Namespace) -> int:
                                                          average="macro")),
             "val_predictions": [{"subject": s, "AD": int(a), "score": float(p)}
                                 for s, a, p in zip(val_subjects, y_val, p_val, strict=True)],
-            "test_predictions": [{"subject": s, "AD": int(a), "score": float(p)}
-                                 for s, a, p in zip(test_subjects, y_test, p_test, strict=True)]}
+            "test_predictions": [{"subject": s, "AD": int(a), "score": float(p), "logit": float(z)}
+                                 for s, a, p, z in zip(test_subjects, y_test, p_test, test_logit,
+                                                       strict=True)]}
     # Extra held-out sets (test_<name> splits): test + those subjects, same calibration.
     from evaluate_frozen_probe import held_out_metrics
     extra = {}
@@ -352,7 +365,8 @@ def run(args: argparse.Namespace) -> int:
              for k in range(args.folds)]
     cv = {"clean": {"metrics": scores(y, oof[:n_lab]), "oof_mean": oof[:n_lab].tolist(),
                     "per_fold": [scores(y[t], oof[:n_lab][t]) for _, t in folds],
-                    "pooled_uncalibrated": scores(y, raw[:n_lab]), "fold_epochs": fold_epochs}}
+                    "pooled_uncalibrated": scores(y, raw[:n_lab]), "fold_epochs": fold_epochs,
+                    "raw_sigmoid_all": raw.tolist()}}
     ages = pp.session_ages(manifest)
     cv_subjects = subjects + [r["subject"] for r in pool_rows]
     age_all = np.array([ages.get(s, np.nan) for s in cv_subjects])

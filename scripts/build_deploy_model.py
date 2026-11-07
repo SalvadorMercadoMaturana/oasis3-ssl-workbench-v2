@@ -1,27 +1,31 @@
 """Select, fit and validate a deployable AD-vs-HC MRI model from the split_deploy runs.
 
+    python scripts/reeval_deploy.py --tags dep50_init dep50_ssl v2_ssl
     python scripts/build_deploy_model.py --runs campaign_ssl3d_runpod/deploy/runs \
-        --out deploy/ad_mri_v1
+        --out deploy/ad_mri_v2
 
-Candidates are the frozen encoders of the deployment campaign (each SSL method on its
-best backbone and the encoders without SSL), 3 seeds each, read from ``embeddings.npz``
-(probe features per split and of ADNI) and ``encoder.pt``.
+Candidates are the frozen encoders of the deployment campaigns (``CANDIDATES``: each SSL
+method and the encoders without SSL), 3 seeds each, read from ``embeddings.npz``,
+``encoder.pt`` and ``protocol_v2.json`` (scripts/probe_protocol.py, protocol v2).
 
-1. Selection (fixed before looking at any test): the candidate with the highest mean
-   CV AUROC on the age-matched labeled train+val subjects of split_deploy.
+1. Selection (fixed before looking at any test): the seed ensemble with the highest
+   ``mean3 = (AUROC + AUPR + F1-macro) / 3`` on the representative CV: probes fit on the
+   age-matched labeled train+val folds score, out of fold, those subjects and the SSL-only
+   AD/HC subjects of train (702 subjects, cohort prevalence 23 % AD and real ages).
+   Until 2026-11-07 (ad_mri_v1) it was the AUROC on the age-matched 50/50 subjects only.
 2. Final probe per seed: standardization + class-balanced logistic regression on every
-   labeled train+val subject, C = the most regularized within 0.01 of the best 5-fold CV
-   AUROC. The model is the mean of the seeds'
-   probabilities. Operating thresholds from out-of-fold ensemble probabilities: Youden
-   (max sensitivity + specificity) and sensitivity >= 0.80.
+   labeled train+val subject, C by inner 3-fold CV log-loss over probe_protocol.CS. The
+   model is the mean of the seeds' probabilities. Operating thresholds from the
+   representative out-of-fold ensemble probabilities: max F1-macro (the default
+   decision at the cohort prevalence), Youden and sensitivity >= 0.80.
 3. Site calibration (no labels): a new site's embeddings are standardized with that
    site's own mean and SD instead of OASIS3's; measured on ADNI with all 366 subjects and
    with random unlabeled batches of 30/60/120 scans at other AD shares.
 4. Out-of-distribution flag: Mahalanobis distance in the 95 % PCA subspace of the
    training embeddings above their 99th percentile.
-5. Validation: representative OASIS3 test (cohort prevalence and ages, 41 AD + 137 HC),
-   its age-matched subset, and ADNI (another site) raw and site-calibrated; class-
-   stratified bootstrap 95 % CIs; the age-only logistic regression as reference.
+5. Validation: representative CV, representative OASIS3 test (cohort prevalence and
+   ages, 41 AD + 137 HC), its age-matched subset, and ADNI (another site) raw and site-
+   calibrated; class-stratified bootstrap 95 % CIs; age itself as the reference score.
 
 Writes ``<out>/model.json`` (probe, thresholds, OOD and site statistics, cube geometry,
 overrides), ``<out>/encoder_s<seed>.pt``, ``<out>/MODEL_CARD.md`` and ``<out>/validation.json``.
@@ -39,26 +43,30 @@ from pathlib import Path
 
 import numpy as np
 from scipy.special import expit
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import StratifiedKFold
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(ROOT / "src"))
+import probe_protocol as pp  # noqa: E402
 from predict_ad import QC_MARGIN, qc_intensity  # noqa: E402
 from report_bb50 import fast_ap, fast_auc  # noqa: E402
 
 SPLIT = ROOT / "campaign_ssl3d_runpod/split_deploy"
+# label -> (tag, run name without _s<seed>)
 CANDIDATES = {
-    "VICReg · ConvNeXt-T": "vicreg_campaign_augval__geo__bbconvnext_tiny__roi32",
-    "BYOL · ConvNeXt-T": "byol_gn_dp0.3_dq0_wd0.01__noise__bbconvnext_tiny__roi32",
-    "DINOv2 · ViT-S (3 regiones)": "dinov2_campaign__elastic_tio_gpu__bbvit_small__roimulti3",
-    "Sin SSL · ConvNeXt-T": "vicreg_init__bbconvnext_tiny__roi32",
-    "Sin SSL · ResNet-18": "vicreg_init__bbresnet18__roi32",
-    "Sin SSL · ViT-S (3 regiones)": "vicreg_init__bbvit_small__roimulti3",
+    "VICReg · ConvNeXt-T": ("v2_ssl", "vicreg_campaign_augval__geo__bbconvnext_tiny__roi32"),
+    "BYOL · ConvNeXt-T · cabezas BN": ("v2_ssl",
+                                       "byol_wide_dproj0.1__noise__bbconvnext_tiny__roi32"),
+    "BYOL · ResNet-18": ("v2_ssl", "byol_gn_dp0.3_dq0_wd0.01__noise__bbresnet18__roi32"),
+    "BYOL · ConvNeXt-T · cabezas GN (v1, colapsado)": (
+        "dep50_ssl", "byol_gn_dp0.3_dq0_wd0.01__noise__bbconvnext_tiny__roi32"),
+    "DINOv2 · ViT-S (3 regiones)": ("v2_ssl",
+                                    "dinov2_campaign__elastic_tio_gpu__bbvit_small__roimulti3"),
+    "Sin SSL · ConvNeXt-T": ("dep50_init", "vicreg_init__bbconvnext_tiny__roi32"),
+    "Sin SSL · ResNet-18": ("dep50_init", "vicreg_init__bbresnet18__roi32"),
+    "Sin SSL · ViT-S (3 regiones)": ("dep50_init", "vicreg_init__bbvit_small__roimulti3"),
 }
-CS = (0.001, 0.01, 0.1, 1.0, 10.0)
 
 
 # ---------------------------------------------------------------- probe
@@ -66,12 +74,14 @@ class Probe:
     """Standardization + class-balanced logistic regression (numpy parameters)."""
 
     def __init__(self, x: np.ndarray, y: np.ndarray, seed: int = 0) -> None:
-        self.mean, self.sd = x.mean(0), x.std(0) + 1e-6
-        z = (x - self.mean) / self.sd
-        # The most regularized C within 0.01 CV AUROC of the best (fixed before any test).
-        scores = {c: cv_auc(z, y, c, seed) for c in CS}
-        self.c = min(c for c in CS if scores[c] >= max(scores.values()) - 0.01)
-        model = LogisticRegression(C=self.c, class_weight="balanced", max_iter=5000).fit(z, y)
+        del seed  # the inner folds are fixed (probe_protocol.make_probe)
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            pipe = pp.make_probe().fit(x, y)
+        scaler, model = pipe[0], pipe[-1]
+        self.mean, self.sd = scaler.mean_, scaler.scale_
+        self.c = pp.chosen_c(pipe)
         self.coef, self.intercept = model.coef_[0], float(model.intercept_[0])
 
     def proba(self, x: np.ndarray, mean: np.ndarray | None = None,
@@ -82,22 +92,6 @@ class Probe:
     def to_json(self) -> dict:
         return {"mean": self.mean.tolist(), "sd": self.sd.tolist(), "coef": self.coef.tolist(),
                 "intercept": self.intercept, "C": self.c}
-
-
-def cv_auc(z: np.ndarray, y: np.ndarray, c: float, seed: int) -> float:
-    scores = np.zeros(len(y))
-    for tr, te in StratifiedKFold(5, shuffle=True, random_state=seed).split(z, y):
-        model = LogisticRegression(C=c, class_weight="balanced", max_iter=5000).fit(z[tr], y[tr])
-        scores[te] = model.decision_function(z[te])
-    return fast_auc(y, scores)
-
-
-def oof_proba(x: np.ndarray, y: np.ndarray, seed: int) -> np.ndarray:
-    """Out-of-fold probabilities of the whole probe recipe (C chosen inside each fold)."""
-    out = np.zeros(len(y))
-    for tr, te in StratifiedKFold(5, shuffle=True, random_state=100 + seed).split(x, y):
-        out[te] = Probe(x[tr], y[tr], seed).proba(x[te])
-    return out
 
 
 class OOD:
@@ -122,8 +116,10 @@ def threshold_metrics(y: np.ndarray, p: np.ndarray, t: float) -> dict:
     tp, fp = int((pred & (y == 1)).sum()), int((pred & (y == 0)).sum())
     fn, tn = int((~pred & (y == 1)).sum()), int((~pred & (y == 0)).sum())
     div = lambda a, b: a / b if b else float("nan")  # noqa: E731
+    f1_pos, f1_neg = div(2 * tp, 2 * tp + fp + fn), div(2 * tn, 2 * tn + fn + fp)
     return {"sensitivity": div(tp, tp + fn), "specificity": div(tn, tn + fp),
             "ppv": div(tp, tp + fp), "npv": div(tn, tn + fn),
+            "f1_macro": (f1_pos + f1_neg) / 2,
             "balanced_accuracy": (div(tp, tp + fn) + div(tn, tn + fp)) / 2,
             "tp": tp, "fp": fp, "fn": fn, "tn": tn}
 
@@ -147,11 +143,11 @@ def with_ci(y: np.ndarray, p: np.ndarray, thresholds: dict[str, float],
 
 
 # ---------------------------------------------------------------- data
-def load_candidate(runs: Path, name: str, tags: list[str]) -> list[dict]:
+def load_candidate(runs: Path, tag: str, name: str) -> list[dict]:
     seeds = []
-    for result in sorted(r for tag in tags for r in runs.glob(f"{tag}/{name}_s*/result.json")):
+    for result in sorted(runs.glob(f"{tag}/{name}_s*/result.json")):
         run = result.parent
-        if not (run / "embeddings.npz").is_file():
+        if not (run / "embeddings.npz").is_file() or not (run / "protocol_v2.json").is_file():
             continue
         doc = json.loads(result.read_text(encoding="utf-8"))
         z = np.load(run / "embeddings.npz")
@@ -168,13 +164,6 @@ def fit_set(seeds: list[dict]) -> tuple[list[np.ndarray], np.ndarray, list[str]]
     for s in seeds[1:]:
         assert list(s["train_subjects"]) + list(s["val_subjects"]) == subjects
     return x_fit, y_fit, subjects
-
-
-def ensemble_oof(seeds: list[dict]) -> np.ndarray:
-    """Out-of-fold probabilities of the deployed recipe: the mean over seeds of each probe."""
-    x_fit, y_fit, _ = fit_set(seeds)
-    return np.mean([oof_proba(x, y_fit, s["seed"]) for x, s in zip(x_fit, seeds, strict=True)],
-                   axis=0)
 
 
 def cache_intensity(cache: str, keys: list[str]) -> np.ndarray:
@@ -226,51 +215,47 @@ def age_matched(subjects: list[str], y: np.ndarray, ages: dict[str, float],
     return np.array(sorted(set(keep)))
 
 
-def age_only(train_subjects, train_y, subjects, ages) -> np.ndarray:
-    x = np.array([[ages[s]] for s in train_subjects])
-    model = LogisticRegression(class_weight="balanced").fit(x, train_y)
-    return model.predict_proba(np.array([[ages[s]] for s in subjects]))[:, 1]
-
-
 # ---------------------------------------------------------------- main
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--runs", type=Path, default=ROOT / "campaign_ssl3d_runpod/deploy/runs")
-    parser.add_argument("--out", type=Path, default=ROOT / "deploy/ad_mri_v1")
+    parser.add_argument("--out", type=Path, default=ROOT / "deploy/ad_mri_v2")
     parser.add_argument("--candidate", default=None, help="force a candidate (default: by CV)")
     parser.add_argument("--reason", default=None,
                         help="why --candidate was forced (Markdown, written into the model card)")
-    parser.add_argument("--tags", nargs="+", default=["dep50_ssl", "dep50_init"],
-                        help="run directories under --runs holding the candidates")
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
-    pool = {label: load_candidate(args.runs, name, args.tags) for label, name in CANDIDATES.items()}
-    pool = {k: v for k, v in pool.items() if v}
-    cv = {k: float(np.mean([s["doc"]["cv_auc"] for s in v])) for k, v in pool.items()}
-    oofs = {k: ensemble_oof(v) for k, v in pool.items()}
-    deploy_cv = {k: fast_auc(fit_set(pool[k])[1], p) for k, p in oofs.items()}
-    lines = ["Selección por AUROC fuera de fold del probe que se despliega (ensamble de las "
-             "semillas, C elegido dentro de cada fold; train+val con etiqueta, emparejados por "
-             "edad). Entre paréntesis, la media del AUROC de CV de cada corrida por separado "
-             "(protocolo de la campaña, que no es lo que se despliega):", ""]
-    lines += [f"- {k}: {deploy_cv[k]:.3f} ({cv[k]:.3f}; {len(pool[k])} semillas)"
-              for k in sorted(deploy_cv, key=deploy_cv.get, reverse=True)]
-    chosen = args.candidate or max(deploy_cv, key=deploy_cv.get)
-    seeds = pool[chosen]
-    lines += ["", f"Elegido: **{chosen}**" + (f" (SSL: {', '.join(args.tags)})" if args.candidate
-                                                 else ""), ""]
+    ages = ages_by_subject()
+    protocol = {label: pp.load_runs(args.runs, tag, name)
+                for label, (tag, name) in CANDIDATES.items()}
+    protocol = {k: v for k, v in protocol.items() if v}
+    ens = {k: pp.ensemble(v, ages) for k, v in protocol.items()}
+    score = {k: e["cv_rep"]["mean3"] for k, e in ens.items()}
+    lines = ["Selección (fijada antes de ver el test): ensamble de las semillas con mayor "
+             "**compuesto = (AUROC + AUPR + F1-macro) / 3** en la CV representativa: los probes "
+             "de cada fold (entrenados con AD/HC emparejados por edad, 50/50) puntúan fuera de "
+             "fold a esos sujetos y a los AD/HC de train que solo vio el SSL; 702 sujetos con la "
+             "prevalencia (23 % AD) y las edades reales de OASIS3, como el test. F1-macro con "
+             "umbral elegido fuera de fold. Compuesto (AUROC / AUPR / F1-macro):", ""]
+    lines += [f"- {k}: **{score[k]:.3f}** ({ens[k]['cv_rep']['auc']:.3f} / "
+              f"{ens[k]['cv_rep']['aupr']:.3f} / {ens[k]['cv_rep']['f1_macro']:.3f}; "
+              f"{len(protocol[k])} semillas)"
+              for k in sorted(score, key=score.get, reverse=True)]
+    chosen = args.candidate or max(score, key=score.get)
+    tag, name = CANDIDATES[chosen]
+    seeds = load_candidate(args.runs, tag, name)
+    lines += ["", f"Elegido: **{chosen}**", ""]
     if args.reason:
         lines += [args.reason, ""]
-    ages = ages_by_subject()
-    # ---- final probes, thresholds, OOD
-    x_fit, y_fit, fit_subjects = fit_set(seeds)
+    # ---- final probes, thresholds (representative out-of-fold ensemble), OOD
+    x_fit, y_fit, _ = fit_set(seeds)
     probes = [Probe(x, y_fit, s["seed"]) for x, s in zip(x_fit, seeds, strict=True)]
-    oof = oofs[chosen]
+    y_rep, oof, n_lab = ens[chosen]["_cv"]
     grid = np.unique(oof)
-    youden = float(max(grid, key=lambda t: sum(threshold_metrics(y_fit, oof, t)[k]
+    youden = float(max(grid, key=lambda t: sum(threshold_metrics(y_rep, oof, t)[k]
                                                for k in ("sensitivity", "specificity"))))
-    sens80 = float(max(t for t in grid if threshold_metrics(y_fit, oof, t)["sensitivity"] >= 0.8))
-    thresholds = {"youden": youden, "sens80": sens80}
+    sens80 = float(max(t for t in grid if threshold_metrics(y_rep, oof, t)["sensitivity"] >= 0.8))
+    thresholds = {"f1": pp.best_f1_threshold(y_rep, oof), "youden": youden, "sens80": sens80}
     oods = [OOD((x - p.mean) / p.sd) for x, p in zip(x_fit, probes, strict=True)]
 
     def ensemble(key: str, site: bool = False, rows: np.ndarray | None = None,
@@ -296,17 +281,20 @@ def main() -> None:
     roi = seeds[0]["doc"]["roi"]
     cache = "multi3_s32" if roi == "multi3" else "hippo_s32"
     qc = qc_range(cache)
-    validation: dict = {"candidate": chosen, "cv_auc": cv, "deploy_cv_auc": deploy_cv,
+    validation: dict = {"candidate": chosen, "selection_mean3": score,
                         "thresholds": thresholds, "qc": qc,
-                        "oof": with_ci(y_fit, oof, thresholds)}
+                        "oof": with_ci(y_rep, oof, thresholds),
+                        "oof_matched": with_ci(y_rep[:n_lab], oof[:n_lab], thresholds)}
+    cv_subjects = protocol[chosen][0]["scores"]["cv_subjects"]
+    validation["age_only_oof"] = with_ci(y_rep, np.array([ages[s] for s in cv_subjects]), {})
     test_y, test_subjects = seeds[0]["test_y"], list(seeds[0]["test_subjects"])
     p_test = ensemble("test")
     validation["oasis3_test"] = with_ci(test_y, p_test, thresholds)
     matched = age_matched(test_subjects, test_y, ages)
     validation["oasis3_test_age_matched"] = with_ci(test_y[matched], p_test[matched], thresholds)
-    age_p = age_only(fit_subjects, y_fit, test_subjects, ages)
-    validation["age_only_test"] = with_ci(test_y, age_p, {"0.5": 0.5})
-    validation["age_only_test_age_matched"] = with_ci(test_y[matched], age_p[matched], {"0.5": 0.5})
+    age_p = np.array([ages[s] for s in test_subjects])  # age itself: older = AD
+    validation["age_only_test"] = with_ci(test_y, age_p, {})
+    validation["age_only_test_age_matched"] = with_ci(test_y[matched], age_p[matched], {})
     validation["ood_rate"] = {"oasis3_test": ood_rate("test")}
     if "adni_x" in seeds[0]:
         adni_y, adni_subjects = seeds[0]["adni_y"], list(seeds[0]["adni_subjects"])
@@ -316,7 +304,7 @@ def main() -> None:
         validation["ood_rate"].update(adni_raw=ood_rate("adni"),
                                       adni_site_calibrated=ood_rate("adni", site=True))
         validation["age_only_adni"] = with_ci(
-            adni_y, age_only(fit_subjects, y_fit, adni_subjects, ages), {"0.5": 0.5})
+            adni_y, np.array([ages[s] for s in adni_subjects]), {})
         # Input QC: scans outside the OASIS3 intensity range are rejected, not scored.
         adni_idx = {r["subject"]: r["idx"] for r in
                     csv.DictReader((SPLIT / "external_adni.csv").open(encoding="utf-8"))}
@@ -328,8 +316,7 @@ def main() -> None:
         validation["adni_qc_site_calibrated"] = with_ci(
             adni_y[ok], ensemble("adni", site=True, rows=ok, calib=ok), thresholds)
         validation["age_only_adni_qc"] = with_ci(
-            adni_y[ok], age_only(fit_subjects, y_fit, list(np.array(adni_subjects)[ok]), ages),
-            {"0.5": 0.5})
+            adni_y[ok], np.array([ages[s] for s in np.array(adni_subjects)[ok]]), {})
         # Calibration from small unlabeled batches with other AD shares (no labels used).
         rng = np.random.default_rng(0)
         pos, neg = np.flatnonzero(adni_y == 1), np.flatnonzero(adni_y == 0)
@@ -360,7 +347,8 @@ def main() -> None:
                                 "var": o.var.tolist(), "threshold": o.threshold}}
                        for s, p, o in zip(seeds, probes, oods, strict=True)],
              "thresholds": thresholds, "qc": {k: qc[k] for k in ("statistic", "lo", "hi")},
-             "training_prevalence": 0.5,
+             "decision_threshold": "f1", "training_prevalence": 0.5,
+             "protocol": "v2 (scripts/probe_protocol.py)",
              "oasis3_prevalence": 203 / 880}
     (args.out / "model.json").write_text(json.dumps(model) + "\n", encoding="utf-8")
     (args.out / "validation.json").write_text(json.dumps(validation, indent=1) + "\n",
@@ -373,20 +361,29 @@ def main() -> None:
 def model_card(chosen: str, v: dict, selection: list[str]) -> str:
     def row(name: str, d: dict) -> str:
         at = d["at"]
-        y, s = at.get("youden", at.get("0.5")), at.get("sens80", {})
+        f, s = at.get("f1"), at.get("sens80")
+        aupr = (f"{d['aupr']:.3f} [{d['aupr_ci'][0]:.3f}, {d['aupr_ci'][1]:.3f}] "
+                f"(azar {d['prevalence']:.2f})")
         return (f"| {name} | {d['n']} ({d['ad']} AD) | {d['auc']:.3f} [{d['auc_ci'][0]:.3f}, "
-                f"{d['auc_ci'][1]:.3f}] | {d['aupr']:.3f} (azar {d['prevalence']:.2f}) | "
-                f"{y['sensitivity']:.2f} / {y['specificity']:.2f} / {y['ppv']:.2f} / {y['npv']:.2f} | "
-                + (f"{s['sensitivity']:.2f} / {s['specificity']:.2f} / {s['ppv']:.2f} |" if s else "— |"))
+                f"{d['auc_ci'][1]:.3f}] | {aupr} | "
+                + (f"{f['f1_macro']:.3f} | {f['sensitivity']:.2f} / {f['specificity']:.2f} / "
+                   f"{f['ppv']:.2f} / {f['npv']:.2f} | " if f else "— | — | ")
+                + (f"{s['sensitivity']:.2f} / {s['specificity']:.2f} / {s['ppv']:.2f} |"
+                   if s else "— |"))
 
+    t = v["thresholds"]
     lines = [f"# Ficha del modelo: AD vs HC desde MRI ({chosen})", "", *selection,
-             "Probe: estandarización + regresión logística balanceada por semilla, ajustada con "
-             "todos los sujetos con etiqueta de train+val (emparejados por edad, 50/50); salida = "
-             "media de las 3 semillas. Umbrales elegidos en predicciones fuera de fold: Youden "
-             f"{v['thresholds']['youden']:.3f}, sensibilidad ≥ 0.80 {v['thresholds']['sens80']:.3f}.",
-             "", "| Conjunto | Sujetos | AUROC [IC 95 %] | AUPR | Youden: sens / espec / PPV / NPV | "
-             "Sens ≥ 0.80: sens / espec / PPV |", "|---|---|---|---|---|---|",
-             row("CV fuera de fold (train+val)", v["oof"]),
+             "Probe: estandarización + regresión logística balanceada por semilla (C por "
+             "log-loss en CV interna), ajustada con todos los sujetos con etiqueta de train+val "
+             "(emparejados por edad, 50/50); salida = media de las semillas. Umbrales elegidos "
+             f"en la CV representativa fuera de fold: F1-macro máximo {t['f1']:.3f} (decisión por "
+             f"defecto), Youden {t['youden']:.3f}, sensibilidad ≥ 0.80 {t['sens80']:.3f}.",
+             "", "| Conjunto | Sujetos | AUROC [IC 95 %] | AUPR [IC 95 %] | F1-macro | "
+             "Umbral F1: sens / espec / PPV / NPV | Sens ≥ 0.80: sens / espec / PPV |",
+             "|---|---|---|---|---|---|---|",
+             row("CV representativa fuera de fold (prevalencia y edades reales)", v["oof"]),
+             row("Solo edad, CV representativa", v["age_only_oof"]),
+             row("CV emparejada por edad (50/50)", v["oof_matched"]),
              row("Test OASIS3 representativo", v["oasis3_test"]),
              row("Test OASIS3 emparejado por edad", v["oasis3_test_age_matched"]),
              row("Solo edad, test OASIS3", v["age_only_test"]),
@@ -423,8 +420,9 @@ def model_card(chosen: str, v: dict, selection: list[str]) -> str:
               "AUROC (ver tabla).",
               "- Entrenado solo con OASIS3 (AD y HC 'puros'); no distingue AD de otras demencias "
               "(LBD, FTD, vascular), que nunca vio con etiqueta.",
-              "- Las probabilidades suponen prevalencia 50/50 (probe balanceado); el PPV real "
-              "depende de la prevalencia del lugar donde se use (ver tabla).",
+              "- Las probabilidades suponen prevalencia 50/50 (probe balanceado); el umbral F1 "
+              "está elegido para la prevalencia de OASIS3 (23 % AD); el PPV real depende de la "
+              "prevalencia del lugar donde se use (ver tabla).",
               "- Validación retrospectiva en dos cohortes de investigación; no es un dispositivo "
               "médico validado ni reemplaza el diagnóstico clínico.", ""]
     return "\n".join(lines)

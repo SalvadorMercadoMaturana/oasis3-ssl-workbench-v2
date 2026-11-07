@@ -25,8 +25,12 @@ regression on the age-matched labeled subjects) and changes what it is scored on
   out-of-fold predictions of the same population. The test uses the threshold that
   maximizes F1-macro on the representative CV predictions (never the test itself).
   F1-macro at 0.5 (the class-balanced prior) is kept as ``f1_macro_05``.
-- **C grid** 1e-5 .. 1 (the old 0.01 .. 10 grid hit its lower edge in ~95 % of folds; the
-  old test probe chose C on 60 validation subjects and over-fit the ImageNet encoders).
+- **C** from 1e-5 .. 1 by inner 3-fold CV *log-loss* (a proper, smooth score) instead of
+  AUROC: the old 0.01 .. 10 grid hit its lower edge in ~95 % of folds, the old test probe
+  chose C on 60 validation subjects (over-fitting the ImageNet encoders), and AUROC on
+  ~78-subject inner folds is a noisy criterion (with the wider grid it picked worse C;
+  log-loss gave a higher representative and age-matched CV for all five encoders tried,
+  +0.004 to +0.05; chosen on CV only).
 - **Age-conditional AUROC** (``auc_age``): the AUROC over AD-HC pairs whose ages differ
   by at most 3 years, i.e. discrimination beyond the age shortcut, defined on any
   population (age itself scores ~0.5 there).
@@ -34,12 +38,13 @@ regression on the age-matched labeled subjects) and changes what it is scored on
   representative CV (prevalence 23 %), so the imbalance-sensitive metrics weigh as
   much as AUROC.
 - The test probe is fit on all labeled train+val subjects (as the deployed one), C by
-  inner 3-fold CV AUROC, instead of train only with C chosen on 60 val subjects.
+  inner 3-fold CV log-loss, instead of train only with C chosen on 60 val subjects.
 """
 
 from __future__ import annotations
 
 import csv
+import json
 import warnings
 from collections import defaultdict
 from pathlib import Path
@@ -227,8 +232,13 @@ def make_probe(cs: tuple[float, ...] = CS) -> Any:
     from sklearn.pipeline import make_pipeline
     from sklearn.preprocessing import StandardScaler
     return make_pipeline(StandardScaler(), LogisticRegressionCV(
-        Cs=list(cs), cv=StratifiedKFold(3, shuffle=True, random_state=0), scoring="roc_auc",
+        Cs=list(cs), cv=StratifiedKFold(3, shuffle=True, random_state=0), scoring="neg_log_loss",
         class_weight="balanced", max_iter=5000))
+
+
+def chosen_c(probe: Any) -> float:
+    model = probe[-1]
+    return float(model.C_[0]) if hasattr(model, "C_") else float(model.C)
 
 
 def probe_oof(x_lab: np.ndarray, y_lab: np.ndarray, x_pool: np.ndarray, plan: np.ndarray
@@ -244,7 +254,7 @@ def probe_oof(x_lab: np.ndarray, y_lab: np.ndarray, x_pool: np.ndarray, plan: np
             for k in np.unique(plan[r]):
                 fit = plan[r, :n_lab] != k
                 probe = make_probe().fit(x_lab[fit], y_lab[fit])
-                chosen.append(float(probe[-1].C_[0]))
+                chosen.append(chosen_c(probe))
                 held = plan[r] == k
                 oof[r, held] = probe.predict_proba(x_all[held])[:, 1]
     return oof, chosen
@@ -284,7 +294,7 @@ def evaluate(lab: tuple, pool: tuple, test: tuple, ages: dict[str, float],
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         probe = make_probe().fit(x_lab, y_lab)
-    out["test_C"] = float(probe[-1].C_[0])
+    out["test_C"] = chosen_c(probe)
     t_rep = out["threshold_rep"]
     p_test = probe.predict_proba(x_test)[:, 1]
     age_test = np.array([ages.get(s, np.nan) for s in s_test])
@@ -327,3 +337,52 @@ def age_reference(y: np.ndarray, subjects: list[str], ages: dict[str, float]) ->
     """Age itself as the score (older = AD): the shortcut available on a population."""
     a = np.array([ages[s] for s in subjects])
     return rank_metrics(np.asarray(y).astype(int), a, a)
+
+
+# ---------------------------------------------------------------- runs and seed ensembles
+def load_runs(runs: Path, tag: str, name: str) -> list[dict]:
+    """Protocol-v2 documents of ``<runs>/<tag>/<name>_s<seed>``, with training curves.
+
+    Frozen-probe runs: ``protocol_v2.json`` (scripts/reeval_deploy.py); supervised runs:
+    ``result.json["protocol_v2"]`` (scripts/train_supervised.py).
+    """
+    docs = []
+    for run in sorted((Path(runs) / tag).glob(f"{name}_s*")):
+        result = run / "result.json"
+        full = json.loads(result.read_text(encoding="utf-8")) if result.is_file() else {}
+        path = run / "protocol_v2.json"
+        doc = (json.loads(path.read_text(encoding="utf-8")) if path.is_file()
+               else full.get("protocol_v2"))
+        if doc is None:
+            continue
+        for key in ("training_metrics", "collapse", "identity", "seed"):
+            doc[key] = full.get(key)
+        doc["run"], doc["dir"] = run.name, run
+        docs.append(doc)
+    return docs
+
+
+def ensemble(docs: list[dict], ages: dict[str, float]) -> dict:
+    """Score the seed ensemble (mean probability over seeds) like a single run."""
+    sc = [d["scores"] for d in docs]
+    first = sc[0]
+    for s in sc[1:]:
+        if s["cv_subjects"] != first["cv_subjects"] or s["test_subjects"] != first["test_subjects"]:
+            raise ValueError("seeds scored different subjects")
+    reps = min(len(s["cv_oof"]) for s in sc)
+    oof = np.mean([np.asarray(s["cv_oof"])[:reps] for s in sc], axis=0)
+    plan = np.asarray(first["plan"])[:reps]
+    y = np.asarray(first["cv_y"])
+    n_lab = first["n_lab"]
+    age_all = np.array([ages.get(s, np.nan) for s in first["cv_subjects"]])
+    out = summarize(y[:n_lab], y[n_lab:], oof, plan, age_all)
+    p_test = np.mean([s["test_p"] for s in sc], axis=0)
+    y_test = np.asarray(first["test_y"])
+    age_test = np.array([ages[s] for s in first["test_subjects"]])
+    out["test"] = held_out(y_test, p_test, out["threshold_rep"], age_test)
+    matched = age_matched_subset(first["test_subjects"], y_test, ages)
+    out["test_agem"] = held_out(y_test[matched], p_test[matched], out["threshold_rep"],
+                                age_test[matched])
+    out["_cv"] = (y, oof.mean(0), n_lab)
+    out["_test"] = (y_test, p_test)
+    return out
