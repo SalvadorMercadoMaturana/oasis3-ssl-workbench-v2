@@ -73,6 +73,25 @@ VARIANTS: dict[str, dict[str, list[str]]] = {
     "dinov2": {"campaign": []},
 }
 
+# DINOv2 sized to this dataset (2026-11-07 diagnosis). The campaign recipe kept DINOv2's
+# 4096 prototypes for 743 training subjects and balanced the teacher targets with
+# Sinkhorn-Knopp over batches of 16 (32 teacher rows): equipartition then forces every row
+# onto >= K/32 = 128 prototypes of its own (teacher entropy 0.65 ln K, every row a different
+# argmax), i.e. per-batch instance discrimination instead of clusters shared by similar
+# anatomy. ``k256``: 256 prototypes in both heads (about one per three subjects, the
+# K/dataset ratio of DINO on ImageNet is ~1/20); ``b64``: batches of 64 (pass
+# ``--batch-size 64``) with the learning rate scaled by sqrt(4); ``t07``: DINOv2's own
+# teacher temperature (0.04 -> 0.07) instead of the 0.01 the batch-16 recipe needed.
+_K256 = ["model.projector.out_dim=256"]
+_LR64 = ["optimizer.lr=2.0e-4"]
+_T07 = ["loss.teacher_temp=0.04", "loss.teacher_temp_final=0.07"]
+VARIANTS["dinov2"].update({
+    "k256": _K256,
+    "b64": _LR64,
+    "b64_k256": _LR64 + _K256,
+    "b64_k256_t07": _LR64 + _K256 + _T07,
+})
+
 # GroupNorm BYOL tuning grid: gn_dp{projector dropout}_dq{predictor dropout}[_wd{weight decay}]
 # (wide heads, GroupNorm in projector and predictor; weight decay default 1e-6).
 for _p in (0.0, 0.1, 0.2, 0.3):
@@ -102,6 +121,9 @@ BACKBONES: dict[str, list[str]] = {
                   "++model.backbone.depth=12", "++model.backbone.num_heads=6",
                   "++model.backbone.drop_path=0.1"],
 }
+# ViT-S starting from Meta's DINOv2 ViT-S/14 (LVD-142M) instead of DeiT-S, same inflation.
+BACKBONES["vit_small_dv2"] = [o.replace("deit_small_in1k", "dinov2_vits14")
+                              for o in BACKBONES["vit_small"]]
 DEFAULT_BACKBONE = {"vicreg": "convnext_tiny", "byol": "resnet18", "dinov2": "vit_small"}
 
 
