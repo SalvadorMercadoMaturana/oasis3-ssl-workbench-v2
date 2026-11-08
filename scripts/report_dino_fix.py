@@ -52,13 +52,27 @@ GROUPS: dict[str, tuple[str, str, str, str]] = {
                  "vicreg_init__bbvit_small__roimulti3"),
     "init_dv2": ("Sin SSL · ViT-S (DINOv2 ViT-S/14)", "init", "dino_fix_init",
                  "dinov2_init__bbvit_small_dv2__roimulti3"),
-    "init_cnx": ("Sin SSL · ConvNeXt-T (3 regiones)", "init", "dep50_init",
+    "init_cnx": ("Sin SSL · ConvNeXt-T", "init", "dep50_init",
                  "vicreg_init__bbconvnext_tiny__roimulti3"),
-    "byol_bn": ("BYOL · ConvNeXt-T (desplegado v2)", "other", "v2_ssl",
+    # the same lines on the hippocampal pair (roi32), the input of VICReg and BYOL
+    "base32": ("DINOv2 actual · hipocampo", "dino", "dino_fix",
+               f"dinov2_campaign__{E}__bbvit_small__roi32"),
+    "b64_k256_32": ("DINOv2 · lote 64 + K 256 · hipocampo", "dino", "dino_fix",
+                    f"dinov2_b64_k256__{E}__bbvit_small__roi32"),
+    "cnx32": ("DINOv2 · lote 64 + K 256 · ConvNeXt-T · hipocampo", "dino", "dino_fix",
+              f"dinov2_b64_k256__{E}__bbconvnext_tiny__roi32"),
+    "init_vit32": ("Sin SSL · ViT-S (DeiT-S) · hipocampo", "init", "dino_fix_init",
+                   "dinov2_init__bbvit_small__roi32"),
+    "init_cnx32": ("Sin SSL · ConvNeXt-T · hipocampo", "init", "dep50_init",
+                   "vicreg_init__bbconvnext_tiny__roi32"),
+    "byol_bn": ("BYOL · ConvNeXt-T · hipocampo (desplegado v2)", "other", "v2_ssl",
                 "byol_wide_dproj0.1__noise__bbconvnext_tiny__roi32"),
-    "sup_convnext": ("Supervisado · ConvNeXt-T", "sup", "v2_sup",
+    "vicreg": ("VICReg · ConvNeXt-T · hipocampo", "other", "v2_ssl",
+               "vicreg_campaign_augval__geo__bbconvnext_tiny__roi32"),
+    "sup_convnext": ("Supervisado · ConvNeXt-T · hipocampo", "sup", "v2_sup",
                      "vicreg_supervised__geo__bbconvnext_tiny__roi32"),
 }
+# Labels without a region are on the three-region input (multi3, 6 channels).
 COLORS = {"dino": base.COLOR["dinov2"], "other": "#2a78d6", "sup": "#6b6b6b", "init": base.BASE}
 DINO_TERMS = (("teacher_entropy_frac", "Entropía del teacher / ln K"),
               ("dino", "Pérdida DINO (CLS)"), ("koleo", "KoLeo"))
@@ -90,12 +104,13 @@ def composite_figure(ens: dict, seeds: dict, keys: list[str]) -> None:
         ref = ens["base"][where]["mean3"]
         ax.axvline(ref, color=base.COLOR["dinov2"], linestyle=":", linewidth=1)
         ax.set_xlim(0.5, 0.8)
-        ax.set_title(f"Compuesto (AUROC + AUPR + F1-macro)/3 — {title}", fontsize=9.5)
+        ax.set_title(title, fontsize=9.5)
         base.style(ax)
     axes[0].set_yticks(range(len(keys)), [GROUPS[k][0] for k in keys], fontsize=8)
     axes[0].invert_yaxis()
-    fig.suptitle("DINOv2 cambiando una cosa a la vez (barra = ensamble de 3 semillas, puntos = "
-                 "semillas; punteada = DINOv2 actual)", fontsize=10.5, color=base.INK)
+    fig.suptitle("Compuesto (AUROC + AUPR + F1-macro)/3 de DINOv2 cambiando una cosa a la vez "
+                 "(barra = ensamble de 3 semillas, puntos = semillas; punteada = DINOv2 actual)",
+                 fontsize=10.5, color=base.INK)
     fig.tight_layout(rect=(0, 0, 1, 0.94))
     fig.savefig(base.FIGURES / "dino_fix_compuesto.png", dpi=150)
     plt.close(fig)
@@ -120,10 +135,11 @@ def monitors_figure(seeds: dict, keys: list[str]) -> None:
         ax.set_title(title, fontsize=9.5)
         ax.set_xlabel("época")
         base.style(ax)
-    axes[0].legend(fontsize=7, frameon=False)
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=4, fontsize=8, frameon=False)
     fig.suptitle("Monitores de DINOv2 en entrenamiento (media de semillas; punteadas = ln K)",
                  fontsize=10.5, color=base.INK)
-    fig.tight_layout(rect=(0, 0, 1, 0.92))
+    fig.tight_layout(rect=(0, 0.13, 1, 0.92))
     fig.savefig(base.FIGURES / "dino_fix_monitores.png", dpi=150)
     plt.close(fig)
 
@@ -141,7 +157,9 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     lines = ["# Por qué DINOv2 rinde menos (split de despliegue, protocolo v2)", "",
              "Cada variante cambia una sola cosa respecto del DINOv2 actual (ViT-S inflado desde "
-             "DeiT-S, 3 regiones, elástica TorchIO, 50 épocas). Compuesto = (AUROC + AUPR + "
+             "DeiT-S, 3 regiones, elástica TorchIO, 50 épocas). Sin región en el nombre = 3 "
+             "regiones (6 canales); «hipocampo» = el par hipocampal de VICReg y BYOL. "
+             "Compuesto = (AUROC + AUPR + "
              "F1-macro)/3 del ensamble de 3 semillas en la CV representativa (702 sujetos, 23 % "
              "AD); el test solo confirma.", "",
              "| Modelo | n | CV rep. AUROC | AUPR | F1-macro | **Compuesto** | Test AUROC | AUPR "
@@ -156,8 +174,12 @@ def main() -> None:
     dino_keys = [k for k in keys if GROUPS[k][1] == "dino"]
     best = max(dino_keys, key=lambda k: ens[k]["cv_rep"]["mean3"])
     pairs = [(k, "base") for k in dino_keys if k != "base"]
-    pairs += [("vicreg_vit", "base"), (best, "init_vit"), (best, "sup_vit"), ("dv2", "init_dv2"),
-              ("init_dv2", "init_vit"), ("cnx", "init_cnx"), (best, "byol_bn"),
+    pairs += [("vicreg_vit", "base"), ("base", "init_vit"), ("base", "sup_vit"),
+              ("dv2", "init_dv2"), ("init_dv2", "init_vit"), ("cnx", "init_cnx"),
+              ("base32", "init_vit32"), ("b64_k256_32", "init_vit32"), ("cnx32", "init_cnx32"),
+              ("init_vit32", "init_vit"), ("init_cnx32", "init_cnx"),
+              (best, "byol_bn"), ("cnx32", "byol_bn"), ("cnx32", "vicreg"),
+              ("base32", "byol_bn"), ("b64_k256_32", "byol_bn"),
               ("vicreg_vit", "sup_vit")]
     pairs = list(dict.fromkeys((a, b) for a, b in pairs if a in ens and b in ens and a != b))
     lines += ["", f"Mejor DINOv2 por CV: **{GROUPS[best][0]}**.", "",
@@ -195,8 +217,8 @@ def main() -> None:
     print("\n".join(lines))
     base.FIGURES.mkdir(parents=True, exist_ok=True)
     composite_figure(ens, seeds, keys)
-    monitors_figure(seeds, [k for k in ("base", "k256", "b64", "b64_k256", "t07", "dv2")
-                            if k in seeds])
+    monitors_figure(seeds, [k for k in ("base", "k256", "b64", "b64_k256", "t07", "dv2",
+                                        "base32") if k in seeds])
 
 
 if __name__ == "__main__":
