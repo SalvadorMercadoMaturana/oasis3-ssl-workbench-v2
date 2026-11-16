@@ -87,8 +87,8 @@ def class_panel(ax: plt.Axes, counts: list[dict], top: float) -> None:
     ax.text(2, top, "Composición por clase (vuelta 0)", fontsize=12, fontweight="bold", color=INK,
             va="center")
     legend = [(AD_C, 1.0, "AD (Alzheimer)"), (HC_C, 1.0, "HC (control sano)"),
-              (OTHER_C, 1.0, "otros diagnósticos"), (AD_C, 0.45, "tono claro = validación")]
-    lx = 38.0
+              (OTHER_C, 1.0, "otros diagnósticos"), (AD_C, 0.45, "tono claro = validación del supervisado")]
+    lx = 32.0
     for color, alpha, text in legend:
         ax.add_patch(FancyBboxPatch((lx, top - 0.9), 1.8, 1.8, boxstyle="round,pad=0,rounding_size=0.3",
                                     fc=color, ec="none", alpha=alpha))
@@ -102,10 +102,13 @@ def class_panel(ax: plt.Axes, counts: list[dict], top: float) -> None:
          [("AD", c["pre_ad"], 1.0), ("HC", c["pre_hc"], 1.0), ("otros", c["other"], 1.0)],
          f"{c['ssl_subjects']} sujetos · {c['ssl_sessions']} sesiones · "
          f"{pct(c['pre_ad'], c['pre_hc'] + c['other'])}"),
+        # protocol v2: the test probe is fit on all labeled train+val subjects; the supervised
+        # network trains on train and picks its epoch on val
         ("Probe lineal y supervisado", "emparejados 1:1 por edad (tramos de 2.5 años)",
-         [("AD", c["lab"], 1.0), ("HC", c["lab"], 1.0), ("gap", 6, 0.0),
-          ("AD", c["val_ad"], 0.45), ("HC", c["val_hc"], 0.45)],
-         f"{c['lab']} + {c['lab']} entrenan · {c['val_ad']} + {c['val_hc']} validan · 50 % AD"),
+         [("AD", c["lab"], 1.0), ("AD", c["val_ad"], 0.45), ("HC", c["lab"], 1.0),
+          ("HC", c["val_hc"], 0.45)],
+         f"probe: los {c['lab'] + c['val_ad'] + c['lab'] + c['val_hc']} juntos · supervisado: entrena "
+         f"{c['lab']} + {c['lab']}, elige época con {c['val_ad']} + {c['val_hc']} · 50 % AD"),
         ("CV representativa", "AD/HC fuera del test, prevalencia y edades reales",
          [("AD", c["cv_ad"], 1.0), ("HC", c["cv_hc"], 1.0)],
          f"{c['cv_ad'] + c['cv_hc']} sujetos · {pct(c['cv_ad'], c['cv_hc'])} · 5 particiones × 5 rep."),
@@ -173,7 +176,8 @@ def fig_split() -> None:
                     color="white" if is_test else INK2, fontweight="bold" if is_test else "normal")
         ax.text(x0 + 5 * (w + gap) + 1.0, y + 2.2,
                 f"SSL: {c['ssl_subjects']} sujetos · {c['ssl_sessions']} sesiones\n"
-                f"probe: {c['lab']} AD + {c['lab']} HC (+ val 30 + 30)", fontsize=8.6, color=INK,
+                f"etiquetados: {c['lab'] + c['val_ad']} AD + {c['lab'] + c['val_hc']} HC "
+                "(emparejados por edad)", fontsize=8.6, color=INK,
                 va="center", linespacing=1.5)
     ax.plot([2, 98], [31.2, 31.2], color="#e1e0d9", lw=1.0)
     class_panel(ax, counts, top=28.4)
@@ -246,7 +250,11 @@ ARCH = {
         "name": "Rotación (pseudo-etiqueta)",
         "subtitle": "receta «geo» + 1 de las 24 rotaciones de 90° del cubo · hipocampos 2×32³",
         "heads": [["Cabeza de rotación", "768 → 2048 → 24", "BN · ReLU · 1.6 M"]],
-        "loss": ["Pérdida", "entropía cruzada", "¿qué rotación se", "aplicó? (24 clases)"],
+        # pretext_module: each of the 2 views gets its own random r in 0..23 (rot90 sequences
+        # covering the 24 proper rotations of the cube), CE over the 24 logits, no smoothing
+        "loss": ["Pérdida de rotación", r"$\mathcal{L} = -\log\ \mathrm{softmax}(z)_r$",
+                 "z = 24 logits de la cabeza", "r = rotación aplicada"],
+        "loss_note": ["entropía cruzada, media sobre", "2 vistas × 16 sujetos; r al azar"],
         "twin": None,
         "chips": ["AdamW · lr 10⁻⁴", "weight decay 10⁻⁶", "warmup 10 ép. → coseno hasta 10⁻⁶",
                   "lote 16 · 50 épocas · bf16", "una sola red: sin copia EMA"],
@@ -322,7 +330,7 @@ def draw_card(fig: plt.Figure, ax: plt.Axes, y0: float, key: str, color: str) ->
     ax.text(6.4, cy - 6.0, "entrada", fontsize=8, color=INK, ha="center", va="top")
     ax.text(6.4, cy - 8.0, "2×32³", fontsize=8, color=INK2, ha="center", va="top")
     if key == "pretext":
-        ax.text(6.4, cy + 6.2, "↻ rotada", fontsize=8, color=title_ink, ha="center", fontweight="bold")
+        ax.text(6.4, cy + 6.2, "↻ rotación r", fontsize=8, color=title_ink, ha="center", fontweight="bold")
     arrow(11.4, cy, 13.4, cy)
     ex0, ex1, ey0, ey1 = 13.6, 52.0, y0 + 8.6, y0 + 25.2
     if spec["twin"]:
