@@ -3,8 +3,9 @@
 
     python scripts/present_final.py
 
-- ``split.png``: the outer 5-fold split (each AD/HC subject is test once; fold 0 =
-  split_deploy) and what the training part of each round is used for.
+- ``split.png``: how the outer folds are built (class x age tertile), the 5 rounds (each
+  AD/HC subject is test once; fold 0 = split_deploy) and the AD/HC composition of what
+  each step uses (SSL, classifier training, representative CV, test).
 - ``metricas.png``: best model of each method (rotation pretext, VICReg, DINOv2, BYOL;
   all ConvNeXt-T 3D on the hippocampal pair 2x32^3) against the fully supervised
   ConvNeXt-T and the frozen ImageNet start (sin SSL); representative CV and test, mean
@@ -17,6 +18,7 @@ Writes ``docs/figures_final/``. Numbers come from scripts/report_outer5.py.
 
 from __future__ import annotations
 
+import csv
 import re
 import sys
 from pathlib import Path
@@ -84,7 +86,7 @@ def class_panel(ax: plt.Axes, counts: list[dict], top: float) -> None:
     c = counts[0]
     scale = 50.0 / c["ssl_subjects"]
     x0 = 27.0
-    ax.text(2, top, "Composición por clase (vuelta 0)", fontsize=12, fontweight="bold", color=INK,
+    ax.text(2, top, "Qué usa cada paso (vuelta 0)", fontsize=12, fontweight="bold", color=INK,
             va="center")
     legend = [(AD_C, 1.0, "AD (Alzheimer)"), (HC_C, 1.0, "HC (control sano)"),
               (OTHER_C, 1.0, "otros diagnósticos"), (AD_C, 0.45, "tono claro = validación del supervisado")]
@@ -97,24 +99,27 @@ def class_panel(ax: plt.Axes, counts: list[dict], top: float) -> None:
         box = t.get_window_extent(ax.figure.canvas.get_renderer()).transformed(ax.transData.inverted())
         lx = box.x1 + 2.6
     pct = lambda ad, hc: f"{100 * ad / (ad + hc):.0f} % AD"  # noqa: E731
+    n_lab = c["lab"] + c["val_ad"] + c["lab"] + c["val_hc"]
     rows = [
-        ("Preentrenamiento SSL", "sin usar etiquetas · todas las sesiones",
+        ("Preentrenamiento SSL", "solo imágenes, sin etiquetas",
          [("AD", c["pre_ad"], 1.0), ("HC", c["pre_hc"], 1.0), ("otros", c["other"], 1.0)],
          f"{c['ssl_subjects']} sujetos · {c['ssl_sessions']} sesiones · "
-         f"{pct(c['pre_ad'], c['pre_hc'] + c['other'])}"),
+         f"{pct(c['pre_ad'], c['pre_hc'] + c['other'])}\n→ entrena el encoder"),
         # protocol v2: the test probe is fit on all labeled train+val subjects; the supervised
         # network trains on train and picks its epoch on val
-        ("Probe lineal y supervisado", "emparejados 1:1 por edad (tramos de 2.5 años)",
+        ("Entrenan el clasificador", "con etiqueta, emparejados 1:1 por edad",
          [("AD", c["lab"], 1.0), ("AD", c["val_ad"], 0.45), ("HC", c["lab"], 1.0),
           ("HC", c["val_hc"], 0.45)],
-         f"probe: los {c['lab'] + c['val_ad'] + c['lab'] + c['val_hc']} juntos · supervisado: entrena "
-         f"{c['lab']} + {c['lab']}, elige época con {c['val_ad']} + {c['val_hc']} · 50 % AD"),
-        ("CV representativa", "AD/HC fuera del test, prevalencia y edades reales",
+         f"probe lineal: los {n_lab} juntos · 50 % AD\nsupervisado: entrena {c['lab']} + {c['lab']}, "
+         f"elige época con {c['val_ad']} + {c['val_hc']}"),
+        ("CV representativa", "elegir modelos · 5 particiones × 5 rep.",
          [("AD", c["cv_ad"], 1.0), ("HC", c["cv_hc"], 1.0)],
-         f"{c['cv_ad'] + c['cv_hc']} sujetos · {pct(c['cv_ad'], c['cv_hc'])} · 5 particiones × 5 rep."),
-        ("Test", "1 sesión por sujeto; nunca visto al entrenar",
+         f"{c['cv_ad'] + c['cv_hc']} sujetos · {pct(c['cv_ad'], c['cv_hc'])}\n"
+         "probe: entrena con 4/5, predice 1/5"),
+        ("Test", "nota final · 1 sesión por sujeto",
          [("AD", c["test_ad"], 1.0), ("HC", c["test_hc"], 1.0)],
-         f"{c['test_ad'] + c['test_hc']} sujetos · {pct(c['test_ad'], c['test_hc'])}"),
+         f"{c['test_ad'] + c['test_hc']} sujetos · {pct(c['test_ad'], c['test_hc'])} · nunca vistos\n"
+         f"probe entrenado con los {n_lab}, se evalúa 1 vez"),
     ]
     colors = {"AD": AD_C, "HC": HC_C, "otros": OTHER_C}
     for i, (head, sub, parts, right) in enumerate(rows):
@@ -131,7 +136,7 @@ def class_panel(ax: plt.Axes, counts: list[dict], top: float) -> None:
                 ax.text(x + w / 2, y, str(n), fontsize=8.6, ha="center", va="center",
                         color=INK if light else "white", fontweight="bold")
             x += w
-        ax.text(x + 1.0, y, right, fontsize=8.8, color=INK, va="center")
+        ax.text(x + 1.0, y, right, fontsize=8.6, color=INK, va="center", linespacing=1.4)
     spread = max(max(r[k] for r in counts) - min(r[k] for r in counts)
                  for k in ("pre_ad", "pre_hc", "lab", "cv_ad", "cv_hc", "test_ad", "test_hc"))
     ax.text(2, top - 5.6 - 4 * 5.6 + 1.6,
@@ -140,24 +145,104 @@ def class_panel(ax: plt.Axes, counts: list[dict], top: float) -> None:
             fontsize=8.2, color=INK2, va="center", style="italic")
 
 
+def fold_tertiles() -> dict[str, dict]:
+    """Test subjects of every outer fold per class and age tertile (cuts over the 880 AD/HC)."""
+    import probe_protocol as pp
+    labels = pp.subject_labels()
+    ages: dict[str, float] = {}
+    tests: dict[int, set[str]] = {}
+    for k in r5.FOLDS:
+        manifest = r5.CAMPAIGN / (f"split_outer5/fold{k}/manifest.csv" if k else "split_deploy/manifest.csv")
+        ages.update(pp.session_ages(manifest))
+        with manifest.open(encoding="utf-8") as stream:
+            tests[k] = {r["subject"] for r in csv.DictReader(stream) if r["split"] == "test"}
+    out = {}
+    for code, name in ((1, "AD"), (0, "HC")):
+        members = [s for k in r5.FOLDS for s in tests[k] if labels.get(s) == code]
+        cuts = np.quantile([ages[s] for s in members], [1 / 3, 2 / 3])
+
+        def tertiles(subjects: list[str]) -> np.ndarray:
+            return np.bincount(np.searchsorted(cuts, [ages[s] for s in subjects], side="right"),  # noqa: B023
+                               minlength=3)
+        out[name] = {"cuts": cuts, "total": tertiles(members),
+                     "folds": [tertiles([s for s in tests[k] if labels.get(s) == code]) for k in r5.FOLDS]}
+    return out
+
+
+def fold_panel(ax: plt.Axes, top: float) -> None:
+    """How the outer folds are built: class x age tertile, each tertile dealt over the 5 folds."""
+    tert = fold_tertiles()
+    ax.text(2, top, "Cómo se arman los 5 pliegues", fontsize=12, fontweight="bold", color=INK, va="center")
+    ax.text(2, top - 3.6, "1 · cada clase se ordena por edad y se corta en 3 tercios", fontsize=9,
+            color=INK2, va="center")
+    fx0, fw, fstep = 47.0, 9.4, 10.2
+    ax.text(fx0, top - 3.6, "2 · cada tercio se baraja y se reparte por turnos entre los 5 pliegues",
+            fontsize=9, color=INK2, va="center")
+    shades = (0.4, 0.7, 1.0)
+
+    def cell(x, y, w, color, alpha, text):
+        ax.add_patch(FancyBboxPatch((x, y - 1.9), w, 3.8, boxstyle="round,pad=0,rounding_size=0.4",
+                                    fc=color, ec="white", lw=1.5, alpha=alpha))
+        ax.text(x + w / 2, y, text, fontsize=7.8, ha="center", va="center", fontweight="bold",
+                color="white" if alpha == 1.0 else INK)
+
+    def years(v: float) -> str:
+        return f"{v:.1f}".rstrip("0").rstrip(".")
+
+    for name, color, y in (("AD", AD_C, top - 8.0), ("HC", HC_C, top - 12.6)):
+        t = tert[name]
+        total = int(t["total"].sum())
+        ax.text(2, y, f"{name}\n{total}", fontsize=9, fontweight="bold", color=INK, va="center",
+                linespacing=1.3)
+        lo, hi = (years(v) for v in t["cuts"])
+        ranges = (f"< {lo} años", f"{lo}–{hi}", f"> {hi} años")
+        x = 7.5
+        for i, n in enumerate(t["total"]):
+            w = 30.0 * n / total
+            cell(x, y, w, color, shades[i], f"{ranges[i]} · {n}")
+            x += w
+        for f in r5.FOLDS:
+            counts = t["folds"][f]
+            x = fx0 + f * fstep
+            for i, n in enumerate(counts):
+                w = fw * n / counts.sum()
+                cell(x, y, w, color, shades[i], str(n))
+                x += w
+    ax.add_patch(FancyArrowPatch((38.6, top - 10.3), (45.8, top - 10.3), arrowstyle="-|>",
+                                 mutation_scale=14, color=INK2, lw=1.4))
+    for f in r5.FOLDS:
+        ad, hc = int(tert["AD"]["folds"][f].sum()), int(tert["HC"]["folds"][f].sum())
+        ax.text(fx0 + f * fstep + fw / 2, top - 15.6, f"pliegue {f}", fontsize=8.6, fontweight="bold",
+                color=INK, ha="center", va="center")
+        ax.text(fx0 + f * fstep + fw / 2, top - 17.6, f"{ad} AD + {hc} HC", fontsize=8, color=INK2,
+                ha="center", va="center")
+    ax.text(2, top - 20.6, "Resultado: todos los pliegues tienen 23 % AD y la misma mezcla de edades. "
+            "El pliegue 0 es el test del modelo desplegado (split_deploy), armado con la misma regla.",
+            fontsize=8.2, color=INK2, va="center", style="italic")
+
+
 def fig_split() -> None:
     counts = split_counts()
     n_ad = sum(c["test_ad"] for c in counts)
     n_hc = sum(c["test_hc"] for c in counts)
     dy = 13.0  # the class panel sits below the fold grid
-    fig = plt.figure(figsize=(13, 7.7))
+    height = 64 + dy + 26.0  # + the fold-building panel above the grid
+    fig = plt.figure(figsize=(13, height / 10))
     ax = fig.add_axes((0, 0, 1, 1))
     ax.set_xlim(0, 100)
-    ax.set_ylim(0, 64 + dy)
+    ax.set_ylim(0, height)
     ax.axis("off")
     test_c, train_c = "#5f6b73", "#e6e4dc"
     x0, w, gap = 13.0, 10.0, 0.5
-    ax.text(2, 60.5 + dy, "Split externo de 5 pliegues (OASIS-3)", fontsize=15, fontweight="bold",
+    ax.text(2, height - 3.5, "Split externo de 5 pliegues (OASIS-3)", fontsize=15, fontweight="bold",
             color=INK, va="center")
-    ax.text(2, 56.8 + dy, f"Los {n_ad + n_hc} sujetos AD/HC ({n_ad} AD + {n_hc} HC) se reparten en 5 "
-            "pliegues por clase y tercil de edad. En cada vuelta un pliegue es test y el resto "
-            "entrena:\ncada sujeto AD/HC es test exactamente una vez; ningún sujeto ni sesión aparece "
-            "en dos splits.", fontsize=9.5, color=INK2, va="center", linespacing=1.5)
+    ax.text(2, height - 7.4, f"Los {n_ad + n_hc} sujetos AD/HC ({n_ad} AD + {n_hc} HC) se reparten en 5 "
+            "pliegues. En cada vuelta un pliegue es test y los otros 4 entrenan: cada sujeto AD/HC es "
+            "test\nexactamente una vez y ningún sujeto ni sesión aparece en dos grupos.", fontsize=9.5,
+            color=INK2, va="center", linespacing=1.5)
+    fold_panel(ax, top=height - 12.8)
+    ax.plot([2, 98], [height - 35.0, height - 35.0], color="#e1e0d9", lw=1.0)
+    ax.text(2, 52.4 + dy, "Las 5 vueltas", fontsize=12, fontweight="bold", color=INK, va="baseline")
     for f in range(5):
         ax.text(x0 + f * (w + gap) + w / 2, 52.4 + dy, f"pliegue {f}", fontsize=9, color=INK2, ha="center")
     for v, c in enumerate(counts):
