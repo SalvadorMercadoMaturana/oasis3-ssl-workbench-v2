@@ -64,34 +64,101 @@ def split_counts() -> list[dict]:
             cells = [c.strip() for c in re.search(rf"^\| {name} \|(.*)$", text, re.M).group(1).split("|")]
             row[name] = cells
         hc_ssl, ad_ssl, other = (int(v) for v in row["train"][3].split("/"))
+        lab = int(row["train"][1])
+        val_hc, val_ad = int(row["val"][1]), int(row["val"][2])
         rows.append({"test_hc": int(row["test"][1]), "test_ad": int(row["test"][2]),
-                     "lab": int(row["train"][1]), "ssl_subjects": int(row["train"][0]),
+                     "lab": lab, "ssl_subjects": int(row["train"][0]),
                      "ssl_sessions": int(row["train"][4]), "other": other,
-                     "ssl_only_ad_hc": hc_ssl + ad_ssl})
+                     "ssl_only_ad_hc": hc_ssl + ad_ssl, "val_hc": val_hc, "val_ad": val_ad,
+                     # SSL trains on the train split (labels unused); CV = all AD/HC outside test
+                     "pre_ad": lab + ad_ssl, "pre_hc": lab + hc_ssl,
+                     "cv_ad": lab + ad_ssl + val_ad, "cv_hc": lab + hc_ssl + val_hc})
     return rows
+
+
+AD_C, HC_C, OTHER_C = "#e34948", "#6250d6", "#c3c2b7"  # validated pair; gray = "otros"
+
+
+def class_panel(ax: plt.Axes, counts: list[dict], top: float) -> None:
+    """AD/HC composition of each use of the data (round 0), one stacked bar per category."""
+    c = counts[0]
+    scale = 50.0 / c["ssl_subjects"]
+    x0 = 27.0
+    ax.text(2, top, "Composición por clase (vuelta 0)", fontsize=12, fontweight="bold", color=INK,
+            va="center")
+    legend = [(AD_C, 1.0, "AD (Alzheimer)"), (HC_C, 1.0, "HC (control sano)"),
+              (OTHER_C, 1.0, "otros diagnósticos"), (AD_C, 0.45, "tono claro = validación")]
+    lx = 38.0
+    for color, alpha, text in legend:
+        ax.add_patch(FancyBboxPatch((lx, top - 0.9), 1.8, 1.8, boxstyle="round,pad=0,rounding_size=0.3",
+                                    fc=color, ec="none", alpha=alpha))
+        t = ax.text(lx + 2.5, top, text, fontsize=9, color=INK, va="center")
+        ax.figure.canvas.draw()
+        box = t.get_window_extent(ax.figure.canvas.get_renderer()).transformed(ax.transData.inverted())
+        lx = box.x1 + 2.6
+    pct = lambda ad, hc: f"{100 * ad / (ad + hc):.0f} % AD"  # noqa: E731
+    rows = [
+        ("Preentrenamiento SSL", "sin usar etiquetas · todas las sesiones",
+         [("AD", c["pre_ad"], 1.0), ("HC", c["pre_hc"], 1.0), ("otros", c["other"], 1.0)],
+         f"{c['ssl_subjects']} sujetos · {c['ssl_sessions']} sesiones · "
+         f"{pct(c['pre_ad'], c['pre_hc'] + c['other'])}"),
+        ("Probe lineal y supervisado", "emparejados 1:1 por edad (tramos de 2.5 años)",
+         [("AD", c["lab"], 1.0), ("HC", c["lab"], 1.0), ("gap", 6, 0.0),
+          ("AD", c["val_ad"], 0.45), ("HC", c["val_hc"], 0.45)],
+         f"{c['lab']} + {c['lab']} entrenan · {c['val_ad']} + {c['val_hc']} validan · 50 % AD"),
+        ("CV representativa", "AD/HC fuera del test, prevalencia y edades reales",
+         [("AD", c["cv_ad"], 1.0), ("HC", c["cv_hc"], 1.0)],
+         f"{c['cv_ad'] + c['cv_hc']} sujetos · {pct(c['cv_ad'], c['cv_hc'])} · 5 particiones × 5 rep."),
+        ("Test", "1 sesión por sujeto; nunca visto al entrenar",
+         [("AD", c["test_ad"], 1.0), ("HC", c["test_hc"], 1.0)],
+         f"{c['test_ad'] + c['test_hc']} sujetos · {pct(c['test_ad'], c['test_hc'])}"),
+    ]
+    colors = {"AD": AD_C, "HC": HC_C, "otros": OTHER_C}
+    for i, (head, sub, parts, right) in enumerate(rows):
+        y = top - 5.6 - i * 5.6
+        ax.text(2, y + 0.75, head, fontsize=10, fontweight="bold", color=INK, va="center")
+        ax.text(2, y - 1.15, sub, fontsize=8, color=INK2, va="center")
+        x = x0
+        for part, n, alpha in parts:
+            w = n * scale
+            if part != "gap":
+                ax.add_patch(FancyBboxPatch((x, y - 1.7), w, 3.4, boxstyle="round,pad=0,rounding_size=0.4",
+                                            fc=colors[part], ec="white", lw=1.5, alpha=alpha))
+                light = alpha < 1 or part == "otros"
+                ax.text(x + w / 2, y, str(n), fontsize=8.6, ha="center", va="center",
+                        color=INK if light else "white", fontweight="bold")
+            x += w
+        ax.text(x + 1.0, y, right, fontsize=8.8, color=INK, va="center")
+    spread = max(max(r[k] for r in counts) - min(r[k] for r in counts)
+                 for k in ("pre_ad", "pre_hc", "lab", "cv_ad", "cv_hc", "test_ad", "test_hc"))
+    ax.text(2, top - 5.6 - 4 * 5.6 + 1.6,
+            f"Vuelta 0 = split_deploy; en las otras 4 vueltas cada cifra cambia en ≤ {spread} sujetos. "
+            "El test de cada vuelta conserva la prevalencia real (23 % AD) y las edades reales.",
+            fontsize=8.2, color=INK2, va="center", style="italic")
 
 
 def fig_split() -> None:
     counts = split_counts()
     n_ad = sum(c["test_ad"] for c in counts)
     n_hc = sum(c["test_hc"] for c in counts)
-    fig = plt.figure(figsize=(13, 6.4))
+    dy = 13.0  # the class panel sits below the fold grid
+    fig = plt.figure(figsize=(13, 7.7))
     ax = fig.add_axes((0, 0, 1, 1))
     ax.set_xlim(0, 100)
-    ax.set_ylim(0, 64)
+    ax.set_ylim(0, 64 + dy)
     ax.axis("off")
     test_c, train_c = "#5f6b73", "#e6e4dc"
     x0, w, gap = 13.0, 10.0, 0.5
-    ax.text(2, 60.5, "Split externo de 5 pliegues (OASIS-3)", fontsize=15, fontweight="bold", color=INK,
-            va="center")
-    ax.text(2, 56.8, f"Los {n_ad + n_hc} sujetos AD/HC ({n_ad} AD + {n_hc} HC) se reparten en 5 "
+    ax.text(2, 60.5 + dy, "Split externo de 5 pliegues (OASIS-3)", fontsize=15, fontweight="bold",
+            color=INK, va="center")
+    ax.text(2, 56.8 + dy, f"Los {n_ad + n_hc} sujetos AD/HC ({n_ad} AD + {n_hc} HC) se reparten en 5 "
             "pliegues por clase y tercil de edad. En cada vuelta un pliegue es test y el resto "
-            "entrena:\ncada sujeto AD/HC es test exactamente una vez.", fontsize=9.5, color=INK2,
-            va="center", linespacing=1.5)
+            "entrena:\ncada sujeto AD/HC es test exactamente una vez; ningún sujeto ni sesión aparece "
+            "en dos splits.", fontsize=9.5, color=INK2, va="center", linespacing=1.5)
     for f in range(5):
-        ax.text(x0 + f * (w + gap) + w / 2, 52.4, f"pliegue {f}", fontsize=9, color=INK2, ha="center")
+        ax.text(x0 + f * (w + gap) + w / 2, 52.4 + dy, f"pliegue {f}", fontsize=9, color=INK2, ha="center")
     for v, c in enumerate(counts):
-        y = 46.0 - v * 6.4
+        y = 46.0 + dy - v * 6.4
         ax.text(x0 - 1.2, y + 2.2, f"Vuelta {v}", fontsize=10, fontweight="bold", color=INK, ha="right",
                 va="center")
         if v == 0:
@@ -108,22 +175,8 @@ def fig_split() -> None:
                 f"SSL: {c['ssl_subjects']} sujetos · {c['ssl_sessions']} sesiones\n"
                 f"probe: {c['lab']} AD + {c['lab']} HC (+ val 30 + 30)", fontsize=8.6, color=INK,
                 va="center", linespacing=1.5)
-    c0 = counts[0]
-    notes = [
-        ("Preentrenamiento SSL (sin etiquetas)",
-         f"todos los sujetos fuera del test y todas sus sesiones (~{c0['ssl_subjects']} sujetos, "
-         f"~{c0['ssl_sessions']} sesiones; incluye {c0['other']} con otros diagnósticos)"),
-        ("Probe lineal y supervisado",
-         "~120 AD + ~120 HC emparejados 1:1 por edad (tramos de 2.5 años) + validación 30 AD + 30 HC"),
-        ("CV representativa",
-         f"los {n_ad + n_hc - c0['test_ad'] - c0['test_hc']} AD/HC fuera del test con la prevalencia "
-         "real (23 % AD) y sus edades reales; 5 particiones internas × 5 repeticiones"),
-        ("Test", "1 sesión por sujeto (la evaluada); ningún sujeto ni sesión aparece en dos splits"),
-    ]
-    for i, (head, body) in enumerate(notes):
-        y = 11.2 - i * 2.9
-        ax.text(2, y, head + ":", fontsize=9, fontweight="bold", color=INK, va="center")
-        ax.text(24, y, body, fontsize=9, color=INK2, va="center")
+    ax.plot([2, 98], [31.2, 31.2], color="#e1e0d9", lw=1.0)
+    class_panel(ax, counts, top=28.4)
     save(fig, "split.png")
 
 
@@ -211,10 +264,13 @@ ARCH = {
         "name": "DINOv2",
         "subtitle": "receta «elastic» (deformación elástica TorchIO) · hipocampos 2×32³",
         "heads": [["Cabeza DINO", "768 → 2048 → 2048 → 256", "→ 256 prototipos · ≈ 6.4 M"]],
-        "loss": ["Pérdida DINOv2", "DINO (Sinkhorn-Knopp)", "+ 0.1 · KoLeo", "temp. 0.1 / 0.01"],
+        # same objective and weights as the ViT-S of split361; a CNN has no patch tokens,
+        # so the iBOT term is 0 (train/ibot = 0.0 in all 50 epochs of the run)
+        "loss": ["Pérdida DINOv2", "DINO + 1·iBOT", "+ 0.1·KoLeo", "temp. 0.1 / 0.01"],
+        "loss_note": ["iBOT = 0 con ConvNeXt", "(no hay tokens de parche)"],
         "twin": "profesor = copia lenta (EMA τ 0.99 → 1), sin gradiente",
         "chips": ["AdamW · lr 2·10⁻⁴", "weight decay 0.04 → 0.2", "warmup 10 ép. → coseno hasta 10⁻⁶",
-                  "lote 64 · 50 épocas · bf16", "sin iBOT (la CNN no tiene parches)"],
+                  "lote 64 · 50 épocas · bf16", "centrado Sinkhorn-Knopp"],
     },
     "byol": {
         "name": "BYOL",
@@ -318,6 +374,9 @@ def draw_card(fig: plt.Figure, ax: plt.Axes, y0: float, key: str, color: str) ->
     for k, text in enumerate(spec["loss"]):
         ax.text((lx0 + lx1) / 2, cy + 4.2 - k * 2.8, text, fontsize=8.3 if k == 0 else 7.8,
                 fontweight="bold" if k == 0 else "normal", ha="center", va="center", zorder=5)
+    for k, text in enumerate(spec.get("loss_note", [])):
+        ax.text((lx0 + lx1) / 2, cy - 7.6 - k * 2.0, text, fontsize=7.2, ha="center", va="top",
+                color=INK2, style="italic", zorder=5)
     renderer = fig.canvas.get_renderer()
     x = 2.6
     for chip in spec["chips"]:
