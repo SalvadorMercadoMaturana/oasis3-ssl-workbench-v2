@@ -244,6 +244,10 @@ AUG_RECIPES: dict[str, dict] = {
         "locked_borders": _TIO["elastic"]["locked_borders"]}},
     # combinations
     "geo": dict(_GEO),
+    # pretext tasks on registered cubes are solved from the coarse layout (2026-11-16):
+    # zoomed (side 0.6-0.92 of the cached cube) random-position crops and +-10 deg tilts make
+    # the orientation / octant cues local
+    "geo_strong": {"side_range": [0.6, 0.92], "centered_crop": False, "affine_degrees": 10.0},
     "artifacts": {"torchio": _one_of(*_ARTIFACTS)},
     "geo_artifacts": {**_GEO, "torchio": _one_of(*_ARTIFACTS)},
     "geo_photo": {**_GEO, "intensity_scale": [0.9, 1.1], "blur_p": 0.3, "blur_sigma": [0.1, 1.0],

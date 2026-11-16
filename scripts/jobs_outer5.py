@@ -84,12 +84,14 @@ def outer() -> list[str]:
     return out
 
 
-def pretext_tune(task: str, aug: str) -> list[str]:
-    grid = ["lr3e-05", "lr0.0003", "lr0.001", "wd0.05", "ls0.1", "h2048"]
-    if "jig" in task:
-        grid += ["gap0", "gap4"]
-    return [line(f"pt_{task}_{t}_{aug}_s{s}", "pretext", f"{task}_{t}", aug, "convnext_tiny", 16,
-                 s, "pretext_tune", DEPLOY, f"--external {ADNI}")
+def pretext_tune(task: str, aug: str, grid: list[str] | None = None) -> list[str]:
+    """``grid`` entries are tuning suffixes of t5_ssl.recipes (``base`` = the task alone)."""
+    if not grid:
+        grid = ["lr3e-05", "lr0.0003", "lr0.001", "wd0.05", "ls0.1", "h2048"]
+        if "jig" in task:
+            grid += ["gap0", "gap4"]
+    return [line(f"pt_{task}_{t}_{aug}_s{s}", "pretext", task if t == "base" else f"{task}_{t}",
+                 aug, "convnext_tiny", 16, s, "pretext_tune", DEPLOY, f"--external {ADNI}")
             for s in SEEDS for t in grid]
 
 
@@ -106,11 +108,12 @@ def main() -> None:
     ap.add_argument("--task", default="rot10_jig100")
     ap.add_argument("--variant", default="rot10_jig100")
     ap.add_argument("--aug", default="geo")
+    ap.add_argument("--grid", nargs="*", default=None)
     args = ap.parse_args()
     lines: list[str] = []
     for phase in args.phases:
         if phase == "pretext_tune":
-            lines += pretext_tune(args.task, args.aug)
+            lines += pretext_tune(args.task, args.aug, args.grid)
         elif phase == "pretext_outer":
             lines += pretext_outer(args.variant, args.aug)
         else:
