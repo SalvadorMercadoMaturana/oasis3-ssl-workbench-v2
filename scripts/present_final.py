@@ -81,68 +81,120 @@ def split_counts() -> list[dict]:
 AD_C, HC_C, OTHER_C = "#e34948", "#6250d6", "#c3c2b7"  # validated pair; gray = "otros"
 
 
-def class_panel(ax: plt.Axes, counts: list[dict], top: float) -> None:
-    """AD/HC composition of each use of the data (round 0), one stacked bar per category."""
+def data_map(ax: plt.Axes, counts: list[dict], top: float) -> float:
+    """Round 0 as one bar of disjoint subject blocks, and which blocks every step uses.
+
+    Block order puts each step's blocks side by side: test | val | labeled train |
+    SSL-only AD/HC | other diagnoses. SSL = labeled train + SSL-only + other; final probe =
+    val + labeled train; CV = val + labeled train (by turns) + SSL-only (predicted only).
+    Returns the y of the last line drawn.
+    """
     c = counts[0]
-    scale = 50.0 / c["ssl_subjects"]
-    x0 = 27.0
-    ax.text(2, top, "Qué usa cada paso (vuelta 0)", fontsize=12, fontweight="bold", color=INK,
-            va="center")
-    legend = [(AD_C, 1.0, "AD (Alzheimer)"), (HC_C, 1.0, "HC (control sano)"),
-              (OTHER_C, 1.0, "otros diagnósticos"), (AD_C, 0.45, "tono claro = validación del supervisado")]
-    lx = 32.0
-    for color, alpha, text in legend:
-        ax.add_patch(FancyBboxPatch((lx, top - 0.9), 1.8, 1.8, boxstyle="round,pad=0,rounding_size=0.3",
-                                    fc=color, ec="none", alpha=alpha))
-        t = ax.text(lx + 2.5, top, text, fontsize=9, color=INK, va="center")
+    blocks = [("test", c["test_ad"], c["test_hc"], 0), ("val", c["val_ad"], c["val_hc"], 0),
+              ("lab", c["lab"], c["lab"], 0),
+              ("pool", c["pre_ad"] - c["lab"], c["pre_hc"] - c["lab"], 0), ("other", 0, 0, c["other"])]
+    x0, x1, bgap = 25.0, 98.0, 0.9
+    total = sum(ad + hc + o for _, ad, hc, o in blocks)
+    scale = (x1 - x0 - bgap * (len(blocks) - 1)) / total
+    edges, x = {}, x0
+    for key, ad, hc, o in blocks:
+        edges[key] = (x, x + (ad + hc + o) * scale)
+        x = edges[key][1] + bgap
+    n_lab = 2 * c["lab"] + c["val_ad"] + c["val_hc"]
+    n_pool = sum(blocks[3][1:3])
+    step_c = "#5f6b73"
+
+    ax.text(2, top, "Qué se usa en cada vuelta (ejemplo: vuelta 0)", fontsize=12, fontweight="bold",
+            color=INK, va="center")
+    # block headers
+    heads = [(("test", "test"), f"Test\n{c['test_ad'] + c['test_hc']} sujetos"),
+             (("val", "lab"), f"Etiquetados, emparejados por edad\n{n_lab} = {2 * c['lab']} + "
+                              f"{c['val_ad'] + c['val_hc']} de validación"),
+             (("pool", "pool"), f"Solo SSL (AD/HC sobrantes)\n{n_pool} = {blocks[3][1]} AD + "
+                                f"{blocks[3][2]} HC"),
+             (("other", "other"), f"Otros dx\n{c['other']}")]
+    ybar = top - 9.0
+    for (a, b), text in heads:
+        xa, xb = edges[a][0], edges[b][1]
+        ax.text((xa + xb) / 2, ybar + 4.0, text, fontsize=8.6, ha="center", va="center", color=INK,
+                linespacing=1.35, fontweight="bold" if a == "test" else "normal")
+    ax.text(2, ybar + 0.7, "Sujetos de la vuelta", fontsize=10, fontweight="bold", color=INK, va="center")
+    ax.text(2, ybar - 1.2, f"{total} = {total - c['other']} AD/HC + {c['other']} otros", fontsize=8,
+            color=INK2, va="center")
+    # the subject bar: AD | HC | other inside every block
+    for key, ad, hc, o in blocks:
+        x = edges[key][0]
+        for n, color in ((ad, AD_C), (hc, HC_C), (o, OTHER_C)):
+            if not n:
+                continue
+            w = n * scale
+            ax.add_patch(FancyBboxPatch((x, ybar - 1.8), w, 3.6, boxstyle="round,pad=0,rounding_size=0.3",
+                                        fc=color, ec="white", lw=1.0))
+            if w >= 1.6:
+                ax.text(x + w / 2, ybar, str(n), fontsize=7.8 if w < 2.6 else 8.4, ha="center",
+                        va="center", fontweight="bold", color=INK if color == OTHER_C else "white")
+            x += w
+    ax.text(sum(edges["val"]) / 2, ybar - 2.4, "val.", fontsize=7.2, color=INK2, ha="center", va="top")
+    # which blocks each step uses
+    steps = [
+        ("Preentrenamiento SSL", "imágenes sin etiqueta",
+         [(("lab", "other"), "fill", f"entrena el encoder · {c['ssl_subjects']} sujetos, "
+                                     f"{c['ssl_sessions']} sesiones")]),
+        ("Probe final", "clasificador lineal, encoder congelado",
+         [(("val", "lab"), "fill", f"entrena el probe · {n_lab}")]),
+        ("Validación (CV)", "elegir modelos · 5 particiones × 5 rep.",
+         [(("val", "lab"), "turns", "por turnos: 4/5 entrenan,\n1/5 se predice"),
+          (("pool", "pool"), "eval", "se reparten en las 5 particiones: solo se predicen")]),
+        ("Test", "nota final, se mira 1 vez",
+         [(("test", "test"), "eval", "el probe final\nlos predice")]),
+    ]
+    y = ybar
+    for head, sub, spans in steps:
+        y -= 6.4
+        ax.text(2, y + 0.75, head, fontsize=10, fontweight="bold", color=INK, va="center")
+        ax.text(2, y - 1.2, sub, fontsize=8, color=INK2, va="center")
+        for (a, b), style, text in spans:
+            xa, xb = edges[a][0], edges[b][1]
+            kw = {"fill": dict(fc=step_c, ec=step_c, lw=1.2),
+                  "turns": dict(fc="white", ec=step_c, lw=1.2, hatch="////"),
+                  "eval": dict(fc="white", ec=step_c, lw=1.4)}[style]
+            ax.add_patch(FancyBboxPatch((xa, y - 2.0), xb - xa, 4.0, boxstyle="round,pad=0,rounding_size=0.5",
+                                        **kw))
+            ax.text((xa + xb) / 2, y, text, fontsize=8.3, ha="center", va="center", linespacing=1.25,
+                    color="white" if style == "fill" else INK, zorder=5,
+                    bbox=None if style != "turns" else {"boxstyle": "round,pad=0.25", "fc": "white",
+                                                        "ec": "none"})
+    # faint guides at the block edges
+    for key, _, _, _ in blocks:
+        for xe in edges[key]:
+            ax.plot([xe, xe], [ybar - 1.9, y - 2.1], color="#e1e0d9", lw=0.8, ls=(0, (2, 2)), zorder=0)
+    # legend
+    y -= 5.0
+    items = [("swatch", AD_C, "AD"), ("swatch", HC_C, "HC"), ("swatch", OTHER_C, "otros diagnósticos"),
+             ("fill", step_c, "entrena con ellos"), ("turns", step_c, "por turnos (entrena 4/5, predice 1/5)"),
+             ("eval", step_c, "solo se predicen")]
+    lx = 2.0
+    for kind, color, text in items:
+        if kind == "swatch":
+            patch = dict(fc=color, ec="none")
+        else:
+            patch = {"fill": dict(fc=color, ec=color), "turns": dict(fc="white", ec=color, hatch="////"),
+                     "eval": dict(fc="white", ec=color, lw=1.3)}[kind]
+        ax.add_patch(FancyBboxPatch((lx, y - 0.9), 2.6 if kind != "swatch" else 1.8, 1.8,
+                                    boxstyle="round,pad=0,rounding_size=0.3", **patch))
+        t = ax.text(lx + (3.3 if kind != "swatch" else 2.5), y, text, fontsize=8.8, color=INK, va="center")
         ax.figure.canvas.draw()
         box = t.get_window_extent(ax.figure.canvas.get_renderer()).transformed(ax.transData.inverted())
-        lx = box.x1 + 2.6
-    pct = lambda ad, hc: f"{100 * ad / (ad + hc):.0f} % AD"  # noqa: E731
-    n_lab = c["lab"] + c["val_ad"] + c["lab"] + c["val_hc"]
-    rows = [
-        ("Preentrenamiento SSL", "solo imágenes, sin etiquetas",
-         [("AD", c["pre_ad"], 1.0), ("HC", c["pre_hc"], 1.0), ("otros", c["other"], 1.0)],
-         f"{c['ssl_subjects']} sujetos · {c['ssl_sessions']} sesiones · "
-         f"{pct(c['pre_ad'], c['pre_hc'] + c['other'])}\n→ entrena el encoder"),
-        # protocol v2: the test probe is fit on all labeled train+val subjects; the supervised
-        # network trains on train and picks its epoch on val
-        ("Entrenan el clasificador", "con etiqueta, emparejados 1:1 por edad",
-         [("AD", c["lab"], 1.0), ("AD", c["val_ad"], 0.45), ("HC", c["lab"], 1.0),
-          ("HC", c["val_hc"], 0.45)],
-         f"probe lineal: los {n_lab} juntos · 50 % AD\nsupervisado: entrena {c['lab']} + {c['lab']}, "
-         f"elige época con {c['val_ad']} + {c['val_hc']}"),
-        ("CV representativa", "elegir modelos · 5 particiones × 5 rep.",
-         [("AD", c["cv_ad"], 1.0), ("HC", c["cv_hc"], 1.0)],
-         f"{c['cv_ad'] + c['cv_hc']} sujetos · {pct(c['cv_ad'], c['cv_hc'])}\n"
-         "probe: entrena con 4/5, predice 1/5"),
-        ("Test", "nota final · 1 sesión por sujeto",
-         [("AD", c["test_ad"], 1.0), ("HC", c["test_hc"], 1.0)],
-         f"{c['test_ad'] + c['test_hc']} sujetos · {pct(c['test_ad'], c['test_hc'])} · nunca vistos\n"
-         f"probe entrenado con los {n_lab}, se evalúa 1 vez"),
-    ]
-    colors = {"AD": AD_C, "HC": HC_C, "otros": OTHER_C}
-    for i, (head, sub, parts, right) in enumerate(rows):
-        y = top - 5.6 - i * 5.6
-        ax.text(2, y + 0.75, head, fontsize=10, fontweight="bold", color=INK, va="center")
-        ax.text(2, y - 1.15, sub, fontsize=8, color=INK2, va="center")
-        x = x0
-        for part, n, alpha in parts:
-            w = n * scale
-            if part != "gap":
-                ax.add_patch(FancyBboxPatch((x, y - 1.7), w, 3.4, boxstyle="round,pad=0,rounding_size=0.4",
-                                            fc=colors[part], ec="white", lw=1.5, alpha=alpha))
-                light = alpha < 1 or part == "otros"
-                ax.text(x + w / 2, y, str(n), fontsize=8.6, ha="center", va="center",
-                        color=INK if light else "white", fontweight="bold")
-            x += w
-        ax.text(x + 1.0, y, right, fontsize=8.6, color=INK, va="center", linespacing=1.4)
+        lx = box.x1 + 2.4
+    y -= 3.2
     spread = max(max(r[k] for r in counts) - min(r[k] for r in counts)
                  for k in ("pre_ad", "pre_hc", "lab", "cv_ad", "cv_hc", "test_ad", "test_hc"))
-    ax.text(2, top - 5.6 - 4 * 5.6 + 1.6,
-            f"Vuelta 0 = split_deploy; en las otras 4 vueltas cada cifra cambia en ≤ {spread} sujetos. "
-            "El test de cada vuelta conserva la prevalencia real (23 % AD) y las edades reales.",
-            fontsize=8.2, color=INK2, va="center", style="italic")
+    ax.text(2, y, f"El supervisado no usa probe: entrena la red completa con los {2 * c['lab']} etiquetados "
+            f"y elige la época con los {c['val_ad'] + c['val_hc']} de validación (en la CV, una red por "
+            f"partición).\nLas otras 4 vueltas tienen la misma estructura (cada cifra cambia en ≤ {spread} "
+            "sujetos). Ningún sujeto de test entra en el SSL, el probe ni la CV.",
+            fontsize=8.2, color=INK2, va="center", style="italic", linespacing=1.5)
+    return y - 1.5
 
 
 def fold_tertiles() -> dict[str, dict]:
@@ -225,7 +277,7 @@ def fig_split() -> None:
     counts = split_counts()
     n_ad = sum(c["test_ad"] for c in counts)
     n_hc = sum(c["test_hc"] for c in counts)
-    dy = 13.0  # the class panel sits below the fold grid
+    dy = 30.6  # the data map sits below the fold grid
     height = 64 + dy + 26.0  # + the fold-building panel above the grid
     fig = plt.figure(figsize=(13, height / 10))
     ax = fig.add_axes((0, 0, 1, 1))
@@ -264,8 +316,8 @@ def fig_split() -> None:
                 f"etiquetados: {c['lab'] + c['val_ad']} AD + {c['lab'] + c['val_hc']} HC "
                 "(emparejados por edad)", fontsize=8.6, color=INK,
                 va="center", linespacing=1.5)
-    ax.plot([2, 98], [31.2, 31.2], color="#e1e0d9", lw=1.0)
-    class_panel(ax, counts, top=28.4)
+    ax.plot([2, 98], [48.8, 48.8], color="#e1e0d9", lw=1.0)
+    data_map(ax, counts, top=46.0)
     save(fig, "split.png")
 
 
@@ -283,7 +335,7 @@ def load_models() -> dict[str, dict]:
 
 def fig_metrics(models: dict[str, dict]) -> None:
     cols = (("auc", "AUROC"), ("f1_macro", "F1-macro"), ("aupr", "AUPR"))
-    rows = (("cv_rep", "CV representativa"), ("test", "Test"))
+    rows = (("cv_rep", "Validación (CV)"), ("test", "Test"))
     bars = [(SUP, "sup"), *[(m, "ssl") for m in METHODS], (INIT, "init")]
     xs = [0.0, 1.3, 2.3, 3.3, 4.3, 5.6]
     fig, axes = plt.subplots(2, 3, figsize=(16.5, 9.4), sharey="col")
