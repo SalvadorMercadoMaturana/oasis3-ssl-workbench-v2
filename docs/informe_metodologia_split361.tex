@@ -1,0 +1,1485 @@
+\documentclass[11pt,a4paper]{article}
+
+% ============================================================
+%  Metodología completa del último entrenamiento (split 361/63/84, 100 épocas):
+%  ingesta de datos, arquitecturas capa por capa, pesos de partida, inflado 2D -> 3D,
+%  resultados esperados y cómo se calcula cada número.
+%  Figuras nuevas: python scripts/build_report_metodologia.py
+%  (las demás vienen de build_report_split361.py, report_split361_100.py y
+%  analyze_latent_split361.py; ver el apéndice).
+%  Compilar desde docs/: pdflatex informe_metodologia_split361.tex (dos veces)
+% ============================================================
+
+\usepackage[a4paper,margin=2.2cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[spanish,es-noshorthands]{babel}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{multirow}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{placeins}
+\usepackage{tocloft}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage[most]{tcolorbox}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,backgrounds,calc}
+
+\definecolor{primaryblue}{HTML}{1B4F72}
+\definecolor{steelblue}{HTML}{2E86AB}
+\definecolor{accentorange}{HTML}{E67E22}
+\definecolor{softgray}{HTML}{85929E}
+\definecolor{panelbg}{HTML}{EAF2F8}
+\definecolor{warnbg}{HTML}{FDEBD0}
+\definecolor{tldrbg}{HTML}{EBF5FB}
+\definecolor{vicregc}{HTML}{2A78D6}
+\definecolor{byolc}{HTML}{EB6834}
+\definecolor{dinoc}{HTML}{1BAF7A}
+\definecolor{supc}{HTML}{52514E}
+\definecolor{okc}{HTML}{1E8449}
+\definecolor{noc}{HTML}{B03A2E}
+\definecolor{midc}{HTML}{B9770E}
+
+\usepackage{xurl}
+\usepackage[colorlinks=true,linkcolor=primaryblue,citecolor=primaryblue,urlcolor=steelblue]{hyperref}
+
+\newtcolorbox{tldrbox}[1][En una frase]{colback=tldrbg,colframe=primaryblue,coltitle=white,
+  colbacktitle=primaryblue,fonttitle=\bfseries,boxrule=0.9pt,arc=3pt,
+  left=8pt,right=8pt,top=5pt,bottom=5pt,title=#1}
+\newtcolorbox{ideabox}[1][Idea clave]{colback=panelbg,colframe=steelblue,coltitle=white,
+  colbacktitle=steelblue,fonttitle=\bfseries,boxrule=0.8pt,arc=2pt,
+  left=8pt,right=8pt,top=5pt,bottom=5pt,title=#1}
+\newtcolorbox{warnbox}[1][Ojo con esto]{colback=warnbg,colframe=accentorange,coltitle=white,
+  colbacktitle=accentorange,fonttitle=\bfseries,boxrule=0.8pt,arc=2pt,
+  left=8pt,right=8pt,top=5pt,bottom=5pt,title=#1}
+
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.5pt}
+\fancyhead[L]{\small\color{softgray}Metodología · split 361/63/84 · 100 épocas}
+\fancyhead[R]{\small\color{softgray}VICReg / BYOL / DINOv2}
+\fancyfoot[C]{\small\thepage}
+\setlength{\headheight}{14pt}
+
+\titleformat{\section}{\normalfont\Large\bfseries\color{primaryblue}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalfont\large\bfseries\color{steelblue}}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\normalfont\normalsize\bfseries\color{primaryblue}}{\thesubsubsection}{0.6em}{}
+
+\graphicspath{{figures_split361/}}
+\setlength{\parskip}{4pt}
+\setlength{\parindent}{0pt}
+\setlength{\emergencystretch}{3em}
+\setlist[itemize]{topsep=2pt,itemsep=2pt}
+\setlist[enumerate]{topsep=2pt,itemsep=2pt}
+\captionsetup{font=small,labelfont={bf,color=primaryblue}}
+\renewcommand{\arraystretch}{1.18}
+\setlength{\cftsecnumwidth}{2.2em}
+\setlength{\cftsubsecnumwidth}{3.0em}
+
+\newcommand{\vox}[1]{$#1^3$}
+\newcommand{\si}{\textcolor{okc}{\textbf{sí}}}
+\newcommand{\no}{\textcolor{noc}{\textbf{no}}}
+\newcommand{\parcial}{\textcolor{midc}{\textbf{en parte}}}
+\newcommand{\sig}{$^{*}$}
+
+\tikzset{
+  stage/.style={rectangle, rounded corners=2pt, draw=primaryblue, thick, fill=panelbg,
+    text width=2.55cm, align=center, minimum height=1.25cm, inner sep=3pt, font=\scriptsize},
+  stagew/.style={stage, fill=white},
+  stageo/.style={stage, draw=accentorange, fill=accentorange!8},
+  arr/.style={-{Latex[length=2mm]}, thick, primaryblue},
+  arrg/.style={-{Latex[length=2mm]}, thick, softgray},
+  lane/.style={rectangle, rounded corners=2pt, draw=#1, thick, fill=#1!7, text width=3.35cm,
+    align=left, minimum height=2.9cm, inner sep=4pt, font=\scriptsize, anchor=north},
+}
+
+\begin{document}
+
+% ============================================================
+\begin{titlepage}
+\centering
+\vspace*{0.8cm}
+{\Huge\bfseries\color{primaryblue} SSL 3D en OASIS3}\\[8pt]
+{\Large\color{steelblue} Metodología completa del último entrenamiento\\
+split 361/63/84 · 100 épocas}\\[20pt]
+\begin{tikzpicture}\draw[primaryblue, thick] (0,0) -- (11,0);\end{tikzpicture}
+
+\vspace{14pt}
+{\large \textit{Qué entra a cada red, qué le pasa a cada dato en cada capa,\\
+de dónde salen los pesos, qué esperábamos y cómo se calcula cada número.}}
+
+\vspace{22pt}
+\includegraphics[width=0.95\textwidth]{ingesta_3d.png}
+
+\vspace{14pt}
+\begin{tcolorbox}[colback=panelbg,colframe=primaryblue,arc=4pt,width=0.92\textwidth,
+  boxrule=1pt, left=14pt,right=14pt,top=8pt,bottom=8pt]
+\begin{center}
+\textbf{oasis3-ssl-workbench · \texttt{campaign\_ssl3d\_runpod/split361\_100}}\\[4pt]
+\small 508 sujetos, split por sujeto 361/63/84 · VICReg, BYOL y DINOv2 con su receta campeona\\
+100 épocas · 3 semillas · comparados con el supervisado completo, el encoder sin SSL\\
+y el mismo encoder con pesos aleatorios
+\end{center}
+\end{tcolorbox}
+\vfill
+{\small 9 de octubre de 2026}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ============================================================
+\section{Cómo leer este documento}
+% ============================================================
+
+El documento sigue a un dato desde la resonancia hasta el número final. Primero se describe qué
+volumen se recorta y cómo se convierte en un tensor (Secciones~\ref{sec:data}--\ref{sec:views}).
+Después, de dónde salen los pesos de cada red y cómo se pasan de 2D a 3D
+(Secciones~\ref{sec:weights}--\ref{sec:inflate}). Luego, qué hace cada capa con ese tensor
+(Sección~\ref{sec:arch}), qué se compara (Sección~\ref{sec:conditions}) y cómo se calcula cada
+métrica (Sección~\ref{sec:metrics}). Al final están los resultados esperados
+(Sección~\ref{sec:expected}) y los obtenidos (Sección~\ref{sec:results}). No se explica la teoría
+de cada método SSL; solo qué se calcula.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm]
+\node[stage] (mri) at (0,0) {\textbf{Resonancia T1}\\$97\times115\times97$ vóxeles\\de 2\,mm (MNI)};
+\node[stage] (cube) at (3.1,0) {\textbf{Cubos fijos}\\$38^3$ guardados,\\$32^3$ evaluados};
+\node[stage] (tensor) at (6.2,0) {\textbf{Tensor}\\$2\times32^3$ (CNN) o\\$6\times32^3$ (ViT)};
+\node[stage] (views) at (9.3,0) {\textbf{Dos vistas}\\augmentation 3D\\de cada sujeto};
+\node[stagew] (enc) at (9.3,-2.1) {\textbf{Encoder 3D}\\ConvNeXt, ResNet\\o ViT};
+\node[stagew] (heads) at (6.2,-2.1) {\textbf{Cabezas}\\(solo para\\entrenar)};
+\node[stageo] (loss) at (3.1,-2.1) {\textbf{Pérdida SSL}\\sin etiquetas};
+\node[stage] (clean) at (0,-4.9) {\textbf{Cubo limpio}\\$32^3$ central, sin\\augmentation};
+\node[stagew] (frozen) at (3.1,-4.9) {\textbf{Encoder}\\congelado, tras\\100 épocas};
+\node[stage] (vec) at (6.2,-4.9) {\textbf{Un vector}\\por sujeto\\(768/512/384)};
+\node[stageo] (probe) at (9.3,-4.9) {\textbf{Probe lineal}\\AD vs HC $\rightarrow$\\AUROC, F1, AUPR};
+\draw[arr] (mri) -- (cube); \draw[arr] (cube) -- (tensor); \draw[arr] (tensor) -- (views);
+\draw[arr] (views) -- (enc); \draw[arr] (enc) -- (heads); \draw[arr] (heads) -- (loss);
+\draw[arr, dashed] (loss.south) -- ++(0,-0.32) -| node[pos=0.25, below, font=\scriptsize, text=primaryblue]
+  {la pérdida actualiza encoder y cabezas} (enc.south);
+\draw[arrg] (clean) -- (frozen); \draw[arrg] (frozen) -- (vec); \draw[arrg] (vec) -- (probe);
+\node[font=\scriptsize\bfseries, text=primaryblue, anchor=west] at (-1.3,1.05) {Entrenamiento SSL (sin etiquetas)};
+\node[font=\scriptsize\bfseries, text=softgray, anchor=west] at (-1.3,-3.9) {Evaluación (con etiquetas AD/HC)};
+\end{tikzpicture}
+\caption{El flujo completo. Arriba, el entrenamiento SSL: solo ve imágenes, nunca el
+diagnóstico. Abajo, la evaluación: el encoder ya no cambia y una regresión logística (el
+\emph{probe}) mide qué tan bien su vector separa Alzheimer (AD) de controles sanos (HC).}
+\label{fig:flow}
+\end{figure}
+
+\begin{ideabox}[Vocabulario mínimo]
+\begin{itemize}[leftmargin=12pt]
+\item \textbf{Vóxel}: el píxel en 3D; aquí mide $2\times2\times2$\,mm.
+\item \textbf{Cubo}: un trozo de la resonancia de $32\times32\times32$ vóxeles (64\,mm de lado).
+\item \textbf{Canal}: una de las capas apiladas de la entrada, como R, G y B en una foto. Aquí
+  cada canal es un cubo de una región distinta.
+\item \textbf{Vista}: una copia del cubo transformada al azar (recortada, con ruido, deformada).
+  Los métodos SSL aprenden comparando dos vistas del mismo sujeto.
+\item \textbf{Encoder}: la red que convierte el cubo en un vector (la representación o
+  \emph{embedding}). Es lo único que se conserva tras el SSL.
+\item \textbf{Cabezas} (proyector, predictor, cabezas DINO): capas extra que solo existen para
+  calcular la pérdida; se descartan al evaluar.
+\item \textbf{Probe}: una regresión logística entrenada sobre los vectores del encoder congelado.
+\item \textbf{Época}: una pasada por los 361 sujetos de entrenamiento. \textbf{Lote}: 16 sujetos.
+  \textbf{Semilla}: el número que fija el azar; cada modelo se entrenó con 3 semillas.
+\end{itemize}
+\end{ideabox}
+
+% ============================================================
+\section{Qué se entrenó en la última campaña}
+\label{sec:campaign}
+% ============================================================
+
+\begin{tldrbox}
+Los tres modelos SSL campeones, 100 épocas y 3 semillas cada uno, más tres referencias con el mismo
+encoder: entrenado de forma supervisada, sin SSL y con pesos aleatorios.
+\end{tldrbox}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{4.2cm}r}
+\toprule
+Corrida & Qué es & Nombre en disco & Semillas \\
+\midrule
+SSL \textcolor{vicregc}{\textbf{VICReg}} & ConvNeXt-T 3D, hipocampos $2\times32^3$, receta \texttt{geo}, validación con vistas aumentadas & \nolinkurl{vicreg_campaign_augval__geo__roi32} & 3 \\
+SSL \textcolor{byolc}{\textbf{BYOL}} & ResNet-18 3D, hipocampos $2\times32^3$, receta \texttt{noise}, cabezas con GroupNorm & \nolinkurl{byol_gn_dp0.3_dq0_wd0.01__noise__roi32} & 3 \\
+SSL \textcolor{dinoc}{\textbf{DINOv2}} & ViT-S 3D, 3 regiones $6\times32^3$, receta \texttt{elastic} + máscaras iBOT & \nolinkurl{dinov2_campaign__elastic__roimulti3} & 3 \\
+\midrule
+Supervisado & El mismo encoder + una capa lineal, entrenados con las etiquetas AD/HC & \nolinkurl{<modelo>_supervised__*} & 3 \\
+Sin SSL & El encoder \emph{antes} del SSL (pesos ImageNet inflados), congelado & \nolinkurl{split361_30/<modelo>_init__*} & 1 \\
+Aleatorio (ref.) & El mismo encoder con pesos aleatorios, congelado & \nolinkurl{split361_100/<modelo>_init__*} & 3 \\
+\bottomrule
+\end{tabularx}
+\caption{Las corridas de \nolinkurl{campaign_ssl3d_runpod/split361_100} (más la corrida sin SSL, que
+está en \texttt{split361\_30} con el mismo split y el mismo probe). RTX 5090 en RunPod, precisión
+mixta bf16, 2.16 USD en total.}
+\label{tab:runs}
+\end{table}
+
+% ============================================================
+\section{Los datos de partida}
+\label{sec:data}
+% ============================================================
+
+\begin{tldrbox}
+Cada sesión es una resonancia T1 en espacio MNI de $97\times115\times97$ vóxeles de 2\,mm, con su
+segmentación anatómica. Se normaliza a $[0,1]$ y se reparte por sujeto en 361/63/84.
+\end{tldrbox}
+
+\subsection{El volumen}
+
+Los volúmenes vienen del LMDB de OASIS3 del proyecto (\texttt{data/dementia/mni-dataset.lmdb}). Cada
+sesión trae:
+\begin{itemize}
+\item \textbf{\texttt{image}}: la resonancia T1 ya registrada al espacio MNI, en una grilla de
+  $97\times115\times97$ vóxeles de 2\,mm, enteros de 16 bits. Los tres ejes del arreglo son
+  $x$ (izquierda $\rightarrow$ derecha), $y$ (posterior $\rightarrow$ anterior) y $z$ (inferior
+  $\rightarrow$ superior).
+\item \textbf{\texttt{roi}}: la segmentación en la misma grilla, con las etiquetas estilo FreeSurfer
+  (aseg + aparc): 17 y 53 son los hipocampos, 4 y 43 los ventrículos laterales, etc. Solo se usa
+  para \emph{ubicar} los cubos y para medir volúmenes en el análisis del espacio latente; nunca
+  entra a la red.
+\end{itemize}
+
+\textbf{Normalización de intensidad} (\texttt{normalize\_volume}, por volumen): se toman los
+vóxeles distintos de cero, se calculan sus percentiles 1 y 99, y cada vóxel se transforma en
+$(v - p_1)/(p_{99}-p_1)$, recortado a $[0,1]$. El fondo queda en 0. Así todas las resonancias
+quedan en la misma escala, con el tejido entre 0 y 1.
+
+\subsection{El split}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.86\textwidth]{split_balance.png}
+\caption{508 sujetos repartidos \emph{por sujeto}: ninguno aparece en dos conjuntos. Val y test solo
+tienen AD y HC; ``otros'' (sin diagnóstico, Lewy, frontotemporal, vascular o etiqueta ambigua) solo
+entran al SSL, que no usa etiquetas. Estratificado por diagnóstico y tercil de edad (semilla 42).}
+\label{fig:split}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{lrrrrl}
+\toprule
+Split & Sujetos & HC & AD & Otros & Sesiones \\
+\midrule
+Train & 361 & 135 & 131 & 95 & 433 (varias por sujeto) \\
+Val & 63 & 32 & 31 & 0 & 63 (una por sujeto) \\
+Test & 84 & 43 & 41 & 0 & 84 (una por sujeto) \\
+\bottomrule
+\end{tabular}
+\caption{Composición del split (\nolinkurl{campaign_ssl3d_runpod/split_361_63_84/SPLIT.md}).}
+\end{table}
+
+\begin{itemize}
+\item \textbf{Entrenamiento SSL}: en cada época, cada uno de los 361 sujetos aporta \emph{una sesión
+  elegida al azar} entre las suyas. Así una persona con 4 resonancias no pesa 4 veces más.
+\item \textbf{Validación}: los 63 sujetos de val sirven para la pérdida de validación del SSL, para
+  elegir la regularización del probe y para elegir la época del supervisado.
+\item \textbf{Test}: los 84 sujetos de test solo se usan para el número final.
+\end{itemize}
+
+\begin{warnbox}[La edad viene pegada al diagnóstico]
+En los tres conjuntos los AD tienen unos 7 años más que los HC (HC 67--69 años, AD 75--76). Parte de
+lo que separa el probe puede ser envejecimiento y no Alzheimer (Sección~\ref{sec:latent}).
+\end{warnbox}
+
+% ============================================================
+\section{Ingesta: de la resonancia al tensor}
+\label{sec:ingest}
+% ============================================================
+
+\begin{tldrbox}
+De cada resonancia se recortan cubos 3D en posiciones fijas; el del hemisferio derecho se espeja; los
+cubos se apilan como canales. VICReg y BYOL reciben $2\times32\times32\times32$ (los dos
+hipocampos) y DINOv2 $6\times32\times32\times32$ (hipocampo, ventrículo lateral y corteza
+posteromedial, de cada lado). \textbf{Nada de esto es 2D}: la red recibe el volumen completo.
+\end{tldrbox}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{ingesta_3d.png}
+\caption{La ingesta en 3D. \textbf{A}: dónde están los seis cubos dentro del volumen MNI.
+\textbf{B}: el cubo de $38^3$ que se guarda y el de $32^3$ que entra a la red. \textbf{C}: el
+espejado del hemisferio derecho. \textbf{D}: los tensores de entrada; cada cubo está dibujado por sus
+caras exteriores (lo que se ve desde fuera del volumen), no por un corte.}
+\label{fig:ingesta}
+\end{figure}
+
+\subsection{Paso 1: dónde se corta cada cubo}
+
+La posición de cada cubo es \textbf{la misma para todos los sujetos}: el centroide medio de la
+región, calculado una sola vez sobre la segmentación de las sesiones de entrenamiento (429 sesiones
+con segmentación; solo anatomía, nunca el diagnóstico). Con el train del split 361 los centroides
+redondeados dan exactamente las mismas posiciones, por eso la caché se reutilizó. Como las imágenes
+están registradas a MNI, una posición fija cae sobre la misma estructura en todos los cerebros, con
+la variación anatómica natural de cada persona.
+
+Alrededor de cada centroide se recorta un cubo de \textbf{38 vóxeles} de lado
+($38 = \mathrm{round}(1.2\times32)$), que empieza en $\mathrm{round}(\text{centro}) - 19$ en cada
+eje. Ese es el cubo que se guarda en disco (\texttt{data/roi3d/hippo\_s32.npy} y
+\texttt{multi3\_s32.npy}, en float16, 594 sesiones). La red solo ve los \textbf{32 vóxeles
+centrales} (3 de margen por lado): el margen sirve para que los recortes y deformaciones de las
+vistas no salgan del cubo.
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{llrrrr}
+\toprule
+Región & Lado & Centroide $(x,y,z)$ & \multicolumn{3}{c}{Cubo evaluado de $32^3$ (índices de vóxel)} \\
+\cmidrule(lr){4-6}
+ & & & $x$ & $y$ & $z$ \\
+\midrule
+\multirow{2}{*}{Hipocampo} & izq. & (35.4, 54.9, 32.2) & 19--50 & 39--70 & 16--47 \\
+ & der. & (61.2, 55.4, 32.3) & 45--76 & 39--70 & 16--47 \\
+\multirow{2}{*}{Ventrículo lateral} & izq. & (41.3, 58.8, 46.1) & 25--56 & 43--74 & 30--61 \\
+ & der. & (55.2, 59.9, 46.1) & 39--70 & 44--75 & 30--61 \\
+\multirow{2}{*}{Corteza posteromedial} & izq. & (44.5, 42.0, 56.9) & 29--60 & 26--57 & 41--72 \\
+ & der. & (52.4, 42.4, 57.1) & 36--67 & 26--57 & 41--72 \\
+\bottomrule
+\end{tabular}
+\caption{Posiciones exactas (\texttt{data/roi3d/multi3\_s32.json}). La corteza posteromedial es el
+cíngulo posterior e ístmico más el precúneo (etiquetas 1023, 1010, 1025 y sus pares 2xxx). Ojo:
+esa región y el ventrículo están junto a la línea media, así que sus cubos izquierdo y derecho se
+solapan mucho (25 y 18 de 32 vóxeles en $x$); los del hipocampo apenas (6).}
+\label{tab:positions}
+\end{table}
+
+\subsection{Paso 2: el hemisferio derecho se espeja}
+
+El cubo derecho se voltea en el eje $x$ (\texttt{np.flip(cube, axis=0)}) antes de guardarlo
+(Figura~\ref{fig:ingesta}\,C). Así el hipocampo derecho queda orientado igual que el izquierdo, y un
+mismo filtro sirve para ambos. Consecuencia útil: voltear la cabeza de izquierda a derecha equivale
+exactamente a \emph{intercambiar los dos canales de cada par}, que es como se implementa esa
+augmentation.
+
+\subsection{Paso 3: los cubos se apilan como canales}
+
+Los cubos \textbf{no} se pegan uno junto a otro ni se mezclan: se apilan en una dimensión nueva, la
+de canales, igual que R, G y B en una foto.
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l>{\raggedright\arraybackslash}Xll}
+\toprule
+Modelo & Canales, en orden & Tensor por sujeto & Lote de 16 \\
+\midrule
+VICReg y BYOL & 0: hipocampo izq.; 1: hipocampo der. espejado & $2\times32\times32\times32$ & $16\times2\times32\times32\times32$ \\
+DINOv2 & 0: hipocampo izq.; 1: hipocampo der. esp.; 2: ventrículo izq.; 3: ventrículo der. esp.;
+  4: posteromedial izq.; 5: posteromedial der. esp. & $6\times32\times32\times32$ & $16\times6\times32\times32\times32$ \\
+\bottomrule
+\end{tabularx}
+\caption{Los tensores de entrada. Cada número es la intensidad normalizada ($[0,1]$) de un vóxel.}
+\label{tab:tensors}
+\end{table}
+
+\textbf{Cómo DINOv2 llega a 6 canales.} La caché \texttt{multi3\_s32} guarda, por sesión, un
+arreglo de $6\times38\times38\times38$: para cada una de las 3 regiones, el cubo izquierdo y el
+derecho espejado (\texttt{build\_region\_cache}). La primera capa del ViT simplemente acepta 6
+canales de entrada en vez de 3 (Sección~\ref{sec:inflate}). Un detalle importante: como los 6
+cubos se apilan, la posición $(i,j,k)$ de cada canal corresponde a un lugar anatómico
+\emph{distinto} en cada región. Un parche del ViT mezcla, en un solo token, los 6 cubos en la misma
+posición relativa (Figura~\ref{fig:volumes}). La red tiene que aprender qué canal es qué región.
+
+\begin{warnbox}[2D o 3D: la confusión de la presentación]
+Todo el pipeline es 3D. Las figuras con cortes (axial, coronal, sagital) son solo una forma de
+\emph{mostrar} un volumen en papel; la red nunca ve cortes sueltos. Lo único 2D en toda la historia
+son los \textbf{pesos de partida}: vienen de redes entrenadas con fotos 2D de ImageNet y se
+convierten a 3D antes de empezar (Sección~\ref{sec:inflate}). Cuando una figura dice
+``parche $16^2\rightarrow8^3$'' significa eso: el ViT original usaba parches de $16\times16$
+píxeles y el nuestro usa parches cúbicos de $8\times8\times8$ vóxeles.
+\end{warnbox}
+
+% ============================================================
+\section{Las vistas: qué augmentation recibe cada modelo}
+\label{sec:views}
+% ============================================================
+
+\begin{tldrbox}
+Cada sujeto del lote produce dos vistas al azar con la receta de su modelo. Todas las operaciones
+son 3D y actúan sobre el cubo de $38^3$ antes de quedarse con $32^3$. El probe, en cambio, siempre
+recibe el cubo central limpio.
+\end{tldrbox}
+
+\subsection{El orden de las operaciones}
+
+\texttt{ROIView3DTransform} genera cada vista en este orden (todas las operaciones existen; cada
+receta activa solo algunas):
+\begin{enumerate}
+\item \textbf{Artefactos de TorchIO} sobre el cubo completo de $38^3$ y sus $C$ canales a la vez
+  (ruido, deformación elástica\ldots).
+\item \textbf{Recorte}: un sub-cubo de lado $s$ vóxeles, en el centro o en una posición al azar.
+\item \textbf{Reescalado} trilineal del sub-cubo a $32^3$ (si $s=32$, no cambia nada).
+\item \textbf{Volteo izquierda--derecha} con probabilidad 0.5: intercambio de los canales de cada par.
+\item \textbf{Rotación} 3D: un ángulo al azar en cada eje, aplicada con \texttt{grid\_sample}
+  (interpolación trilineal, relleno con el borde).
+\item Cambios fotométricos (desenfoque, escala de intensidad): ninguna receta campeona los usa.
+\item \textbf{Recorte a $[0,1]$} de todos los vóxeles.
+\end{enumerate}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X}
+\toprule
+ & \textcolor{vicregc}{\textbf{VICReg · \texttt{geo}}} & \textcolor{byolc}{\textbf{BYOL · \texttt{noise}}} & \textcolor{dinoc}{\textbf{DINOv2 · \texttt{elastic}}} \\
+\midrule
+1. TorchIO & no & \texttt{RandomNoise}: $\sigma\sim U(0,\,0.215)$ por vista, ruido gaussiano independiente en cada vóxel y canal & \nolinkurl{RandomElasticDeformation}: rejilla de $7\times7\times7$ puntos de control, desplazamiento $\leq1.95$ vóxeles (3.9\,mm), bordes fijos; el mismo campo en los 6 canales \\
+2--3. Recorte & sub-cubo de 32 a 35 vóxeles, posición al azar, reescalado a 32 & cubo central de 32 (sin recorte) & cubo central de 32 (sin recorte) \\
+4. Volteo izq.--der. & $p=0.5$ & $p=0.5$ & $p=0.5$ (los 3 pares) \\
+5. Rotación & $\pm5^\circ$ en cada eje & no & no \\
+Además & -- & -- & máscara iBOT sobre los parches, dentro de la red (Sección~\ref{sec:vit}) \\
+\bottomrule
+\end{tabularx}
+\caption{Las recetas campeonas (\texttt{t5\_ssl.recipes.AUG\_RECIPES}). La intensidad del ruido y de
+la deformación está calibrada para alterar el cubo lo mismo (RMSE 0.08). Como el ruido se suma antes
+de recortar a $[0,1]$, en el fondo (que vale 0) solo sobrevive el ruido positivo.}
+\label{tab:aug}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.78\textwidth]{views.png}
+\caption{Cubo limpio (lo que ve el probe) y dos vistas de cada receta, para el canal del hipocampo
+izquierdo de un sujeto de validación. Cada imagen apila los cortes centrales de los tres planos
+\emph{del mismo volumen}: solo es una forma de dibujarlo.}
+\label{fig:views}
+\end{figure}
+
+\subsection{Qué vistas se usan en cada momento}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l>{\raggedright\arraybackslash}X}
+\toprule
+Momento & Entrada \\
+\midrule
+Entrenamiento SSL & Dos vistas al azar de la receta, nuevas en cada época. \\
+Pérdida de validación SSL & VICReg: dos vistas de la receta, fijas por sesión (misma semilla en cada
+  época, \texttt{val\_views=train}). BYOL y DINOv2: el cubo limpio y su espejo izquierda--derecha. \\
+Probe, monitor de colapso, espacio latente & El cubo central de $32^3$, sin ninguna augmentation ni
+  volteo (\texttt{ROIEval3D}). \\
+Supervisado (entrenamiento) & Una sola vista de la misma receta del modelo. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Lotes y pasos}
+
+Un lote son 16 sujetos. Con 361 sujetos hay 23 lotes por época (22 de 16 y uno de 9): 2300 pasos de
+optimización en 100 épocas. En cada paso las redes procesan:
+\begin{itemize}
+\item \textbf{VICReg}: las dos vistas por el mismo encoder, $2\times16 = 32$ volúmenes.
+\item \textbf{BYOL}: las dos vistas por la red \emph{online} y las dos por la copia \emph{target}:
+  64 pasadas de volumen, de las cuales solo las 32 de la online reciben gradiente.
+\item \textbf{DINOv2}: las dos vistas enmascaradas por el \emph{alumno} y las dos limpias por el
+  \emph{profesor}: también 64, con gradiente solo en el alumno.
+\end{itemize}
+
+% ============================================================
+\section{Los pesos de partida: de dónde salen}
+\label{sec:weights}
+% ============================================================
+
+\begin{tldrbox}
+Los tres encoders arrancan de pesos públicos entrenados con \textbf{fotos naturales de ImageNet-1k
+(clasificación supervisada en 2D)}. Ninguno se entrenó con resonancias ni con imágenes médicas. Se
+convierten a 3D (Sección~\ref{sec:inflate}) y ese es el punto de partida del SSL, del supervisado y
+de la barra ``sin SSL''.
+\end{tldrbox}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l>{\raggedright\arraybackslash}p{3.2cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{3.6cm}}
+\toprule
+Encoder & Pesos & Origen exacto & Con qué se entrenaron \\
+\midrule
+\textcolor{vicregc}{\textbf{ConvNeXt-T}} (VICReg) & torchvision \nolinkurl{ConvNeXt_Tiny_Weights.IMAGENET1K_V1} &
+  \nolinkurl{https://download.pytorch.org/models/convnext_tiny-983f1562.pth} (Liu et al., 2022, \emph{A ConvNet for the 2020s}) &
+  ImageNet-1k, 1.28\,M fotos RGB, 1000 clases; 82.5\,\% top-1 \\
+\textcolor{byolc}{\textbf{ResNet-18}} (BYOL) & torchvision \nolinkurl{ResNet18_Weights.IMAGENET1K_V1} &
+  \nolinkurl{https://download.pytorch.org/models/resnet18-f37072fd.pth} (He et al., 2016) &
+  ImageNet-1k; 69.8\,\% top-1 \\
+\textcolor{dinoc}{\textbf{ViT-S/16}} (DINOv2) & DeiT-S (\nolinkurl{deit_small_patch16_224}) &
+  \nolinkurl{https://dl.fbaipublicfiles.com/deit/deit_small_patch16_224-cd65a155.pth} (Touvron et al., 2021, \emph{Training data-efficient image transformers}) &
+  ImageNet-1k, supervisado, sin destilación; $\approx$80\,\% top-1 \\
+\bottomrule
+\end{tabularx}
+\caption{Los pesos usados. Se descargan una vez a \texttt{\textasciitilde/.cache/torch/hub/checkpoints/}.
+En un host de RunPod que no llegaba a \texttt{download.pytorch.org}, la ResNet-18 se bajó de Hugging
+Face (\texttt{timm/resnet18.tv\_in1k}), que contiene los mismos tensores.}
+\label{tab:weights}
+\end{table}
+
+\begin{itemize}
+\item \textbf{Por qué DeiT-S y no los pesos oficiales de DINOv2.} El código admite también
+  \texttt{dinov2\_vits14} (DINOv2 ViT-S/14, autosupervisado en 142 millones de imágenes
+  naturales), pero la campaña usa DeiT-S para que los tres modelos partan de lo mismo: una red
+  \emph{supervisada en ImageNet-1k}. Así la comparación entre métodos no mezcla puntos de partida.
+\item \textbf{Las cabezas} (proyector, predictor, cabezas DINO) no tienen pesos preentrenados: se
+  inicializan al azar.
+\item \textbf{La referencia ``aleatoria''} usa la arquitectura idéntica con la inicialización por
+  defecto de PyTorch (CNN) o normal truncada con $\sigma=0.02$ (ViT), sin ningún peso de ImageNet.
+\end{itemize}
+
+% ============================================================
+\section{De 2D a 3D: qué se hace exactamente con los pesos}
+\label{sec:inflate}
+% ============================================================
+
+\begin{tldrbox}
+Cada filtro 2D de $k\times k$ se repite $k$ veces en profundidad y se divide por $k$ (``inflado''
+de I3D). Los canales RGB se colapsan en uno gris y se reparten entre los 2 o 6 canales de entrada.
+En el ViT, además, el parche de $16\times16$ se reduce a $8\times8$ (redimensionado de FlexiViT) y
+las posiciones aprendidas se extienden a una rejilla de $4\times4\times4$.
+\end{tldrbox}
+
+\subsection{Las CNN: inflado I3D}
+
+\textbf{Base}: Carreira \& Zisserman (2017), \emph{Quo Vadis, Action Recognition? A New Model and the
+Kinetics Dataset} (CVPR), donde se ``inflan'' redes de ImageNet para video. Código:
+\texttt{src/t5\_ssl/models/backbones/inflate3d.py}.
+
+\begin{enumerate}
+\item \textbf{Cada convolución} \texttt{Conv2d} de $k\times k$ pasa a \texttt{Conv3d} de
+  $k\times k\times k$ con el mismo paso y relleno:
+  \[ W_{3D}[o,i,d,h,w] = \frac{W_{2D}[o,i,h,w]}{k}, \qquad d = 1,\ldots,k. \]
+  Propiedad: un volumen que es constante a lo largo de la profundidad produce, en cada corte, las
+  mismas activaciones que la red 2D sobre ese corte (salvo en los bordes, por el relleno). La red
+  empieza ``sabiendo'' lo mismo que en 2D y el entrenamiento la vuelve verdaderamente 3D.
+\item \textbf{La primera capa} pasa de 3 canales (RGB) a $C$ canales: se suman los tres filtros
+  RGB (la respuesta a una imagen gris) y el resultado se copia en cada uno de los $C$ canales,
+  dividido por $C$:
+  \[ W_{3D}^{\,\text{tallo}}[o,c,d,h,w] = \frac{1}{C\,k}\sum_{\text{RGB}} W_{2D}[o,\text{rgb},h,w]. \]
+\item \textbf{Normalizaciones}: \texttt{BatchNorm2d} $\rightarrow$ \texttt{BatchNorm3d} y
+  \texttt{LayerNorm2d} $\rightarrow$ \texttt{LayerNorm3d}, copiando sus parámetros y estadísticas.
+  El escalado por canal de los bloques ConvNeXt (\emph{layer scale}) se copia con una dimensión
+  más; el promedio global pasa a 3D; se descarta el clasificador de 1000 clases.
+\item \textbf{ResNet-18}: se elimina el \emph{max-pool} del tallo. Con cubos de 32 vóxeles, tallo de
+  paso 2 más max-pool dejarían la última capa en $1^3$.
+\end{enumerate}
+
+\begin{ideabox}[Tres consecuencias que importan]
+\begin{itemize}[leftmargin=12pt]
+\item \textbf{Qué plano ven los filtros 2D.} La profundidad del filtro es el primer eje del cubo, $x$
+  (izquierda--derecha). Los filtros de ImageNet quedan aplicados sobre planos \emph{sagitales}
+  ($y$--$z$) y promediados a lo largo de $x$.
+\item \textbf{Al inicio, la red ve el promedio de los canales.} Todos los canales comparten el
+  mismo filtro, así que la primera capa responde a la suma de los cubos. Intercambiar canales (el
+  volteo izquierda--derecha) no cambia nada al inicio: el SSL tiene que romper esa simetría.
+\item \textbf{Sin normalización de ImageNet en las CNN.} La entrada es $[0,1]$ sin restar la media de
+  ImageNet; la BatchNorm (ResNet) o la LayerNorm (ConvNeXt) tras el tallo reescala las activaciones.
+\end{itemize}
+\end{ideabox}
+
+\subsection{El ViT: inflado del parche y de las posiciones}
+\label{sec:vitinflate}
+
+Código: \texttt{inflate\_patch\_embed} e \texttt{inflate\_pos\_embed} en
+\nolinkurl{src/t5_ssl/models/backbones/vit3d.py}. Son cinco pasos sobre los pesos de DeiT-S:
+
+\begin{enumerate}
+\item \textbf{Normalización de ImageNet absorbida.} DeiT espera cada canal RGB normalizado como
+  $(x-\mu_c)/\sigma_c$. Como nuestra entrada es gris en $[0,1]$, esa resta y división se pasan al
+  filtro: $W_\text{gris} = \sum_c W_c/\sigma_c$ y $b' = b - \sum_c \sum_{h,w} W_c\,\mu_c/\sigma_c$.
+  Es álgebra exacta: el token de un parche gris es el mismo que DeiT daría a ese parche en RGB.
+\item \textbf{De parche $16\times16$ a $8\times8$.} Se resuelve qué filtro de $8\times8$ da, para
+  cada parche, el mismo token que el filtro original da a ese parche \emph{ampliado} a $16\times16$
+  por interpolación bilineal: $W_8 = U^{\top} W_{16}$, donde $U$ es la matriz de esa ampliación
+  ($256\times64$). Equivale a mostrarle a DeiT la imagen con zoom $\times2$. La idea de
+  redimensionar el filtro con el operador de interpolación viene de FlexiViT (Beyer et al., 2023,
+  \emph{FlexiViT: One Model for All Patch Sizes}, CVPR).
+\item \textbf{De $8\times8$ a $8\times8\times8$ y de 1 a 6 canales.} Como en I3D: el filtro se repite
+  8 veces en profundidad y en los 6 canales, y se divide por $8\times6=48$. Es la inicialización por
+  ``inflado de filtros'' del \emph{tubelet embedding} de ViViT (Arnab et al., 2021, \emph{ViViT: A
+  Video Vision Transformer}, ICCV).
+\item \textbf{Posiciones.} DeiT tiene 196 posiciones aprendidas (una rejilla de $14\times14$) más la
+  del CLS. La rejilla se reduce a $4\times4$ por interpolación bicúbica (lo habitual al cambiar la
+  resolución de un ViT, Dosovitskiy et al., 2021), se repite en las 4 capas de profundidad (como en
+  ViViT) y a cada capa $d$ se le suma el ``código'' centrado de la fila $d$ (el promedio de esa fila
+  de la rejilla). Este último ajuste es propio del repositorio: sirve para que las 64 posiciones 3D
+  empiecen distintas entre sí. La posición del CLS se copia.
+\item \textbf{Todo lo demás se copia sin cambios}: los 12 bloques Transformer, la LayerNorm final y
+  el token CLS. Esos bloques operan sobre una secuencia de tokens y no saben si vienen de 2D o 3D. El
+  \emph{mask token} no existe en DeiT: se inicializa al azar (depende de la semilla) y solo se usa
+  para tapar parches durante el entrenamiento.
+\end{enumerate}
+
+\begin{warnbox}[Por qué el ViT sin SSL parte tan bajo]
+Con el filtro compartido, al inicio el token de un parche es el token DeiT del \emph{promedio} de sus
+6 canales y de sus 8 cortes sagitales. Es decir: el ViT de partida mezcla hipocampo, ventrículo y
+corteza posteromedial en una sola imagen. Es una explicación probable (no demostrada) de que ese
+encoder sea el peor punto de partida (AUROC 0.778 en CV y 0.727 en test, por debajo incluso del ViT
+con pesos aleatorios) y de que DINOv2 sea el que más gana con el SSL.
+\end{warnbox}
+
+% ============================================================
+\section{Las arquitecturas, capa por capa}
+\label{sec:arch}
+% ============================================================
+
+\begin{tldrbox}
+Las tres redes mantienen una rejilla espacial 3D hasta el final y la colapsan en un vector con un
+promedio (CNN) o con el token CLS (ViT). Ese vector (768, 512 o 384 números) es lo que mide el
+probe. Las cabezas y la copia lenta (EMA) solo existen para entrenar.
+\end{tldrbox}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{volumenes_3d.png}
+\caption{Qué le pasa al volumen dentro de cada encoder. En las CNN, cada caja es un mapa de
+activaciones 3D: el lado indica el tamaño de la rejilla ($8^3$, $4^3$\ldots) y la pila, los canales.
+La caja de color sobre la entrada es la ventana que ve una posición del primer mapa. En el ViT, el
+cubo de $6\times32^3$ se corta en $4\times4\times4=64$ parches cúbicos de $8^3$; cada parche (con sus
+6 canales) se convierte en un token de 384 números. El bloque violeta es un ejemplo de máscara iBOT.}
+\label{fig:volumes}
+\end{figure}
+
+Las tablas siguientes dan la forma del tensor después de cada capa \textbf{para un sujeto}; con un
+lote se antepone la dimensión 16. ``Parám.'' es el número de pesos de esa parte.
+
+\subsection{VICReg: ConvNeXt-T 3D}
+\label{sec:convnext}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l>{\raggedright\arraybackslash}Xlr}
+\toprule
+Parte & Operación & Salida & Parám. \\
+\midrule
+Entrada & cubo de 2 canales & $2\times32\times32\times32$ & -- \\
+Tallo & conv.\ $4\times4\times4$ con paso 4 (parches 3D no solapados) + LayerNorm & $96\times8\times8\times8$ & 12.6\,k \\
+Etapa 1 & 3 bloques ConvNeXt de 96 canales & $96\times8^3$ & 0.32\,M \\
+Reducción & LayerNorm + conv.\ $2\times2\times2$ con paso 2 & $192\times4^3$ & 0.15\,M \\
+Etapa 2 & 3 bloques de 192 & $192\times4^3$ & 1.09\,M \\
+Reducción & LayerNorm + conv.\ $2^3$, paso 2 & $384\times2^3$ & 0.59\,M \\
+Etapa 3 & 9 bloques de 384 & $384\times2^3$ & 11.83\,M \\
+Reducción & LayerNorm + conv.\ $2^3$, paso 2 & $768\times1^3$ & 2.36\,M \\
+Etapa 4 & 3 bloques de 768 & $768\times1^3$ & 14.97\,M \\
+Promedio global & media sobre la rejilla & \textbf{768} & -- \\
+\midrule
+\multicolumn{3}{l}{\textbf{Total del encoder}} & \textbf{31.3\,M} \\
+\bottomrule
+\end{tabularx}
+\caption{ConvNeXt-T 3D (\texttt{ConvNeXt3DBackbone}).}
+\end{table}
+
+\textbf{Un bloque ConvNeXt 3D} con $C$ canales hace, en orden:
+\begin{enumerate}
+\item convolución \emph{por canal} (depthwise) de $7\times7\times7$ con relleno 3: cada canal se
+  filtra por separado, mirando un vecindario de 7 vóxeles en cada eje;
+\item LayerNorm sobre los $C$ canales de cada posición;
+\item lineal $C\rightarrow4C$, GELU, lineal $4C\rightarrow C$ (aplicadas posición por posición: mezclan
+  canales, no posiciones);
+\item multiplicación por un vector aprendido $\gamma$ (\emph{layer scale});
+\item \emph{drop path}: en entrenamiento, con probabilidad que crece de 0 a 0.1 a lo largo de los 18
+  bloques, se apaga el bloque entero para ese sujeto;
+\item suma con la entrada del bloque (conexión residual).
+\end{enumerate}
+En la etapa 4 la rejilla es $1^3$: el filtro $7^3$ solo usa su peso central.
+
+\textbf{Proyector} (solo entrenamiento, 10.0\,M): lineal $768\rightarrow2048$, BatchNorm, ReLU,
+dropout 0.1, lineal $2048\rightarrow2048$, BatchNorm, ReLU, dropout 0.1, lineal
+$2048\rightarrow2048$.
+
+\textbf{Un paso de entrenamiento.} Las vistas $v_1$ y $v_2$ ($16\times2\times32^3$ cada una) pasan
+por \emph{el mismo} encoder (mismos pesos) y dan $h_1,h_2$ ($16\times768$); el proyector da
+$z_1,z_2$ ($16\times2048$). La pérdida, en precisión simple, suma
+$25\cdot\mathrm{MSE}(z_1,z_2)$ (las dos vistas deben dar lo mismo), $25\cdot$ la penalización de
+cada una de las 2048 dimensiones cuya desviación estándar en el lote de 16 baje de 1, y $1\cdot$ la
+suma de covarianzas al cuadrado fuera de la diagonal (matriz de $2048\times2048$), dividida por 2048.
+El probe usa $h$ (768).
+
+\subsection{BYOL: ResNet-18 3D}
+\label{sec:resnet}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l>{\raggedright\arraybackslash}Xlr}
+\toprule
+Parte & Operación & Salida & Parám. \\
+\midrule
+Entrada & cubo de 2 canales & $2\times32\times32\times32$ & -- \\
+Tallo & conv.\ $7\times7\times7$, paso 2, relleno 3 + BatchNorm + ReLU (sin max-pool) & $64\times16\times16\times16$ & 44\,k \\
+Capa 1 & 2 bloques básicos de 64 & $64\times16^3$ & 0.44\,M \\
+Capa 2 & 2 bloques de 128; el primero con paso 2 & $128\times8^3$ & 1.56\,M \\
+Capa 3 & 2 bloques de 256; el primero con paso 2 & $256\times4^3$ & 6.23\,M \\
+Capa 4 & 2 bloques de 512; el primero con paso 2 & $512\times2^3$ & 24.91\,M \\
+Promedio global & media sobre la rejilla & \textbf{512} & -- \\
+\midrule
+\multicolumn{3}{l}{\textbf{Total del encoder}} & \textbf{33.2\,M} \\
+\bottomrule
+\end{tabularx}
+\caption{ResNet-18 3D (\texttt{ResNet3DBackbone}).}
+\end{table}
+
+\textbf{Un bloque básico 3D}: conv.\ $3\times3\times3$ $\rightarrow$ BatchNorm $\rightarrow$ ReLU
+$\rightarrow$ conv.\ $3\times3\times3$ $\rightarrow$ BatchNorm $\rightarrow$ suma con el atajo
+$\rightarrow$ ReLU. Cuando el bloque reduce la rejilla (paso 2) y cambia el número de canales, el
+atajo es una conv.\ $1\times1\times1$ con paso 2 + BatchNorm.
+
+\textbf{Cabezas} (solo entrenamiento), con GroupNorm (32 grupos de 128 neuronas) en vez de BatchNorm:
+\begin{itemize}
+\item \textbf{Proyector} (3.2\,M): lineal $512\rightarrow4096$, GroupNorm, ReLU, dropout 0.3, lineal
+  $4096\rightarrow256$.
+\item \textbf{Predictor} (2.1\,M, solo en la red online): lineal $256\rightarrow4096$, GroupNorm,
+  ReLU, lineal $4096\rightarrow256$.
+\end{itemize}
+
+\textbf{La copia lenta (target).} Es una copia del encoder y del proyector (sin predictor, sin
+dropout) que no recibe gradiente. Tras cada paso se actualiza como
+$\theta_\text{target}\leftarrow\tau\,\theta_\text{target}+(1-\tau)\,\theta_\text{online}$, con
+$\tau_t = 1-(1-0.996)\,\frac{\cos(\pi t/T)+1}{2}$: empieza en 0.996 y sube a 1 en los $T=2300$ pasos.
+Las estadísticas de BatchNorm se copian directamente de la online.
+
+\textbf{Un paso de entrenamiento.} La online procesa $v_1$ y $v_2$ hasta el predictor ($p_1,p_2$, de
+$16\times256$); la target procesa las mismas vistas hasta su proyector ($\bar z_1,\bar z_2$). La
+pérdida es $\tfrac12\big[(2-2\cos(p_1,\bar z_2))+(2-2\cos(p_2,\bar z_1))\big]$, promediada en el lote:
+cada vista predice lo que la copia lenta dice de la \emph{otra}. El probe usa el encoder online (512).
+
+\subsection{DINOv2: ViT-S 3D}
+\label{sec:vit}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l>{\raggedright\arraybackslash}Xlr}
+\toprule
+Parte & Operación & Salida & Parám. \\
+\midrule
+Entrada & cubo de 6 canales & $6\times32\times32\times32$ & -- \\
+Parcheado & conv.\ $8\times8\times8$ con paso 8: cada parche de $6\times8^3 = 3072$ valores $\rightarrow$ 384 & $384\times4\times4\times4$ & 1.18\,M \\
+Aplanado & la rejilla $4\times4\times4$ se lee en orden $(i,j,k)$ & $64\times384$ & -- \\
+Máscara (solo alumno) & los tokens de los parches enmascarados se reemplazan por el \emph{mask token} & $64\times384$ & 384 \\
+CLS & se antepone un token aprendido & $65\times384$ & 384 \\
+Posición & se suma una posición aprendida por token & $65\times384$ & 25\,k \\
+12 bloques & Transformer (ver abajo) & $65\times384$ & 21.3\,M \\
+LayerNorm final & & $65\times384$ & 768 \\
+Salidas & token 0 = \textbf{CLS} y 64 tokens de parche & \textbf{384} y $64\times384$ & -- \\
+\midrule
+\multicolumn{3}{l}{\textbf{Total del encoder}} & \textbf{22.5\,M} \\
+\bottomrule
+\end{tabularx}
+\caption{ViT-S 3D (\texttt{ViT3DBackbone}), parches de $8^3$.}
+\end{table}
+
+\textbf{Un bloque Transformer} (1.77\,M): LayerNorm $\rightarrow$ atención multi-cabeza (6 cabezas de
+64 dimensiones; una lineal $384\rightarrow1152$ da consultas, claves y valores; cada token pondera a
+los 65 tokens con $\mathrm{softmax}(QK^\top/\sqrt{64})$; lineal de salida $384\rightarrow384$)
+$\rightarrow$ drop path $\rightarrow$ suma residual; luego LayerNorm $\rightarrow$ MLP
+$384\rightarrow1536\rightarrow384$ con GELU $\rightarrow$ drop path $\rightarrow$ suma residual. El
+drop path crece de 0 a 0.1 a lo largo de los 12 bloques. Gracias a la atención, cada parche puede
+combinar información de \emph{cualquier} otro parche del cubo desde el primer bloque.
+
+\textbf{La máscara iBOT} (\texttt{sample\_masks}): en cada lote y cada vista, 8 de las 16 imágenes
+llevan máscara. A la imagen $n$-ésima de esas 8 le toca una fracción al azar dentro del tramo
+$[0.1+0.4\,n/8,\ 0.1+0.4\,(n+1)/8]$, es decir, entre 6 y 31 de los 64 parches. Los parches se tapan
+en bloques 3D contiguos de al menos 4 parches, con proporciones entre 0.3 y 3.3. El token tapado se
+reemplaza \emph{antes} de sumar la posición: la red sabe dónde está el hueco, no qué hay en él.
+
+\textbf{Cabezas} (solo entrenamiento, 6.6\,M cada una, con pesos separados):
+\begin{itemize}
+\item \textbf{Cabeza DINO} (sobre el CLS): lineal $384\rightarrow2048$, BatchNorm, GELU, lineal
+  $2048\rightarrow2048$, BatchNorm, GELU, lineal $2048\rightarrow256$; el vector de 256 se normaliza
+  (largo 1) y se compara por coseno con \textbf{4096 prototipos} (vectores aprendidos de largo 1):
+  salen 4096 puntajes entre $-1$ y 1.
+\item \textbf{Cabeza iBOT} (sobre cada token de parche enmascarado): la misma forma.
+\end{itemize}
+
+\textbf{El profesor.} Copia del encoder y de las dos cabezas, sin drop path ni gradiente, que se
+actualiza como en BYOL con $\tau$ de 0.99 a 1.
+
+\textbf{Un paso de entrenamiento.}
+\begin{enumerate}
+\item Se sortean las máscaras de las dos vistas.
+\item \textbf{Alumno}: cada vista enmascarada $\rightarrow$ encoder $\rightarrow$ CLS $\rightarrow$
+  cabeza DINO ($16\times4096$); los tokens de los parches tapados $\rightarrow$ cabeza iBOT.
+\item \textbf{Profesor}: cada vista \emph{sin} máscara $\rightarrow$ encoder $\rightarrow$ CLS
+  $\rightarrow$ su cabeza DINO; los tokens en las posiciones tapadas $\rightarrow$ su cabeza iBOT.
+\item Los puntajes del profesor se convierten en probabilidades con Sinkhorn--Knopp (3 iteraciones,
+  temperatura 0.01), que reparte el lote de forma pareja entre los 4096 prototipos; los del alumno,
+  con un softmax a temperatura 0.1.
+\item \textbf{DINO}: entropía cruzada entre el CLS del alumno en una vista y el del profesor en la
+  \emph{otra} (los dos cruces, promediados). \textbf{iBOT}: entropía cruzada entre cada parche tapado
+  del alumno y el mismo parche del profesor, con el mismo peso por imagen. \textbf{KoLeo}: castiga
+  que dos CLS del alumno (normalizados) del mismo lote queden demasiado cerca.
+\item Pérdida $=$ DINO $+\,1\cdot$iBOT $+\,0.1\cdot$KoLeo; gradiente recortado a norma 3; paso de
+  AdamW; actualización EMA del profesor. Durante la primera época los prototipos no se actualizan.
+\end{enumerate}
+El probe usa el \textbf{CLS del profesor} (384), como en DINO y DINOv2.
+
+\subsection{Las figuras de arquitectura}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{architectures_100.png}
+\caption{Los tres campeones de la entrada a la pérdida, con la configuración de este entrenamiento
+(100 épocas, BYOL con cabezas GroupNorm). Es la figura \texttt{architectures.png} del informe
+anterior, que mostraba la de 30 épocas. El vector marcado \emph{probe} es lo que se evalúa; la caja
+punteada es la copia lenta (EMA).}
+\label{fig:architectures}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{arch_vicreg.png}
+\caption{VICReg rama por rama: dos vistas \texttt{geo} de un sujeto de validación por la misma
+ConvNeXt-T 3D (pesos compartidos).}
+\label{fig:archvicreg}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{arch_byol.png}
+\caption{BYOL: solo la rama online tiene predictor y recibe gradiente; la target (punteada) es la
+copia EMA (\emph{sg} = sin gradiente).}
+\label{fig:archbyol}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{arch_dinov2.png}
+\caption{DINOv2: el alumno ve la vista con un bloque de parches tapados y el profesor la vista
+completa.}
+\label{fig:archdinov2}
+\end{figure}
+
+\subsection{Lo común a los tres}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l>{\raggedright\arraybackslash}X}
+\toprule
+Ajuste & Valor \\
+\midrule
+Optimizador & AdamW, tasa base $10^{-4}$ \\
+Tasa por época & subida lineal 20 épocas ($10^{-4}\cdot(e+1)/20$), luego coseno hasta $10^{-6}$ en la época 100 \\
+Weight decay & VICReg $10^{-6}$; BYOL 0.01; DINOv2 de 0.04 a 0.2 (coseno por paso), sin aplicarlo a sesgos ni normalizaciones \\
+Lote, épocas, pasos & 16 sujetos, 100 épocas, 2300 pasos \\
+Precisión & bf16 mixta; pérdidas y cabeza DINO en precisión simple \\
+Semillas & 1, 2 y 3 \\
+Qué se evalúa & el estado final de la época 100, sin elegir época (sin \emph{early stopping}) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% ============================================================
+\section{Qué se compara: supervisado, SSL, sin SSL y aleatorio}
+\label{sec:conditions}
+% ============================================================
+
+\begin{tldrbox}
+Las cuatro condiciones usan \emph{el mismo encoder y la misma entrada}. Cambia qué se entrena y con
+qué. Solo el supervisado ajusta el encoder con las etiquetas; las otras tres lo congelan y entrenan
+encima la misma regresión logística.
+\end{tldrbox}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm]
+\node[lane=supc] at (0,0) {\textbf{Supervisado completo}\\[2pt]
+  Pesos ImageNet inflados $\rightarrow$ encoder + lineal $\rightarrow$ 1 logit.\\[2pt]
+  Se entrena \textbf{todo} con BCE en los 266 sujetos AD/HC de train.\\[2pt]
+  Época elegida por AUROC de val.\\[2pt]
+  Puntaje = logit calibrado.};
+\node[lane=steelblue] at (4.1,0) {\textbf{SSL + probe}\\[2pt]
+  Pesos ImageNet inflados $\rightarrow$ 100 épocas de SSL \textbf{sin etiquetas} (361 sujetos).\\[2pt]
+  Encoder \textbf{congelado}.\\[2pt]
+  Probe lineal con las etiquetas.\\[2pt]
+  Puntaje = probabilidad del probe.};
+\node[lane=softgray] at (8.2,0) {\textbf{Sin SSL + probe}\\[2pt]
+  Pesos ImageNet inflados, \textbf{sin ningún entrenamiento}.\\[2pt]
+  Encoder congelado.\\[2pt]
+  El mismo probe.\\[2pt]
+  Mide cuánto aporta el SSL sobre su punto de partida.};
+\node[lane=softgray] at (12.3,0) {\textbf{Aleatorio + probe} (ref.)\\[2pt]
+  Pesos \textbf{aleatorios}, sin entrenar.\\[2pt]
+  Encoder congelado.\\[2pt]
+  El mismo probe.\\[2pt]
+  Mide cuánto aporta todo (ImageNet + SSL) sobre nada.};
+\end{tikzpicture}
+\caption{Las cuatro condiciones. Las tres primeras son las barras de la Figura~\ref{fig:metrics}, en
+ese orden; la aleatoria aparece solo en las tablas.}
+\label{fig:conditions}
+\end{figure}
+
+\begin{warnbox}[``Sin SSL'' no es ``aleatorio'']
+En las figuras, \textbf{sin SSL} es el encoder con los pesos de ImageNet inflados, el mismo punto del
+que arranca el SSL. Es la comparación justa para preguntar ``¿qué agregó el SSL?''. El encoder con
+\textbf{pesos aleatorios} es otra referencia, más débil en principio, y responde ``¿qué agregó todo
+el preentrenamiento?''. Los pesos sin SSL no dependen de la semilla (solo el \emph{mask token} del
+ViT, que no se usa al evaluar), así que una sola corrida vale para las tres semillas.
+\end{warnbox}
+
+\subsection{El supervisado, en detalle}
+
+\texttt{scripts/train\_supervised.py}. Mismo encoder, mismos pesos iniciales, misma entrada y la
+primera vista de la misma receta de augmentation.\footnote{Excepción: el supervisado de DINOv2 usó
+la deformación elástica calculada en GPU (\texttt{elastic\_gpu}, desplazamiento 1.50 vóxeles,
+calibrada a la misma RMSE), no la de TorchIO del SSL.}
+\begin{itemize}
+\item \textbf{Cabeza}: una lineal del vector (768/512/384) a un solo logit.
+\item \textbf{Pérdida}: entropía cruzada binaria con peso para AD igual a $\#\text{HC}/\#\text{AD}$
+  (135/131) en los sujetos de train.
+\item \textbf{Optimización}: AdamW con tasa $10^{-4}$ en el encoder y $10^{-3}$ en la cabeza, weight
+  decay 0.01, 5 épocas de subida y coseno por paso hasta la época 100; lotes de 16 (se descarta el
+  lote incompleto: 16 pasos por época); una sesión al azar por sujeto en cada época.
+\item \textbf{Selección}: tras cada época se mide el AUROC en los 63 de val (puntaje del sujeto =
+  logit promedio de sus sesiones) y se guarda la mejor época; se corta tras 20 épocas sin mejora.
+  Épocas elegidas: ConvNeXt 49, 12, 15; ResNet 13, 7, 6; ViT 26, 18, 51.
+\item \textbf{Calibración}: una regresión logística balanceada sobre los logits de sus propios
+  sujetos de entrenamiento (Platt). No cambia el AUROC de test; corrige el umbral de 0.5 del F1 y
+  hace comparables los pliegues de la CV.
+\item \textbf{CV}: 5 pliegues estratificados sobre los mismos 329 sujetos de train+val que usa el
+  probe; cada pliegue entrena hasta la época elegida, se calibra con sus sujetos y predice los suyos.
+\end{itemize}
+
+% ============================================================
+\section{Cómo se calcula cada número}
+\label{sec:metrics}
+% ============================================================
+
+\begin{tldrbox}
+Cada sujeto se resume en un vector (cubo limpio, encoder congelado, promedio de sus sesiones). Una
+regresión logística sobre esos vectores da una probabilidad de AD por sujeto, y con ella se calculan
+AUROC, F1 y AUPR, en validación cruzada (329 sujetos) y en test (84).
+\end{tldrbox}
+
+\subsection{Del volumen al vector del sujeto}
+
+\begin{enumerate}
+\item Para cada sesión de un sujeto AD o HC se toma el \textbf{cubo central de $32^3$ sin
+  augmentation} (con todos sus canales).
+\item El encoder, en modo evaluación (BatchNorm con sus estadísticas acumuladas, sin dropout ni drop
+  path, en precisión simple), da un vector: 768 (ConvNeXt), 512 (ResNet) o 384 (CLS del ViT).
+\item Se \textbf{promedian los vectores de todas las sesiones del sujeto}. Los sujetos de train
+  pueden tener varias; los de val y test, una.
+\item Quedan 413 vectores: 266 de train, 63 de val y 84 de test. Etiqueta: AD $=1$, HC $=0$.
+\end{enumerate}
+
+\subsection{El probe}
+
+Una tubería de dos pasos (scikit-learn): \textbf{estandarizar} cada dimensión (media 0, desviación 1,
+con las medias y desviaciones de los sujetos de ajuste) y una \textbf{regresión logística} con
+regularización L2 y clases balanceadas. Su salida es una probabilidad de AD entre 0 y 1. Es lineal:
+solo puede trazar un hiperplano en el espacio de los vectores, así que mide qué tan
+\emph{linealmente} separable es el diagnóstico en la representación.
+
+\subsection{\texorpdfstring{CV $5\times5$}{CV 5x5} (329 sujetos de train + val)}
+
+\begin{enumerate}
+\item Se repite 5 veces ($r=0,\ldots,4$) una partición estratificada en 5 pliegues (semilla $r$).
+\item En cada pliegue, el probe se ajusta con 4/5 de los sujetos (unos 263); su regularización $C$
+  se elige entre $\{0.01, 0.1, 1, 10\}$ con una CV interna de 3 pliegues que maximiza el AUROC. Luego
+  predice el 1/5 restante (unos 66), que no vio.
+\item Al terminar los 5 pliegues, cada sujeto tiene una predicción \emph{fuera de muestra}. Con las
+  329 se calcula AUROC, F1 y AUPR.
+\item Se promedia sobre las 5 repeticiones y luego sobre las 3 semillas.
+\end{enumerate}
+
+\begin{warnbox}[CV y test no miden lo mismo]
+266 de los 329 sujetos de la CV estuvieron en el entrenamiento SSL (sin etiquetas). El encoder los
+``conoce'', aunque nunca vio su diagnóstico. El test son sujetos que el encoder nunca vio, pero con
+84 sujetos sus intervalos son anchos ($\pm0.05$ a $\pm0.07$ de AUROC).
+\end{warnbox}
+
+\subsection{Test (84 sujetos)}
+
+El probe se ajusta en los 266 sujetos de train con cada $C\in\{0.01,0.1,1,10\}$; se queda el $C$ con
+mejor AUROC en los 63 de val, y ese modelo predice una sola vez a los 84 de test.
+
+\subsection{Las métricas}
+
+\begin{itemize}
+\item \textbf{AUROC}: la probabilidad de que un AD elegido al azar reciba un puntaje mayor que un HC
+  elegido al azar. 0.5 es azar, 1 es separación perfecta. No depende de ningún umbral.
+\item \textbf{F1-macro}: se clasifica como AD si la probabilidad es $\geq0.5$; se calcula el F1 de la
+  clase AD y el de la clase HC y se promedian.
+\item \textbf{AUPR} (\emph{average precision}): el área bajo la curva precisión--sensibilidad con AD
+  como positivo. El azar vale la prevalencia de AD (0.49 en CV y en test).
+\end{itemize}
+
+\subsection{\texorpdfstring{Semillas, $\pm$ e intervalos de confianza}{Semillas, ± e intervalos de confianza}}
+
+\begin{itemize}
+\item El número de cada barra es la \textbf{media de las 3 semillas}; ``$\pm$'' es la desviación
+  estándar entre semillas.
+\item Las \textbf{diferencias} ($\Delta$) entre dos condiciones llevan un IC del 95\,\% por
+  \emph{bootstrap pareado estratificado}: 2000 veces se remuestrean con reposición los sujetos AD y
+  los HC por separado, se recalcula el AUROC de ambas condiciones \emph{sobre el mismo remuestreo}
+  (promediando semillas) y se resta. El IC son los percentiles 2.5 y 97.5. En CV se usan las
+  predicciones fuera de muestra promediadas en las 5 repeticiones.
+\item \textbf{Significativo} ($^{*}$) quiere decir que el IC no toca el cero.
+\end{itemize}
+
+\begin{warnbox}[El CV del supervisado no es idéntico]
+El probe repite 5 veces una CV de 5 pliegues; el supervisado hace una sola (5 entrenamientos por
+semilla). El test (mismos 84 sujetos) es la comparación más limpia entre supervisado y SSL.
+\end{warnbox}
+
+\subsection{Monitor de colapso}
+\label{sec:collapsedef}
+
+Cada 2 épocas, sobre los 147 sujetos no vistos (63 de val y 84 de test, una sesión cada uno), el
+encoder procesa el cubo limpio y dos vistas fijas de la receta del modelo:
+\begin{itemize}
+\item \textbf{Var sujeto / Var aug}: cuánto cambia el vector entre sujetos (cubos limpios) dividido
+  por cuánto cambia entre las dos vistas del mismo sujeto. Sobre 1, el sujeto pesa más que la
+  augmentation. Un modelo colapsado da lo mismo para todos los sujetos y el cociente cae a casi 0.
+\item \textbf{Rango efectivo}: $\exp$ de la entropía del espectro de varianzas de los vectores. Vale
+  1 si toda la variación cabe en una sola dirección.
+\item \textbf{Top-1 de vistas}: fracción de primeras vistas cuya segunda vista más parecida (coseno)
+  es la del mismo sujeto. Azar: $1/147$, un 0.7\,\%.
+\end{itemize}
+
+\subsection{\texorpdfstring{El espacio latente y qué es la $r$}{El espacio latente y qué es la r}}
+\label{sec:rdef}
+
+El análisis usa los 413 vectores de sujeto AD/HC de la semilla 1 (estado final), estandarizados.
+\begin{itemize}
+\item \textbf{PCA}: las 5 direcciones de mayor varianza. Cada sujeto tiene un puntaje en cada una.
+\item \textbf{t-SNE} (perplejidad 30, inicio PCA, semilla 0): un mapa 2D que conserva vecindarios.
+  Es solo visual: las distancias grandes y el tamaño de los grupos no significan nada.
+\item \textbf{Puntaje del probe fuera de muestra}: regresión logística ($C$ entre 0.001 y 10, CV
+  interna de 5) con 5 pliegues sobre los 413 sujetos. Por eso su AUROC (0.858, 0.858, 0.832) difiere
+  algo del de la Sección~\ref{sec:results}.
+\item \textbf{$\rho$ de cada componente}: correlación de Spearman (por rangos) entre el puntaje de
+  una componente principal y una variable. El \textbf{signo de una componente es arbitrario}: PCA
+  puede devolver el mismo eje apuntando hacia un lado o hacia el otro. Por eso se lee $|\rho|$.
+\item \textbf{La $r$ (``embedding completo'')}: para cada variable, una regresión Ridge (con su
+  regularización elegida por CV interna) aprende a predecirla desde el vector completo, fuera de
+  muestra (5 pliegues). $r$ es la correlación de Spearman entre esa predicción y el valor real.
+  Mide \emph{cuánto de esa variable se puede leer linealmente del embedding}, en sujetos que el
+  modelo de lectura no vio.
+\item \textbf{Para el diagnóstico}, $r$ es la Spearman entre el puntaje fuera de muestra del probe y
+  la etiqueta 0/1. Con una etiqueta binaria y una prevalencia $p$, esa correlación es una función
+  del AUROC:
+  \[ r \approx \sqrt{12\,p(1-p)}\,(\mathrm{AUROC}-0.5) \approx 1.73\,(\mathrm{AUROC}-0.5)
+     \quad (p=0.49). \]
+  Así, $r=0.62$ corresponde a AUROC 0.86 (verificado en los datos), y con separación perfecta $r$ no
+  pasa de $\approx0.87$. \textbf{Una $r$ de diagnóstico no se compara directamente con la $r$ de una
+  variable continua}, que sí puede llegar a 1.
+\end{itemize}
+
+\textbf{Variables}: edad y años de educación (CSV clínico); volumen del hipocampo (etiquetas 17 y
+53), de los ventrículos (4, 43, 5 y 44) y del cerebro (vóxeles $>0.1$), en espacio MNI y en cm$^3$;
+intensidad media del cubo del hipocampo; y ruido de imagen: la dispersión robusta
+($1.4826\times$MAD) del residuo de alta frecuencia (volumen menos su suavizado gaussiano) dentro de la
+sustancia blanca erosionada de la resonancia completa, un tejido homogéneo.
+
+% ============================================================
+\section{Resultados esperados}
+\label{sec:expected}
+% ============================================================
+
+\begin{tldrbox}
+La expectativa inicial va en la dirección correcta, con cuatro precisiones: frente al supervisado lo
+esperable es \emph{empatar}, no superar; ``sin SSL'' y ``aleatorio'' son dos referencias distintas;
+la separación en el espacio latente es un gradiente y se mide con números, no a ojo; y las curvas de
+pérdida SSL no se leen como las de un clasificador.
+\end{tldrbox}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{3.6cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{3.9cm}}
+\toprule
+Expectativa inicial & Versión precisa (lo que conviene esperar) & Cómo se mide \\
+\midrule
+Alcanzar o superar al supervisado completo &
+  \textbf{No inferioridad}: el SSL con probe lineal empata con el supervisado (diferencia dentro del
+  ruido) y nunca queda significativamente debajo. Superarlo es plausible cuando hay \emph{pocas}
+  etiquetas; con 266 sujetos etiquetados y un supervisado que usa la misma augmentation y elige su
+  mejor época en val, el empate es lo razonable. &
+  $\Delta$ AUROC (SSL $-$ supervisado) con IC 95\,\%, sobre todo en test. \\
+\addlinespace
+Superar definitivamente al baseline sin SSL &
+  Son \textbf{dos} expectativas. (a) Superar al mismo encoder \emph{sin SSL} (pesos ImageNet): el SSL
+  adapta la red a resonancias, así que debería ganar. (b) Superar al encoder \emph{aleatorio}:
+  debería ganar con más margen. &
+  $\Delta$ AUROC con IC frente a cada referencia, en CV y en test. \\
+\addlinespace
+Separación lineal visible en los embeddings &
+  Un \textbf{gradiente} AD--HC con solapamiento, no dos grupos: el Alzheimer es un continuo y un cubo
+  de 64\,mm ve solo parte de la atrofia. Lo visual (PCA, t-SNE) es cualitativo; lo cuantitativo es el
+  AUROC del probe fuera de muestra (bastante sobre 0.5) y que alguna componente principal ordene el
+  diagnóstico. &
+  AUROC fuera de muestra; $|\rho|$ de la 1.ª componente con AD. \\
+\addlinespace
+Correlación positiva de la división del espacio con el diagnóstico &
+  El \textbf{signo} de una componente es arbitrario: se espera $|\rho|$ alto, no $\rho>0$. El puntaje
+  del probe sí es positivo por construcción (AD $=1$). Además conviene esperar que el eje AD también
+  correlacione con la edad (el confusor del split). &
+  $|\rho|$ por componente; $r$ del diagnóstico y de la edad. \\
+\addlinespace
+Curvas: train y val bajan juntas, val algo arriba, sin sobreajuste ni inestabilidad &
+  \textbf{Para el supervisado}, exactamente eso. \textbf{Para el SSL}, la pérdida debe bajar y
+  estabilizarse, sin divergir y sin colapso; pero la de validación usa otros pares (el cubo y su
+  espejo en BYOL y DINOv2) y otro modo de la red (BatchNorm en evaluación), así que puede quedar
+  arriba, abajo o subir sin que el encoder empeore. El sobreajuste que importa se mide en sujetos no
+  vistos: el probe en test y el monitor de colapso. &
+  Curvas de pérdida; Var sujeto / Var aug, rango efectivo y top-1; métricas de 30 frente a 100
+  épocas. \\
+\bottomrule
+\end{tabularx}
+\caption{Expectativas, su versión precisa y cómo se mide cada una.}
+\label{tab:expected}
+\end{table}
+
+\subsection{Lo esperado frente a lo obtenido}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}X ccc}
+\toprule
+Expectativa (versión precisa) & \textcolor{vicregc}{\textbf{VICReg}} & \textcolor{byolc}{\textbf{BYOL}} & \textcolor{dinoc}{\textbf{DINOv2}} \\
+\midrule
+Empata con el supervisado en test & \si{} ($-0.015$) & \si{} ($-0.012$) & \si{} ($+0.009$) \\
+Empata o gana al supervisado en CV & \si{} ($+0.016$) & \si{} ($+0.026$\sig) & \si{} ($+0.002$) \\
+Supera al encoder sin SSL en CV & \si{} ($+0.028$\sig) & \no{} ($-0.015$) & \si{} ($+0.047$\sig) \\
+Supera al encoder sin SSL en test & \parcial{} ($+0.028$, n.s.) & \parcial{} ($+0.030$, n.s.) & \si{} ($+0.106$\sig) \\
+Supera al encoder aleatorio (CV / test) & \si{} / \si{} & \no{} / \no{} (empata) & \si{} / \parcial{} \\
+AUROC fuera de muestra en el espacio latente $\geq0.80$ & \si{} (0.858) & \si{} (0.858) & \si{} (0.832) \\
+1.ª componente ordena el diagnóstico ($|\rho|\geq0.4$) & \si{} (0.49) & \si{} (0.59) & \si{} (0.56) \\
+Sin colapso (Var sujeto/Var aug $\gg1$) & \si{} (47) & \si{} (57) & \si{} (17) \\
+Pérdida SSL de val. sigue a la de train & \si{} & \no{} (sube desde la ép.\ 15) & \si{} (brecha desde la ép.\ 20) \\
+Supervisado sin sobreajuste & \si{} & \no{} (época 6--13) & \parcial{} \\
+\bottomrule
+\end{tabularx}
+\caption{$\Delta$ AUROC con IC 95\,\% por bootstrap pareado; \sig{} = significativo; n.s. = el IC
+incluye el cero. ``En parte'' = el signo va en la dirección esperada sin significancia. Detalle en la
+Sección~\ref{sec:results}.}
+\label{tab:scorecard}
+\end{table}
+
+\begin{ideabox}[Tres sorpresas que vale la pena contar]
+\begin{itemize}[leftmargin=12pt]
+\item \textbf{Una ResNet-18 3D aleatoria ya separa bastante}: AUROC 0.840 en CV y 0.835 en test con
+  pesos al azar y solo el probe. La atrofia del hipocampo (más líquido oscuro, menos tejido) es una
+  señal tan fuerte que hasta filtros aleatorios la recogen. Por eso BYOL no supera ni al aleatorio
+  ni a su inicio ImageNet: no hay mucho margen.
+\item \textbf{El ViT con pesos de ImageNet arranca peor que con pesos aleatorios} (0.778 frente a 0.797
+  en CV; 0.727 frente a 0.802 en test). El SSL lo lleva al nivel de las CNN. Ver la explicación
+  probable en la Sección~\ref{sec:vitinflate}.
+\item \textbf{100 épocas no mejoran a 30}: ninguna diferencia supera $\pm0.008$ de AUROC.
+\end{itemize}
+\end{ideabox}
+
+% ============================================================
+\section{Resultados}
+\label{sec:results}
+% ============================================================
+
+\subsection{Métricas de los campeones}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{metricas_100_puntos.png}
+\caption{AUROC, F1-macro y AUPR en CV (arriba) y test (abajo). Cuadrado: supervisado; círculo de
+color: SSL; rombo vacío: sin SSL. El número junto a cada marcador es la media de las 3 semillas; la
+barra horizontal es $\pm1$ desviación estándar y los puntos pequeños, las semillas. Cómo se calcula
+cada métrica: Sección~\ref{sec:metrics}.}
+\label{fig:metrics}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3.2pt}
+\begin{tabular}{llcccccc}
+\toprule
+ & & \multicolumn{3}{c}{CV $5\times5$ (329 sujetos)} & \multicolumn{3}{c}{Test (84 sujetos)} \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-8}
+Modelo & Condición & AUROC & F1-macro & AUPR & AUROC & F1-macro & AUPR \\
+\midrule
+\multirow{4}{*}{\textcolor{vicregc}{\textbf{VICReg}}}
+ & Supervisado & 0.864\,$\pm$\,0.014 & 0.793\,$\pm$\,0.003 & 0.856\,$\pm$\,0.013 & \textbf{0.849}\,$\pm$\,0.008 & \textbf{0.764}\,$\pm$\,0.018 & \textbf{0.831}\,$\pm$\,0.009 \\
+ & SSL 100 & \textbf{0.877}\,$\pm$\,0.003 & \textbf{0.796}\,$\pm$\,0.003 & \textbf{0.867}\,$\pm$\,0.011 & 0.834\,$\pm$\,0.007 & 0.756\,$\pm$\,0.008 & 0.798\,$\pm$\,0.021 \\
+ & Sin SSL & 0.848 & 0.771 & 0.838 & 0.806 & 0.738 & 0.795 \\
+ & \textit{Aleatorio} & \textit{0.808\,$\pm$\,0.011} & \textit{0.742\,$\pm$\,0.013} & \textit{0.809\,$\pm$\,0.015} & \textit{0.744\,$\pm$\,0.025} & \textit{0.677\,$\pm$\,0.031} & \textit{0.723\,$\pm$\,0.026} \\
+\midrule
+\multirow{4}{*}{\textcolor{byolc}{\textbf{BYOL}}}
+ & Supervisado & 0.827\,$\pm$\,0.004 & 0.742\,$\pm$\,0.015 & 0.813\,$\pm$\,0.006 & \textbf{0.850}\,$\pm$\,0.016 & 0.765\,$\pm$\,0.025 & \textbf{0.812}\,$\pm$\,0.024 \\
+ & SSL 100 & 0.846\,$\pm$\,0.018 & 0.765\,$\pm$\,0.003 & 0.819\,$\pm$\,0.039 & 0.838\,$\pm$\,0.020 & \textbf{0.785}\,$\pm$\,0.021 & 0.799\,$\pm$\,0.043 \\
+ & Sin SSL & \textbf{0.860} & \textbf{0.778} & \textbf{0.832} & 0.808 & 0.738 & 0.784 \\
+ & \textit{Aleatorio} & \textit{0.840\,$\pm$\,0.008} & \textit{0.769\,$\pm$\,0.008} & \textit{0.811\,$\pm$\,0.014} & \textit{0.835\,$\pm$\,0.011} & \textit{0.764\,$\pm$\,0.037} & \textit{0.788\,$\pm$\,0.015} \\
+\midrule
+\multirow{4}{*}{\textcolor{dinoc}{\textbf{DINOv2}}}
+ & Supervisado & \textbf{0.833}\,$\pm$\,0.019 & \textbf{0.760}\,$\pm$\,0.016 & 0.824\,$\pm$\,0.021 & 0.825\,$\pm$\,0.026 & \textbf{0.744}\,$\pm$\,0.018 & \textbf{0.804}\,$\pm$\,0.034 \\
+ & SSL 100 & 0.832\,$\pm$\,0.005 & 0.748\,$\pm$\,0.002 & \textbf{0.825}\,$\pm$\,0.005 & \textbf{0.833}\,$\pm$\,0.013 & 0.740\,$\pm$\,0.009 & 0.794\,$\pm$\,0.014 \\
+ & Sin SSL & 0.778 & 0.709 & 0.750 & 0.727 & 0.677 & 0.645 \\
+ & \textit{Aleatorio} & \textit{0.797\,$\pm$\,0.014} & \textit{0.733\,$\pm$\,0.013} & \textit{0.764\,$\pm$\,0.018} & \textit{0.802\,$\pm$\,0.032} & \textit{0.734\,$\pm$\,0.007} & \textit{0.801\,$\pm$\,0.041} \\
+\bottomrule
+\end{tabular}
+\caption{Todas las métricas: media $\pm$ desviación estándar de 3 semillas (sin SSL es una corrida).
+En negrita, la mejor de las tres condiciones principales en cada columna. En cursiva, la referencia
+con pesos aleatorios.}
+\label{tab:allmetrics}
+\end{table}
+
+\subsection{Diferencias con intervalo de confianza}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.82\textwidth]{delta_100.png}
+\caption{$\Delta$ AUROC del SSL frente al mismo encoder sin SSL (círculo lleno) y frente al
+supervisado (cuadrado vacío), con IC del 95\,\% por bootstrap pareado. Un intervalo que no toca el
+cero es una diferencia significativa.}
+\label{fig:delta}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\footnotesize
+\begin{tabular}{lcccc}
+\toprule
+$\Delta$ AUROC (CV / test) & SSL $-$ sin SSL & SSL $-$ supervisado & Supervisado $-$ sin SSL & SSL $-$ aleatorio \\
+\midrule
+\textcolor{vicregc}{\textbf{VICReg}} & $+.028^{*}$ / $+.028$ & $+.016$ / $-.015$ & $+.012$ / $+.043$ & $+.064^{*}$ / $+.090^{*}$ \\
+\textcolor{byolc}{\textbf{BYOL}} & $-.015$ / $+.030$ & $+.026^{*}$ / $-.012$ & $-.040^{*}$ / $+.043$ & $+.010$ / $+.003$ \\
+\textcolor{dinoc}{\textbf{DINOv2}} & $+.047^{*}$ / $+.106^{*}$ & $+.002$ / $+.009$ & $+.045^{*}$ / $+.097^{*}$ & $+.033^{*}$ / $+.031$ \\
+\bottomrule
+\end{tabular}
+\caption{$^{*}$ = IC 95\,\% enteramente de un lado del cero (BYOL supervisado $-$ sin SSL en CV es
+significativamente \emph{negativo}). Intervalos completos en
+\nolinkurl{campaign_ssl3d_runpod/split361_100/REPORT.md}.}
+\label{tab:deltas}
+\end{table}
+
+\begin{ideabox}[Cómo leerlo]
+\begin{itemize}[leftmargin=12pt]
+\item \textbf{Frente al supervisado}, el SSL empata en test en los tres (de $-0.015$ a $+0.009$) y
+  empata o gana en CV. Con 266 sujetos etiquetados, congelar el encoder SSL y entrenar solo una
+  regresión logística rinde lo mismo que entrenar la red entera con las etiquetas.
+\item \textbf{Frente al encoder sin SSL}, DINOv2 gana claro (parte del peor inicio), VICReg gana en CV
+  y BYOL no gana.
+\item \textbf{Frente al aleatorio}, VICReg gana claro; DINOv2 gana en CV; BYOL empata.
+\end{itemize}
+\end{ideabox}
+
+\subsection{El espacio latente}
+\label{sec:latent}
+
+Los embeddings salen de los modelos de 100 épocas (semilla 1, estado final), sin reentrenar nada.
+Definiciones en la Sección~\ref{sec:rdef}.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\textwidth]{latent_100.png}
+\caption{Cada punto es un sujeto (413). Fila 1: las dos componentes principales. Fila 2: t-SNE.
+Fila 3: el puntaje del probe para cada sujeto, calculado sin que el probe lo haya visto; la línea
+punteada es el umbral.}
+\label{fig:latent}
+\end{figure}
+
+\textbf{Cómo leer la Figura~\ref{fig:latent}.} En PCA y t-SNE AD y HC no forman dos grupos, sino un
+gradiente: los AD se concentran hacia un lado, con mucha mezcla en el medio. Es lo esperado
+(Tabla~\ref{tab:expected}). La fila 3 es la que cuantifica la separación lineal: los dos histogramas
+se separan con solapamiento, con AUROC fuera de muestra de 0.858 (VICReg), 0.858 (BYOL) y 0.832
+(DINOv2), frente a 0.842, 0.849 y 0.767 de los mismos encoders sin SSL.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{latent_corr_100.png}
+\caption{Correlación de Spearman de cada variable con las 5 primeras componentes ($\rho$; el signo es
+arbitrario) y con su predicción lineal desde el vector completo ($r$, última columna de cada bloque).}
+\label{fig:latentcorr}
+\end{figure}
+
+\begin{itemize}
+\item \textbf{La 1.ª componente es un eje de atrofia}: ordena el volumen del hipocampo
+  ($|\rho|$ 0.67--0.84), el de los ventrículos (0.68--0.81) y la edad (0.58--0.61), y con ellos el
+  diagnóstico (0.49--0.59).
+\item \textbf{El vector completo codifica casi perfecto la anatomía}: $r$ de 0.88--0.90 para el
+  hipocampo y 0.82--0.88 para los ventrículos. La educación no aparece ($|r|\leq0.06$): es el
+  control negativo.
+\item \textbf{También codifica intensidad y ruido} ($r$ 0.67--0.93): el encoder describe toda la
+  imagen, no solo lo útil para el diagnóstico.
+\item \textbf{La $r$ del diagnóstico} (0.57--0.62) es la del AUROC $\approx$0.83--0.86, con techo de
+  0.87; no hay que compararla de igual a igual con la $r$ de la anatomía.
+\end{itemize}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=0.88\textwidth]{latent_tsne_vars_100.png}
+\caption{El mismo t-SNE de cada modelo, coloreado por cada variable (color = percentil). Una
+variable codificada se ve como un gradiente suave; una no codificada, como sal y pimienta
+(educación). En cada panel, la $r$ de esa variable; con marco de color, las que el embedding predice
+al menos tan bien como el diagnóstico.}
+\label{fig:tsnevars}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{noise_checks_100.png}
+\caption{Tres pruebas de que el eje AD se apoya en la anatomía y no en el ruido. 1: AUROC de test
+con ruido gaussiano añadido al cubo (el probe se ajustó con cubos limpios). 2: ¿el vecino más
+cercano de una sesión es otra sesión del mismo sujeto? 3: correlación parcial de Spearman del puntaje
+AD con cada variable, descontando las otras (marca negra: la del diagnóstico real).}
+\label{fig:noise}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+ & \textcolor{vicregc}{\textbf{VICReg}} & \textcolor{byolc}{\textbf{BYOL}} & \textcolor{dinoc}{\textbf{DINOv2}} \\
+\midrule
+AUROC del probe fuera de muestra (sin SSL entre paréntesis) & 0.86 (0.84) & 0.86 (0.85) & 0.83 (0.77) \\
+Varianza de la 1.ª componente & 0.22 & 0.22 & 0.12 \\
+$|\rho|$ 1.ª componente -- AD & 0.49 & 0.59 & 0.56 \\
+$|\rho|$ 1.ª componente -- volumen del hipocampo & 0.67 & 0.84 & 0.76 \\
+AUROC de test con ruido $\sigma=0.3$ & 0.84 & 0.84 & 0.84 \\
+Otra sesión del mismo sujeto como vecino más cercano & 0.23 & 0.65 & 0.74 \\
+Puntaje AD -- volumen del hipocampo (parcial) & 0.76 & 0.79 & 0.77 \\
+Puntaje AD -- ruido (parcial; diagnóstico real: 0.10) & 0.23 & 0.23 & 0.39 \\
+\bottomrule
+\end{tabular}
+\caption{Resumen del espacio latente a 100 épocas (semilla 1).}
+\label{tab:latent}
+\end{table}
+
+\subsection{Curvas de entrenamiento}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{split361_100_curvas_vicreg.png}
+\includegraphics[width=0.8\textwidth]{split361_100_curvas_byol.png}
+\includegraphics[width=\textwidth]{split361_100_curvas_dinov2.png}
+\caption{Pérdidas SSL en 100 épocas (continua: train; discontinua: validación; gruesa: media de 3
+semillas).}
+\label{fig:curves}
+\end{figure}
+
+\begin{itemize}
+\item \textbf{VICReg}: la pérdida total baja en train y en val, con val ligeramente arriba: el patrón
+  esperado. La invarianza de val queda \emph{debajo} de la de train porque en val las dos vistas
+  se normalizan con las mismas estadísticas de BatchNorm. No hay sobreajuste ni inestabilidad.
+\item \textbf{BYOL}: train baja hasta 0.02, y val baja hasta las épocas 13--17 y luego sube y se
+  estabiliza en 0.24--0.53. No es lo esperado para una curva de clasificador, pero el diagnóstico del
+  informe anterior mostró que viene de que las cabezas se evalúan en otro modo, y que a 100 épocas
+  aparece una brecha pequeña (0.03--0.07) entre sujetos de train y no vistos. El probe no lo nota.
+\item \textbf{DINOv2}: las tres pérdidas bajan hasta el final; val queda sobre train y la brecha se
+  abre desde la época 20, pero val nunca sube. La entropía del profesor se estabiliza en 0.65 de su
+  máximo: sin colapso.
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{supervisado_curvas_100.png}
+\caption{Supervisado: BCE de entrenamiento (continua, con vistas aumentadas y peso por clase) y de
+validación (discontinua, 63 sujetos con cubo limpio, logit sin calibrar), una línea por semilla.
+Punto: la época elegida por AUROC de validación. La ResNet-18 sobreajusta en pocas épocas: su BCE de
+train cae a 0.05 y la de validación salta a 1--4 (predicciones demasiado seguras), aunque su AUROC
+siga alto; por eso el early stopping elige las épocas 6--13.}
+\label{fig:supcurves}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.86\textwidth]{supervised_100.png}
+\caption{Supervisado: la otra mitad de la historia, el AUROC de validación por época.}
+\label{fig:supauc}
+\end{figure}
+
+\subsection{Colapso}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.86\textwidth]{collapse_100.png}
+\caption{Monitor de colapso en los 147 sujetos no vistos (definiciones en la
+Sección~\ref{sec:collapsedef}). Sobre 1, el sujeto pesa más que la augmentation; punteada: la corrida
+de 30 épocas.}
+\label{fig:collapse}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+Al final (época 100) & Var sujeto / Var aug & Rango efectivo & Top-1 de vistas \\
+\midrule
+\textcolor{vicregc}{\textbf{VICReg}} & 47.1 & 9.5 & 0.95 \\
+\textcolor{byolc}{\textbf{BYOL}} & 56.7 & 13.2 & 0.99 \\
+\textcolor{dinoc}{\textbf{DINOv2}} & 17.4 & 25.6 & 1.00 \\
+\bottomrule
+\end{tabular}
+\caption{Ninguno colapsa: los tres reconocen a casi todos los sujetos no vistos entre 147 (azar:
+0.007).}
+\end{table}
+
+\begin{warnbox}[Reconocer al sujeto no es reconocer la enfermedad]
+Los tres aprenden muy bien \emph{quién} es cada sujeto, pero el probe mejora poco sobre sus puntos de
+partida. La identidad del sujeto no basta para separar AD de HC.
+\end{warnbox}
+
+% ============================================================
+\section{En resumen}
+% ============================================================
+
+\begin{enumerate}[leftmargin=16pt]
+\item \textbf{Entrada}: cubos 3D de $32^3$ vóxeles (64\,mm) en posiciones fijas del espacio MNI; el
+  hemisferio derecho espejado; 2 canales (hipocampos) para las CNN y 6 (hipocampo, ventrículo y
+  corteza posteromedial, de cada lado) para el ViT.
+\item \textbf{Pesos}: ImageNet-1k en 2D (torchvision y DeiT), ninguno médico, inflados a 3D con la
+  regla de I3D; en el ViT, además, redimensionado del parche (FlexiViT) y posiciones 3D.
+\item \textbf{Arquitecturas}: ConvNeXt-T 3D (768), ResNet-18 3D sin max-pool (512) y ViT-S 3D con 64
+  parches de $8^3$ (CLS de 384). Solo ese vector se evalúa.
+\item \textbf{Resultados}: el SSL empata con el supervisado completo; frente al encoder sin SSL gana
+  DINOv2 (mucho), VICReg (en CV) y BYOL no; los embeddings ordenan el diagnóstico como un gradiente
+  apoyado en la atrofia del hipocampo, con la edad como confusor.
+\end{enumerate}
+
+\begin{warnbox}[Límites que conviene decir en voz alta]
+\begin{itemize}[leftmargin=12pt]
+\item Una sola cohorte (OASIS3) y un solo split; falta validar en otra cohorte o escáner.
+\item La edad separa AD de HC casi tanto como el diagnóstico.
+\item Test de 84 sujetos: intervalos de $\pm0.05$--$0.07$ de AUROC.
+\item La CV incluye sujetos que el SSL vio (sin etiquetas).
+\item Aún no hay una curva con pocas etiquetas (10, 25, 50\,\% de train), que es donde el SSL debería
+  separarse del supervisado; el código para hacerla existe
+  (\texttt{evaluate\_label\_fractions}).
+\end{itemize}
+\end{warnbox}
+
+\appendix
+\section{Reproducir este documento}
+
+\begin{itemize}
+\item Figuras nuevas (\texttt{ingesta\_3d}, \texttt{volumenes\_3d}, \texttt{architectures\_100},
+  \texttt{metricas\_100\_puntos}, \texttt{supervisado\_curvas\_100}):
+  \texttt{python scripts/build\_report\_metodologia.py}.
+\item Figuras del split y de las vistas: \texttt{python scripts/build\_report\_split361.py};
+  métricas, curvas y colapso a 100 épocas: \texttt{python scripts/report\_split361\_100.py}; espacio
+  latente: \texttt{python scripts/analyze\_latent\_split361.py} con \texttt{-{}-runs split361\_100
+  -{}-out latent\_split361\_100 -{}-suffix \_100}.
+\item Entrenamiento: \texttt{run\_all.py} con \texttt{-{}-epochs 100 -{}-identity -{}-collapse-every 2}
+  y \nolinkurl{vicreg:geo:32:campaign_augval}, \nolinkurl{byol:noise:32:gn_dp0.3_dq0_wd0.01},
+  \nolinkurl{dinov2:elastic:multi3}; supervisado con \texttt{scripts/train\_supervised.py}; encoders
+  sin entrenar con \texttt{train.py -{}-init-only}.
+\item Compilar desde \texttt{docs/}: dos veces \texttt{pdflatex informe\_metodologia\_split361.tex}.
+\end{itemize}
+
+\end{document}

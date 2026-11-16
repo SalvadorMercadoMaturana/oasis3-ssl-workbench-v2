@@ -341,8 +341,25 @@ ARCH = {
 }
 
 
-def fig_architectures() -> None:
+def _arch_100() -> dict:
+    """``ARCH`` with the settings of the 100-epoch run (split361_100)."""
+    arch = json.loads(json.dumps(ARCH))
+    common = ["AdamW · lr 10⁻⁴", "warmup 20 ép. → coseno hasta 10⁻⁶", "lote 16 · 100 épocas · bf16"]
+    arch["vicreg"]["chips"] = [common[0], "weight decay 10⁻⁶", *common[1:], "una sola red: sin copia EMA"]
+    arch["byol"]["heads"] = [["Proyector", "512 → 4096 → 256", "GroupNorm · dropout 0.3 · 3.2 M"],
+                             ["Predictor", "256 → 4096 → 256", "GroupNorm · 2.1 M"]]
+    arch["byol"]["chips"] = [common[0], "weight decay 0.01", *common[1:], "EMA τ 0.996 → 1"]
+    arch["dinov2"]["chips"] = [common[0], "weight decay 0.04 → 0.2", *common[1:],
+                               "recorte de gradiente 3.0", "drop path 0.1"]
+    return arch
+
+
+ARCH_100 = _arch_100()
+
+
+def fig_architectures(arch: dict | None = None, name: str = "architectures.png") -> None:
     """One card per model: input → encoder → probe vector → heads → loss, plus key settings."""
+    arch = arch or ARCH
     from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Polygon
     card_h, card_gap = 32.0, 2.0
     fig = plt.figure(figsize=(10.6, 10.2))
@@ -370,7 +387,7 @@ def fig_architectures() -> None:
             ax.plot([x, x + s], [y + k * s / 3] * 2, color="white", lw=0.6, zorder=4)
 
     for row, model in enumerate(("vicreg", "byol", "dinov2")):
-        spec, color = ARCH[model], COLOR[model]
+        spec, color = arch[model], COLOR[model]
         y0 = (2 - row) * (card_h + card_gap)
         cy = y0 + 17.5
         rbox(0.6, y0 + 0.4, 98.8, card_h - 0.8, fc=color, ec=color, alpha=0.07, r=2.0, z=1)
@@ -455,7 +472,7 @@ def fig_architectures() -> None:
                               "lw": 0.9})
             box = t.get_window_extent(renderer).transformed(ax.transData.inverted())
             x = box.x1 + 1.6
-    save(fig, "architectures.png")
+    save(fig, name)
 
 
 # ---------------------------------------------------------------- results
