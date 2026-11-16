@@ -48,10 +48,14 @@ REFERENCE = {
                  "vicreg_init" + SUFFIX),
     "init_vit": ("sin SSL ViT-S", "#cfcdc6", (OLD, "dino_fix_init"),
                  "dinov2_init__bbvit_small__roi32"),
+    # end-to-end AD/HC training of the same ConvNeXt-T start with the geo views
+    # (scripts/train_supervised.py); folds 1-4 under outer_f<k>_sup
+    "sup_cnx": ("Supervisado completo ConvNeXt-T", "#5f6b73", (OLD, "v2_sup"),
+                "vicreg_supervised__geo" + SUFFIX),
 }
 PRETEXT_COLORS = ("#6250d6", "#e87ba4")
 # figure / table order (adjacent hues validated with the dataviz palette validator)
-ORDER = ("vicreg", "byol", "dino_cnx", "dino_vit", "init_cnx", "init_vit")
+ORDER = ("vicreg", "byol", "dino_cnx", "dino_vit", "init_cnx", "init_vit", "sup_cnx")
 TASK_LABEL = {"rot4": "rotación 4", "rot10": "rotación 10", "rot24": "rotación 24",
               "jig24": "orden 24", "jig100": "orden 100"}
 
@@ -72,6 +76,8 @@ def fold_source(key: str, k: int, pretext: tuple[str, str] | None = None
     _, _, (root, tag), name = REFERENCE[key]
     if k == 0:
         return root, tag, name
+    if key.startswith("sup"):
+        return NEW, f"outer_f{k}_sup", name
     return NEW, f"outer_f{k}_init" if key.startswith("init") else f"outer_f{k}", name
 
 
