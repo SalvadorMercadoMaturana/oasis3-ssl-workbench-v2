@@ -32,14 +32,18 @@ scripts/calibrate_spike_elastic.py).
 
 from __future__ import annotations
 
+import itertools
+
 MANIFEST = "campaign_full50_pretrained_balanced/train_sessions_eval_primary_balanced.csv"
-MODELS = ("byol", "vicreg", "dinov2")
+MODELS = ("byol", "vicreg", "dinov2", "pretext")
 
 BASE = {
     "vicreg": ["model=vicreg_convnext_3d", "loss=vicreg", "augmentation=roi3d_bias"],
     "byol": ["model=byol_resnet18_3d", "loss=byol", "augmentation=roi3d_bias"],
     "dinov2": ["model=dinov2_vit3d", "loss=dinov2", "augmentation=roi3d_dinov2_bias",
                "optimizer=adamw_dinov2"],
+    # pseudo-label pretext tasks (rotation / jigsaw order), t5_ssl.models.pretext_module
+    "pretext": ["model=pretext_convnext_3d", "loss=pretext", "augmentation=roi3d_bias"],
 }
 
 BORDER = ["augmentation.rotation_padding=border"]
@@ -71,7 +75,39 @@ VARIANTS: dict[str, dict[str, list[str]]] = {
                # SSL validation on augmented views (fixed per session) instead of cube vs mirror.
                "campaign_augval": ["++augmentation.val_views=train"]},
     "dinov2": {"campaign": []},
+    # Pseudo-label pretext tasks: rotation classes (4 axial, 10 Taleb et al. 2020, 24 cube
+    # group) and/or the order of the 2x2x2 octants (jigsaw, P max-Hamming permutations).
+    "pretext": {},
 }
+_ROT = {"rot4": 4, "rot10": 10, "rot24": 24}
+_JIG = {"jig24": 24, "jig100": 100}
+for _r, _k in _ROT.items():
+    VARIANTS["pretext"][_r] = [f"loss.rotation_classes={_k}", "loss.jigsaw_permutations=0"]
+    for _j, _p in _JIG.items():
+        VARIANTS["pretext"][f"{_r}_{_j}"] = [f"loss.rotation_classes={_k}",
+                                             f"loss.jigsaw_permutations={_p}"]
+for _j, _p in _JIG.items():
+    VARIANTS["pretext"][_j] = ["loss.rotation_classes=0", f"loss.jigsaw_permutations={_p}"]
+VARIANTS["pretext"]["campaign"] = VARIANTS["pretext"]["rot10"]
+# Tuning grid on top of any pretext task: _lr{learning rate}, _wd{weight decay},
+# _ls{label smoothing}, _gap{jigsaw gap}, _h{head width}.
+_PRETEXT_TUNING = {
+    **{f"lr{v:g}": [f"optimizer.lr={v}"] for v in (3e-5, 3e-4, 1e-3)},
+    **{f"wd{v:g}": [f"optimizer.weight_decay={v}"] for v in (0.01, 0.05)},
+    **{f"ls{v:g}": [f"loss.label_smoothing={v}"] for v in (0.1, 0.2)},
+    **{f"gap{v}": [f"loss.jigsaw_gap={v}"] for v in (0, 4)},
+    **{f"h{v}": [f"model.projector.hidden_dim={v}"] for v in (128, 2048)},
+}
+for _base in list(VARIANTS["pretext"]):
+    if _base == "campaign":
+        continue
+    for _t, _o in _PRETEXT_TUNING.items():
+        VARIANTS["pretext"][f"{_base}_{_t}"] = VARIANTS["pretext"][_base] + _o
+    for _t1, _t2 in itertools.combinations(_PRETEXT_TUNING, 2):
+        if _t1[:2] != _t2[:2]:
+            VARIANTS["pretext"][f"{_base}_{_t1}_{_t2}"] = (VARIANTS["pretext"][_base]
+                                                         + _PRETEXT_TUNING[_t1]
+                                                         + _PRETEXT_TUNING[_t2])
 
 # DINOv2 sized to this dataset (2026-11-07 diagnosis). The campaign recipe kept DINOv2's
 # 4096 prototypes for 743 training subjects and balanced the teacher targets with
@@ -124,7 +160,8 @@ BACKBONES: dict[str, list[str]] = {
 # ViT-S starting from Meta's DINOv2 ViT-S/14 (LVD-142M) instead of DeiT-S, same inflation.
 BACKBONES["vit_small_dv2"] = [o.replace("deit_small_in1k", "dinov2_vits14")
                               for o in BACKBONES["vit_small"]]
-DEFAULT_BACKBONE = {"vicreg": "convnext_tiny", "byol": "resnet18", "dinov2": "vit_small"}
+DEFAULT_BACKBONE = {"vicreg": "convnext_tiny", "byol": "resnet18", "dinov2": "vit_small",
+                    "pretext": "convnext_tiny"}
 
 
 # ---------------------------------------------------------------- regions of interest

@@ -44,6 +44,7 @@ from t5_ssl.models.dinov2_module import DINOv2LightningModule
 from t5_ssl.models.heads.dino_head import DINOHead
 from t5_ssl.models.heads.projector import MLPProjector
 from t5_ssl.models.mae_module import MAELightningModule, MAEVICRegLightningModule
+from t5_ssl.models.pretext_module import PretextLightningModule
 from t5_ssl.models.ssl_module import SSLLightningModule
 from t5_ssl.models.vicreg_module import VICRegLightningModule
 from t5_ssl.utils.logging import get_logger
@@ -73,6 +74,9 @@ def get_experiment_dir_name(cfg: DictConfig) -> str:
         params_parts.append(f"mask{cfg.loss.get('mask_probability', 0.5):g}x{low:g}-{high:g}")
     elif loss_name in ("mae", "mae_vicreg"):
         params_parts.append(f"mask{cfg.loss.get('mask_ratio', 0.6):g}")
+    elif loss_name == "pretext":
+        params_parts.append(f"rot{cfg.loss.get('rotation_classes', 10)}"
+                            f"-jig{cfg.loss.get('jigsaw_permutations', 0)}")
 
     # Model backbone variant
     backbone_variant = str(cfg.model.backbone.get("variant", "convnext_tiny"))
@@ -434,7 +438,7 @@ def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> d
             dropout=proj_cfg.get("dropout", 0.0),
         )
 
-    loss_fn = build_loss(cfg) if loss_name != "mae_vicreg" else None
+    loss_fn = build_loss(cfg) if loss_name not in ("mae_vicreg", "pretext") else None
 
     # 5. Lightning Module
     opt_cfg = cfg.optimizer
@@ -486,6 +490,19 @@ def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> d
             teacher_temp_warmup_epochs=cfg.loss.get("teacher_temp_warmup_epochs", 30),
             freeze_last_layer_epochs=cfg.loss.get("freeze_last_layer_epochs", 1),
             weight_decay_end=opt_cfg.get("weight_decay_end", None),
+        )
+    elif loss_name == "pretext":
+        module_kwargs.pop("projector")
+        module_kwargs.pop("loss_fn")
+        model = PretextLightningModule(
+            **module_kwargs,
+            rotation_classes=int(cfg.loss.get("rotation_classes", 10)),
+            jigsaw_permutations=int(cfg.loss.get("jigsaw_permutations", 0)),
+            jigsaw_gap=int(cfg.loss.get("jigsaw_gap", 2)),
+            head_hidden=int(proj_cfg.get("hidden_dim", 512)),
+            rotation_weight=float(cfg.loss.get("rotation_weight", 1.0)),
+            jigsaw_weight=float(cfg.loss.get("jigsaw_weight", 1.0)),
+            label_smoothing=float(cfg.loss.get("label_smoothing", 0.0)),
         )
     elif loss_name == "vicreg":
         model = VICRegLightningModule(**module_kwargs, queue_size=cfg.loss.get("queue_size", 0))

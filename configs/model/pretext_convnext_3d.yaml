@@ -1,0 +1,11 @@
+# @package model
+# Pseudo-label pretext tasks (rotation / jigsaw order, t5_ssl.models.pretext_module) on
+# the same ImageNet ConvNeXt-T inflated to 3D as VICReg. ``projector`` holds the width of
+# the two-layer MLP heads (backbone feature -> hidden -> classes).
+backbone:
+  variant: convnext_tiny_3d
+  in_channels: 2
+  pretrained: true
+
+projector:
+  hidden_dim: 512

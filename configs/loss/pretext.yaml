@@ -1,0 +1,13 @@
+# @package loss
+# Pseudo-label pretext tasks (t5_ssl.models.pretext_module): cross-entropy on the
+# transformation applied to each view. rotation_classes: 0 (off), 4, 10 (Taleb et al.
+# 2020) or 24 (cube rotation group); jigsaw_permutations: 0 (off) or the size of the
+# max-Hamming permutation set of the 2x2x2 octants; jigsaw_gap: voxels removed from each
+# 16-voxel octant (tile side 16 - gap, random offset).
+name: "pretext"
+rotation_classes: 10
+jigsaw_permutations: 0
+jigsaw_gap: 2
+rotation_weight: 1.0
+jigsaw_weight: 1.0
+label_smoothing: 0.0
