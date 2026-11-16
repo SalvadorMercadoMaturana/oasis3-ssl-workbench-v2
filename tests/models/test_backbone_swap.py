@@ -22,7 +22,9 @@ def test_backbone_overrides_come_after_the_method_and_name_the_run():
     assert recipes.overrides("vicreg") == recipes.overrides("vicreg", backbone=None)
     assert recipes.run_name("byol", "campaign", 2, "noise", "32", "vit_small") == \
         "byol_campaign__noise__bbvit_small__roi32_s2"
-    assert set(recipes.DEFAULT_BACKBONE.values()) == set(recipes.BACKBONES)
+    # every method's own encoder is a swappable backbone; the only extra one is the ViT-S
+    # starting from Meta's DINOv2 weights (2026-11-07)
+    assert set(recipes.BACKBONES) - set(recipes.DEFAULT_BACKBONE.values()) == {"vit_small_dv2"}
 
 
 def test_dinov2_on_a_cnn_distills_the_pooled_embedding_without_ibot():
