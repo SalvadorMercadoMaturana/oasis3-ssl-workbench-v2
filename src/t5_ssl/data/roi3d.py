@@ -225,6 +225,22 @@ def build_region_cache(cache_path: str | Path, *, csv_path: str, lmdb_path: str,
     return meta
 
 
+def crop_cubes(volume: np.ndarray, starts: dict[str, list[int]], extract: int) -> np.ndarray:
+    """Cut a cache's cubes from one normalized MRI at the cache's own ``cube_starts``.
+
+    Channels in cube_starts order; ``*right`` cubes mirrored left-right. Extends a cache
+    with new sessions (scripts/1_data/extend_roi_caches.py) and cuts the cubes of new
+    scans (scripts/6_deploy/predict_ad.py).
+    """
+    out = np.empty((len(starts), extract, extract, extract), dtype=np.float16)
+    for channel, (key, (a, b, c)) in enumerate(starts.items()):
+        cube = volume[a:a + extract, b:b + extract, c:c + extract]
+        if cube.shape != (extract,) * 3:
+            raise RuntimeError(f"{key} cube leaves the volume: start={(a, b, c)}")
+        out[channel] = np.flip(cube, axis=LR_AXIS) if key.endswith("right") else cube
+    return out
+
+
 def swap_hemispheres(view: torch.Tensor) -> torch.Tensor:
     """Anatomical left-right flip: swap the [left, right mirrored] channels of every pair."""
     return view.reshape(-1, 2, *view.shape[1:]).flip(1).reshape(view.shape)
@@ -377,7 +393,7 @@ def load_external(name: str, csv_path: str | Path, cache_path: str | Path) -> di
     """Load an external labeled test set (another cohort) for the probes.
 
     ``csv_path`` rows (subject, idx, group AD/HC); the cubes live in ``<name>_<cache>``
-    next to ``cache_path`` (scripts/extend_roi_caches.py --into).
+    next to ``cache_path`` (scripts/1_data/extend_roi_caches.py --into).
     """
     cache = Path(cache_path)
     cache = cache.with_name(f"{name}_{cache.name}")
@@ -541,7 +557,7 @@ class ROI3DDataModule(L.LightningDataModule):
 
     def prepare_data(self) -> None:
         if not Path(self.cache_path).is_file():
-            raise FileNotFoundError(f"{self.cache_path}: run scripts/run_roi3d.py preprocess first")
+            raise FileNotFoundError(f"{self.cache_path}: run scripts/legacy/run_roi3d.py preprocess first")
 
     def setup(self, stage: str | None = None) -> None:
         del stage
