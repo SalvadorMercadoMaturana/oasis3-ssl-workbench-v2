@@ -1,24 +1,39 @@
 #!/usr/bin/env python
-"""Train one SSL model on the 3D hippocampal ROI pair, fast (RTX 4090 / RunPod).
+"""Train and evaluate one SSL model on 3D ROI cubes (entry point of every campaign since 2026-10).
 
-    python train.py --model byol|vicreg|dinov2 [--variant border_h3] [--epochs 50] [--seed 1]
+    python train.py --model byol|vicreg|dinov2|pretext [--variant V] [--aug-recipe R]
+                    [--roi 32|48|64|multi3|atrophy5] [--backbone B] [--epochs 50] [--seed 1]
+    python train.py --model byol --dry-run      # print the composed configuration only
 
-Composes the campaign protocol of ``scripts/run_ssl3d_v2.py`` through
-``t5_ssl.recipes`` (same split, views, schedules and probes) and, unless
-``--no-fast``, the ``perf=rtx4090`` runtime: bf16 autocast, TF32, fused AdamW,
-channels_last_3d, ``torch.compile`` with fallback and persistent pinned
-DataLoader workers. Everything degrades gracefully without a GPU.
+What one call does (``run``):
 
-Outputs go to ``<out-root>/<tag>/<model>_<variant>_s<seed>/``: the Lightning
-logs and rotated checkpoints, ``perf.json`` (s/epoch, images/s, peak VRAM),
-``result.json`` (probe metrics as in campaign_ssl3d_v2 plus the spatial probe),
-and ``encoders.pt`` with ``--export-encoders``.
+1. Configuration. ``build_overrides`` turns the flags into Hydra overrides through
+   ``t5_ssl.recipes`` (split manifest, views, schedule, encoder, run name) and ``compose``
+   builds the configuration from ``configs/``.
+2. Training. ``t5_ssl.train.train`` (data module, encoder, SSL module, Lightning trainer).
+   CUDA out-of-memory errors are retried with half the batch and twice the gradient
+   accumulation (same effective batch); exit code 75 means the retries ran out.
+   ``--init-only`` skips training and scores the encoder SSL would start from (the
+   "sin SSL" control).
+3. Evaluation. ``t5_ssl.evaluation.run_scoring.evaluate_encoders`` freezes the encoder
+   (DINOv2: the EMA teacher, plus the student) and fits the linear AD-vs-HC probes of
+   protocol v1 and v2; ``--external NAME=CSV`` adds other cohorts (ADNI), ``--identity``
+   identity/collapse scores on held-out subjects, ``--spatial-probe`` a second probe on the
+   feature map before global pooling (pooled to 2x2x2).
+4. Outputs. ``save_artifacts`` and ``write_result`` write, in
+   ``<out-root>/<tag>/<run name>/`` (``recipes.run_name``, e.g.
+   ``byol_wide_dproj0.1__noise__roi32_s1``), next to the Lightning logs and rotated
+   checkpoints: ``result.json`` (probe metrics, training curves, runtime), ``perf.json``
+   (s/epoch, images/s, peak VRAM) and, on request, ``embeddings.npz``, ``encoder.pt``
+   (fp16, ``--export-encoder``) and ``encoders.pt`` (every encoder, ``--export-encoders``).
 
-CUDA out-of-memory errors are retried with half the batch and twice the
-gradient accumulation (same effective batch); exit code 75 means the retries
-ran out. ``--bench-steps N`` times N optimizer steps instead (bench.py).
-The original Hydra entry point (``python -m t5_ssl.train`` / ``t5-ssl-train``)
-is untouched.
+Unless ``--no-fast``, the ``perf=rtx4090`` runtime is on: bf16 autocast, TF32, fused AdamW,
+channels_last_3d, optional ``torch.compile`` with fallback and persistent pinned DataLoader
+workers. Everything degrades gracefully without a GPU (``--cpu`` forces it).
+``--bench-steps N`` times N optimizer steps instead of training (``cloud/bench.py``).
+
+Many runs on one GPU: ``cloud/run_all.py`` and ``cloud/queue_runner.py``. The plain Hydra
+entry point (``python -m t5_ssl.train`` / ``t5-ssl-train``) trains without evaluating.
 """
 
 from __future__ import annotations
@@ -34,9 +49,8 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent
-for path in (ROOT / "src", ROOT / "scripts"):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
+if str(ROOT / "src") not in sys.path:  # also without `pip install -e .`
+    sys.path.insert(0, str(ROOT / "src"))
 
 from t5_ssl import recipes  # noqa: E402  (light: no torch)
 
@@ -55,7 +69,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--precision", default="bf16-mixed",
                         help="Lightning precision (degrades to 16-mixed / 32-true when unsupported)")
     parser.add_argument("--compile", choices=("on", "off"), default="off",
-                        help="torch.compile the encoders (bench.py: slower at batch 16 of 32^3)")
+                        help="torch.compile the encoders (cloud/bench.py: slower at batch 16 of 32^3)")
     parser.add_argument("--compile-modes", default="default,reduce-overhead",
                         help="torch.compile modes tried in order before falling back to eager")
     parser.add_argument("--channels-last", choices=("on", "off"), default="on")
@@ -170,167 +184,6 @@ def free_cuda() -> None:
         torch.cuda.reset_peak_memory_stats()
 
 
-# ---------------------------------------------------------------- evaluation
-def spatial_encoder(backbone: Any) -> Any:
-    """Pre-GAP feature map average-pooled to 2^3 cells and flattened (probe H4).
-
-    ResNet-18 3D: layer4 (512 x 2^3 = 4096); ConvNeXt-T 3D: stage 3, the last
-    map wider than one voxel at 32^3 (384 x 2^3 = 3072); ViT-S 3D: the 4^3 patch
-    tokens pooled to 2^3 (384 x 8 = 3072).
-    """
-    import torch.nn.functional as F
-    from torch import nn
-
-    class SpatialEncoder(nn.Module):
-        def __init__(self, inner: nn.Module) -> None:
-            super().__init__()
-            self.inner = inner
-
-        def forward(self, x: Any) -> Any:
-            b = self.inner
-            if hasattr(b, "forward_tokens"):
-                _, patches = b.forward_tokens(x)
-                grid = round(patches.shape[1] ** (1 / 3))
-                fmap = patches.transpose(1, 2).reshape(x.shape[0], -1, grid, grid, grid)
-            elif hasattr(b, "layer4"):
-                h = b.relu(b.bn1(b.conv1(x)))
-                fmap = b.layer4(b.layer3(b.layer2(b.layer1(h))))
-            else:
-                fmap = b.features[:6](x)
-            return F.adaptive_avg_pool3d(fmap, 2).flatten(1)
-
-    return SpatialEncoder(backbone)
-
-
-def evaluate(model_name: str, encoders: dict[str, Any], dm: Any, cfg: Any,
-             spatial: bool, keep_embeddings: bool = False) -> dict[str, Any]:
-    """Score each encoder as campaign_ssl3d_v2 (CV 5x5 on train+val, test probe)."""
-    import warnings
-
-    import run_ssl3d_v2 as v2
-    import torch
-
-    from t5_ssl.data.roi3d import ROIEval3D
-    warnings.filterwarnings("ignore", category=FutureWarning, module="sklearn")
-    # Probe features in full fp32, as the campaigns computed them.
-    torch.backends.cuda.matmul.allow_tf32 = False
-    torch.backends.cudnn.allow_tf32 = False
-    clean = ROIEval3D(int(cfg.data.roi_size))
-    out: dict[str, Any] = {}
-    for role, encoder in encoders.items():
-        for attr in ("forward", "forward_tokens"):  # compiled entry points -> eager again
-            if attr in encoder.__dict__:
-                delattr(encoder, attr)
-        encoder = encoder.float().to(memory_format=torch.contiguous_format)
-        start = time.time()
-        out[role] = v2.score(encoder, dm, clean, role == "main")
-        if role == "main":
-            out[role]["protocol_v2"] = protocol_v2(encoder, dm, cfg, out[role]["_embeddings"])
-            if not keep_embeddings:
-                out[role].pop("_embeddings")
-        if spatial:
-            spatial_scores = v2.score(spatial_encoder(encoder), dm, clean)
-            out[role]["spatial"] = {k: v for k, v in spatial_scores.items()
-                                    if k not in ("subjects", "labels")}
-        out[role]["eval_minutes"] = (time.time() - start) / 60
-        print(f"[eval] {model_name}/{role}: cv={mean3_cv(out[role]):.3f} "
-              f"test={mean3_test(out[role]):.3f} erank={out[role]['effective_rank']:.1f}"
-              + (f" | spatial cv={mean3_cv(out[role]['spatial']):.3f} "
-                 f"test={mean3_test(out[role]['spatial']):.3f}" if spatial else ""), flush=True)
-    return out
-
-
-def protocol_v2(encoder: Any, dm: Any, cfg: Any, embeddings: dict) -> dict[str, Any]:
-    """Score the encoder with probe protocol v2 (scripts/probe_protocol.py).
-
-    Representative CV with the SSL-only AD/HC subjects of train, out-of-sample F1
-    thresholds, AUPR/F1 at the cohort prevalence.
-
-    Adds the pool embeddings to ``embeddings`` (saved as ``pool_*`` with --save-embeddings).
-    """
-    import numpy as np
-    import probe_protocol as pp
-    import torch
-
-    from t5_ssl.data.roi3d import ROIEval3D
-    manifest = Path(cfg.data.manifest_path)
-    records = pp.pool_records(manifest)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    encoder = encoder.to(device).eval()
-    clean = ROIEval3D(int(cfg.data.roi_size))
-    chunks = []
-    with torch.inference_mode():
-        for start in range(0, len(records), 64):
-            batch = torch.stack([clean(torch.from_numpy(
-                np.asarray(dm.cubes[r["idx"]], dtype=np.float32))) for r in records[start:start + 64]])
-            chunks.append(encoder(batch.to(device)).float().cpu().numpy())
-    dim = embeddings["cv"][0].shape[1]
-    x_pool = np.concatenate(chunks) if chunks else np.zeros((0, dim), np.float32)
-    embeddings["pool"] = (x_pool, np.array([r["label"] for r in records], dtype=int),
-                          [r["subject"] for r in records])
-    ages = pp.session_ages(manifest)
-    extra = {k: v for k, v in embeddings.items() if k not in ("cv", "train", "val", "test", "pool")}
-    doc = pp.evaluate(embeddings["cv"], embeddings["pool"], embeddings["test"], ages, extra)
-    r, t = doc["cv_rep"], doc["test"]
-    print(f"[eval v2] rep CV AUROC {r['auc']:.3f} AUPR {r['aupr']:.3f} F1 {r['f1_macro']:.3f} "
-          f"mean3 {r['mean3']:.3f} | test {t['auc']:.3f}/{t['aupr']:.3f}/{t['f1_macro']:.3f}",
-          flush=True)
-    return doc
-
-
-def identity_scores(encoder: Any, dm: Any, cfg: Any) -> dict[str, Any]:
-    """Identity retention and collapse on the val + test subjects (one session each).
-
-    Under the run's own training views and under a fixed reference set (the
-    campaign geometry with border padding + bias field, the same for every
-    recipe): centered cosine same vs different subject, top-1 view matching,
-    between-subject variance of the clean cube over within-subject variance of
-    the views (``between_over_within`` = Var_subject / Var_aug) and the
-    effective rank (variance spectrum) of the clean embeddings.
-    """
-    import analyze_ssl3d_encoders as enc
-    import numpy as np
-    import torch
-    from omegaconf import OmegaConf
-
-    from t5_ssl.data.roi3d import ROIEval3D, analysis_views, build_roi3d_transforms
-    for attr in ("forward", "forward_tokens"):
-        if attr in encoder.__dict__:
-            delattr(encoder, attr)
-    encoder = encoder.float().to(memory_format=torch.contiguous_format)
-    records = dm.val_dataset.records + dm.test_dataset.records
-    cubes = [torch.from_numpy(dm.cubes[r["idx"]].astype(np.float32)) for r in records]
-    size = int(cfg.data.roi_size)
-    clean = enc.embed(encoder, [ROIEval3D(size)(c) for c in cubes])
-    reference = OmegaConf.create({"data": {"roi_size": size},
-                                  "augmentation": recipes.aug_spec("campaign_border", size)})
-    out: dict[str, Any] = {"subjects": len(cubes)}
-    own_cfg = cfg
-    if cfg.augmentation.get("gpu_elastic"):  # same deformation, CPU (TorchIO) version
-        own_cfg = OmegaConf.create({"data": {"roi_size": size},
-                                    "augmentation": recipes.aug_spec("elastic", size)})
-    own = (analysis_views(cfg) if cfg.augmentation.get("tio_gpu_elastic")
-           else build_roi3d_transforms(own_cfg)[0])
-    for name, transform in (("own", own),
-                            ("reference", build_roi3d_transforms(reference)[0])):
-        first, second = enc.views(transform, cubes, seed=0)
-        out[name] = enc.scores(clean, enc.embed(encoder, first), enc.embed(encoder, second))
-    print(f"[identity] own: Var_subject/Var_aug={out['own']['between_over_within']:.3g} "
-          f"same={out['own']['same_subject_cos']:.3f} diff={out['own']['different_subject_cos']:.3f} "
-          f"erank={out['own']['effective_rank']:.2f}", flush=True)
-    return out
-
-
-def mean3_cv(doc: dict) -> float:
-    m = doc["cv"]["clean"]["metrics"]
-    return (m["auc"] + m["f1"] + m["aupr"]) / 3
-
-
-def mean3_test(doc: dict) -> float:
-    t = doc["test"]
-    return (t["test_auc"] + t["test_f1_macro"] + t["test_average_precision"]) / 3
-
-
 # ---------------------------------------------------------------- main
 def run(args: argparse.Namespace) -> int:
     batch_size, accumulate = args.batch_size, args.accumulate
@@ -349,6 +202,8 @@ def run(args: argparse.Namespace) -> int:
         return 0
     import torch
 
+    from t5_ssl.evaluation.identity import identity_scores
+    from t5_ssl.evaluation.run_scoring import evaluate_encoders
     from t5_ssl.train import build_backbone, build_datamodule, train
     from t5_ssl.utils.runtime import StepTimer
     started = time.time()
@@ -364,8 +219,8 @@ def run(args: argparse.Namespace) -> int:
             dm.setup()
             attach_externals(dm, args, cfg)
             encoder = build_backbone(cfg)
-            scored = evaluate(args.model, {"main": encoder}, dm, cfg,
-                              args.spatial_probe, args.save_embeddings)
+            scored = evaluate_encoders(args.model, {"main": encoder}, dm, cfg,
+                                       args.spatial_probe, args.save_embeddings)
             exp_dir = Path(cfg.log_root) / cfg.run_name
             exp_dir.mkdir(parents=True, exist_ok=True)
             save_artifacts(exp_dir, args, overrides, scored, encoder, "backbone")
@@ -426,7 +281,8 @@ def run(args: argparse.Namespace) -> int:
     scored = None
     attach_externals(dm, args, cfg)
     if not args.no_eval:
-        scored = evaluate(args.model, encoders, dm, cfg, args.spatial_probe, args.save_embeddings)
+        scored = evaluate_encoders(args.model, encoders, dm, cfg, args.spatial_probe,
+                                   args.save_embeddings)
     save_artifacts(exp_dir, args, overrides, scored, encoders["main"],
                    "teacher_backbone" if args.model == "dinov2" else "backbone")
     identity = identity_scores(encoders["main"], dm, cfg) if args.identity else None
@@ -466,6 +322,8 @@ def write_result(exp_dir: Path, args: argparse.Namespace, overrides: list[str],
                  scored: dict | None, runtime: dict | None, started: float,
                  attempts: list[dict], init: bool = False,
                  identity: dict | None = None) -> None:
+    from t5_ssl.evaluation.run_scoring import mean3_cv, mean3_test
+
     perf_path = exp_dir / "perf.json"
     perf = json.loads(perf_path.read_text(encoding="utf-8")) if perf_path.is_file() else None
     doc: dict[str, Any] = {"model": args.model, "variant": "init" if init else args.variant,
@@ -489,8 +347,8 @@ def write_result(exp_dir: Path, args: argparse.Namespace, overrides: list[str],
     if (exp_dir / "collapse.json").is_file():
         doc["collapse"] = json.loads((exp_dir / "collapse.json").read_text(encoding="utf-8"))
     if (exp_dir / "metrics.csv").is_file():
-        import run_ssl3d_v2 as v2
-        doc["training_metrics"] = v2.epoch_metrics(exp_dir)
+        from t5_ssl.evaluation.curves import epoch_metrics
+        doc["training_metrics"] = epoch_metrics(exp_dir)
     (exp_dir / "result.json").write_text(json.dumps(doc) + "\n", encoding="utf-8")
     print(f"[done] {exp_dir.as_posix()} in {doc['minutes']:.1f} min"
           + (f" cv={doc['cv_mean3']:.3f} test={doc['test_mean3']:.3f}" if scored else ""),

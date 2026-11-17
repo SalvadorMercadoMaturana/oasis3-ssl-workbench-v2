@@ -1,4 +1,27 @@
-"""Main training script for Self-Supervised Learning with Hydra configuration."""
+"""Train one self-supervised model: what ``python train.py`` and ``python -m t5_ssl.train`` run.
+
+``train(cfg)`` takes a composed Hydra config (``configs/train.yaml`` + its groups; the root
+``train.py`` composes it from ``t5_ssl.recipes``) and runs these steps, in this order:
+
+1. ``make_experiment_dir``: ``<log_root>/<run_name>/`` with the resolved ``config.yaml``.
+2. ``build_transforms``: the training views and the deterministic evaluation views
+   (3D ROI cubes: ``t5_ssl.data.roi3d``; 2D slices: ``t5_ssl.data.augmentations``).
+3. ``build_datamodule``: ROI cubes (``roi3d``), LMDB slices or NIfTI slices.
+4. ``build_backbone``: the encoder (ResNet / ConvNeXt / ViT, 2D or 3D).
+5. ``build_ssl_module``: projector + loss + the method's LightningModule
+   (VICReg, BYOL, DINOv2, pretext, MAE, MAE+VICReg).
+6. ``build_callbacks``: early stopping and checkpoints.
+7. ``dm.setup`` + ``write_split_records``: ``subject_splits.csv`` and ``data_records.csv``.
+8. ``build_trainer``: health callback (2D), gradient clipping, precision, runtime profile
+   (``configs/perf``) and the Lightning ``Trainer``.
+9. ``trainer.fit``; the final state is saved as ``checkpoints/last.ckpt``.
+
+The steps keep the order the campaigns ran them in, so every random draw (weight
+initialization, the example batch of ``apply_runtime``) happens in the same sequence
+and a seed reproduces the same run as before the 2026-11-16 restructuring.
+
+The frozen-encoder evaluation is not done here: see ``t5_ssl.evaluation``.
+"""
 
 from __future__ import annotations
 
@@ -326,18 +349,9 @@ def _build_health_callback(
     )
 
 
-def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> dict[str, Any]:
-    """Execute the full SSL training pipeline given a composed Hydra DictConfig."""
-    # Sanitize environment and warnings before Lightning or PyTorch initialization
-    _sanitize_environment(accelerator=cfg.trainer.get("accelerator"))
-
-    logger.info("Starting T5-SSL Training with configuration:\n%s", OmegaConf.to_yaml(cfg))
-
-    # Set deterministic random seed
-    if cfg.get("seed") is not None:
-        L.seed_everything(cfg.seed, workers=True)
-
-    # 1. Setup unified experiment directory: logs/[loss-params-date-time]/
+# ---------------------------------------------------------------- pipeline steps
+def make_experiment_dir(cfg: DictConfig) -> Path:
+    """Step 1: claim ``<log_root>/<run_name>`` (suffixed if taken) and save ``config.yaml``."""
     # Runs started in the same second get the same timestamped name; claim the
     # directory atomically and suffix it instead of mixing two runs' files.
     # `log_root` / `run_name` (optional) give orchestrated runs fixed locations.
@@ -357,8 +371,11 @@ def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> d
     # Save resolved config into experiment directory
     with open(exp_dir / "config.yaml", "w", encoding="utf-8") as f:
         f.write(OmegaConf.to_yaml(cfg))
+    return exp_dir
 
-    # 2. Augmentations
+
+def build_transforms(cfg: DictConfig) -> tuple[Any, Any]:
+    """Step 2: the training views and the deterministic evaluation views of the method."""
     aug_cfg = cfg.augmentation
     image_size = tuple(aug_cfg.get("image_size", (224, 224)))
     loss_name = str(cfg.loss.name).lower()
@@ -404,43 +421,46 @@ def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> d
     else:
         train_transform = SSLViewTransform(**transform_kwargs)
         eval_transform = DeterministicSSLViews(image_size=image_size, **eval_view_kwargs)
+    return train_transform, eval_transform
 
-    # 3. DataModule
-    dm = build_datamodule(cfg, train_transform, eval_transform)
 
-    # 4. Backbone, Projector, and Loss
-    backbone = build_backbone(cfg)
+def _dino_head(proj_cfg: DictConfig, in_dim: int) -> DINOHead:
+    """DINO/DINOv2 head: MLP -> L2-normalized bottleneck -> cosine prototypes."""
+    return DINOHead(
+        in_dim=in_dim,
+        out_dim=proj_cfg.get("out_dim", 4096),
+        hidden_dim=proj_cfg.get("hidden_dim", 2048),
+        bottleneck_dim=proj_cfg.get("bottleneck_dim", 256),
+        num_layers=proj_cfg.get("num_layers", 3),
+        use_bn=proj_cfg.get("use_bn", False),
+    )
 
+
+def build_projector(cfg: DictConfig, backbone: nn.Module) -> nn.Module:
+    """Build the head on the pooled embedding: DINO head for DINOv2, MLP projector otherwise."""
     proj_cfg = cfg.model.projector
+    if str(cfg.loss.name).lower() == "dinov2":
+        return _dino_head(proj_cfg, backbone.out_dim)
+    return MLPProjector(
+        in_dim=backbone.out_dim,
+        hidden_dim=proj_cfg.get("hidden_dim", 2048),
+        out_dim=proj_cfg.get("out_dim", 2048),
+        num_layers=proj_cfg.get("num_layers", 3),
+        use_bn=proj_cfg.get("use_bn", True),
+        activation=proj_cfg.get("activation", "relu"),
+        norm=proj_cfg.get("norm", None),
+        dropout=proj_cfg.get("dropout", 0.0),
+    )
 
-    def dino_head() -> DINOHead:
-        # DINO/DINOv2 head: MLP -> L2-normalized bottleneck -> cosine prototypes.
-        return DINOHead(
-            in_dim=backbone.out_dim,
-            out_dim=proj_cfg.get("out_dim", 4096),
-            hidden_dim=proj_cfg.get("hidden_dim", 2048),
-            bottleneck_dim=proj_cfg.get("bottleneck_dim", 256),
-            num_layers=proj_cfg.get("num_layers", 3),
-            use_bn=proj_cfg.get("use_bn", False),
-        )
 
-    if loss_name == "dinov2":
-        projector: nn.Module = dino_head()
-    else:
-        projector = MLPProjector(
-            in_dim=backbone.out_dim,
-            hidden_dim=proj_cfg.get("hidden_dim", 2048),
-            out_dim=proj_cfg.get("out_dim", 2048),
-            num_layers=proj_cfg.get("num_layers", 3),
-            use_bn=proj_cfg.get("use_bn", True),
-            activation=proj_cfg.get("activation", "relu"),
-            norm=proj_cfg.get("norm", None),
-            dropout=proj_cfg.get("dropout", 0.0),
-        )
-
+def build_ssl_module(cfg: DictConfig, backbone: nn.Module) -> L.LightningModule:
+    """Step 5: projector + loss + the method's LightningModule, with its augmentation flags."""
+    loss_name = str(cfg.loss.name).lower()
+    aug_cfg = cfg.augmentation
+    proj_cfg = cfg.model.projector
+    projector = build_projector(cfg, backbone)
     loss_fn = build_loss(cfg) if loss_name not in ("mae_vicreg", "pretext") else None
 
-    # 5. Lightning Module
     opt_cfg = cfg.optimizer
     trainer_cfg = cfg.trainer
     max_epochs = trainer_cfg.get("max_epochs", 50)
@@ -481,7 +501,7 @@ def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> d
     elif loss_name == "dinov2":
         # Separate (untied) iBOT head for the masked patch tokens, as in DINOv2.
         model = DINOv2LightningModule(
-            **module_kwargs, patch_head=dino_head(),
+            **module_kwargs, patch_head=_dino_head(proj_cfg, backbone.out_dim),
             mask_probability=cfg.loss.get("mask_probability", 0.5),
             mask_ratio_min_max=tuple(cfg.loss.get("mask_ratio_min_max", (0.1, 0.5))),
             min_mask_block=cfg.loss.get("min_mask_block", 4),
@@ -549,14 +569,23 @@ def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> d
     if cfg.model.get("freeze_backbone_bn", False):
         model.freeze_backbone_bn = True
         model.bn_calibration_batches = cfg.model.get("bn_calibration_batches", None)
+    return model
 
-    # 6. Logger & Callbacks inside the same experiment directory
-    csv_logger = CSVLogger(
-        save_dir=str(exp_dir.parent),
-        name=exp_dir.name,
-        version="",
-    )
 
+def _weights_only(trainer_cfg: DictConfig) -> bool:
+    """Checkpoints without optimizer state (``trainer.checkpoint_weights_only``, default true)."""
+    # Optimizer state is 1/2-2/3 of every .ckpt and only matters for resuming
+    # with trainer.ckpt_path; the probes and finalize scripts read just
+    # "state_dict" and "epoch". Set trainer.checkpoint_weights_only=false to
+    # keep resumable full checkpoints.
+    return bool(trainer_cfg.get("checkpoint_weights_only", True))
+
+
+def build_callbacks(cfg: DictConfig, exp_dir: Path,
+                    extra_callbacks: list[L.Callback] | None = None) -> list[L.Callback]:
+    """Step 6: early stopping on ``val/loss`` and the checkpoints (best ``val/loss`` + periodic)."""
+    trainer_cfg = cfg.trainer
+    weights_only = _weights_only(trainer_cfg)
     callbacks: list[L.Callback] = list(extra_callbacks or [])
     patience = trainer_cfg.get("early_stopping_patience", None)
     if patience is not None:
@@ -564,14 +593,10 @@ def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> d
             monitor="val/loss", mode="min", patience=int(patience),
             min_delta=float(trainer_cfg.get("early_stopping_min_delta", 0.0)),
         ))
-    # Optimizer state is 1/2-2/3 of every .ckpt and only matters for resuming
-    # with trainer.ckpt_path; the probes and finalize scripts read just
-    # "state_dict" and "epoch". Set trainer.checkpoint_weights_only=false to
-    # keep resumable full checkpoints.
-    weights_only = bool(trainer_cfg.get("checkpoint_weights_only", True))
     if trainer_cfg.get("enable_checkpointing", True):
         # Kept for scripts that still glob "best-loss-epoch=*.ckpt"
-        # (evaluate_frozen_probe.py, finalize_full50.py, report_pretext_tuning.py).
+        # (scripts/legacy/: evaluate_frozen_probe.py, finalize_full50.py,
+        # report_pretext_tuning.py).
         # It is NOT the recommended way to pick the final representation for
         # these three anti-collapse-aware runs: a falling SSL loss can coincide
         # with collapse, so treat this only as one reference point among
@@ -604,10 +629,11 @@ def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> d
             save_weights_only=weights_only,
             **rotation,
         ))
+    return callbacks
 
-    # 7. Trainer with adaptive log interval
-    dm.prepare_data()
-    dm.setup(stage="fit")
+
+def write_split_records(dm: Any, exp_dir: Path) -> None:
+    """Step 7: the subjects and sessions of each split (``subject_splits.csv``, ``data_records.csv``)."""
     with (exp_dir / "subject_splits.csv").open("w", newline="", encoding="utf-8") as stream:
         writer = csv.writer(stream)
         writer.writerow(["split", "subject"])
@@ -621,6 +647,13 @@ def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> d
             for record in dataset.records:
                 writer.writerow([split, record["subject"], record["session"],
                                  record.get("idx", ""), record.get("path", ""), record["group"]])
+
+
+def build_trainer(cfg: DictConfig, model: L.LightningModule, dm: Any, exp_dir: Path,
+                  callbacks: list[L.Callback]) -> tuple[L.Trainer, dict[str, Any]]:
+    """Step 8: health callback (2D LMDB), gradient clipping, precision, runtime, ``Trainer``."""
+    trainer_cfg = cfg.trainer
+    loss_name = str(cfg.loss.name).lower()
     n_batches = len(dm.train_dataloader()) if dm.train_dataset is not None else 10
     effective_log_steps = min(trainer_cfg.get("log_every_n_steps", 10), max(1, n_batches))
 
@@ -650,9 +683,10 @@ def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> d
             **runtime, "batch_size": int(cfg.data.get("batch_size", 16)),
             "accumulate_grad_batches": int(trainer_cfg.get("accumulate_grad_batches", 1)),
             "num_workers": int(cfg.data.get("num_workers", 0))}))
+    csv_logger = CSVLogger(save_dir=str(exp_dir.parent), name=exp_dir.name, version="")
 
     trainer = L.Trainer(
-        max_epochs=max_epochs,
+        max_epochs=trainer_cfg.get("max_epochs", 50),
         max_steps=trainer_cfg.get("max_steps", -1),
         accelerator=trainer_cfg.get("accelerator", "auto"),
         devices=trainer_cfg.get("devices", "auto"),
@@ -669,15 +703,44 @@ def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> d
         logger=csv_logger,
         callbacks=callbacks,
     )
+    return trainer, runtime
 
-    # 8. Fit
-    trainer.fit(model, datamodule=dm,
-                ckpt_path=trainer_cfg.get("ckpt_path", None))
-    if trainer_cfg.get("enable_checkpointing", True):
+
+# ---------------------------------------------------------------- the pipeline
+def train(cfg: DictConfig, extra_callbacks: list[L.Callback] | None = None) -> dict[str, Any]:
+    """Run the SSL training pipeline (steps 1-9 of the module docstring) for ``cfg``.
+
+    Returns the trainer, the trained LightningModule, the datamodule (already set up),
+    the experiment directory and the runtime profile actually applied.
+    """
+    # Sanitize environment and warnings before Lightning or PyTorch initialization
+    _sanitize_environment(accelerator=cfg.trainer.get("accelerator"))
+
+    logger.info("Starting T5-SSL Training with configuration:\n%s", OmegaConf.to_yaml(cfg))
+
+    # Set deterministic random seed
+    if cfg.get("seed") is not None:
+        L.seed_everything(cfg.seed, workers=True)
+
+    exp_dir = make_experiment_dir(cfg)                                    # 1
+    train_transform, eval_transform = build_transforms(cfg)               # 2
+    dm = build_datamodule(cfg, train_transform, eval_transform)           # 3
+    backbone = build_backbone(cfg)                                        # 4
+    model = build_ssl_module(cfg, backbone)                               # 5
+    callbacks = build_callbacks(cfg, exp_dir, extra_callbacks)            # 6
+    dm.prepare_data()                                                     # 7
+    dm.setup(stage="fit")
+    write_split_records(dm, exp_dir)
+    trainer, runtime = build_trainer(cfg, model, dm, exp_dir, callbacks)  # 8
+
+    trainer.fit(model, datamodule=dm,                                     # 9
+                ckpt_path=cfg.trainer.get("ckpt_path", None))
+    if cfg.trainer.get("enable_checkpointing", True):
         # Lightning's ModelCheckpoint(save_last=True) can retain the last *best*
         # epoch when no later validation loss improves. Save the final state
         # explicitly so frozen probes always evaluate all requested epochs.
-        trainer.save_checkpoint(str(exp_dir / "checkpoints" / "last.ckpt"), weights_only=weights_only)
+        trainer.save_checkpoint(str(exp_dir / "checkpoints" / "last.ckpt"),
+                                weights_only=_weights_only(cfg.trainer))
     logger.info("Training completed successfully. Artifacts saved in: %s", exp_dir)
 
     return {
