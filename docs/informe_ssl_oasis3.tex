@@ -894,7 +894,7 @@ ambas sesiones.
 
 Entorno: \texttt{oasis3-ssl-workbench/.venv/Scripts/python.exe} (Windows).
 Comando base de la campaña oficial de 50 épocas (varía \texttt{model=} y
-\texttt{loss=} para cada método, ver \texttt{scripts/run\_full50.sh}):
+\texttt{loss=} para cada método, ver \texttt{scripts/legacy/run\_full50.sh}):
 
 \begin{quote}
 \begin{verbatim}
@@ -908,7 +908,7 @@ Evaluación del \emph{probe} congelado sobre un experimento ya entrenado:
 
 \begin{quote}
 \begin{verbatim}
-.venv/Scripts/python.exe scripts/evaluate_frozen_probe.py \
+.venv/Scripts/python.exe scripts/legacy/evaluate_frozen_probe.py \
   logs/<experimento> --checkpoint best
 \end{verbatim}
 \end{quote}

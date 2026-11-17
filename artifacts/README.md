@@ -7,7 +7,7 @@ informes y figuras aprobados aparecen como candidatos versionables.
 Para evaluar un checkpoint local, pasa su directorio de experimento de forma explícita:
 
 ```bash
-python scripts/evaluate_frozen_probe.py logs/<experimento>
+python scripts/legacy/evaluate_frozen_probe.py logs/<experimento>
 ```
 
 Una publicación reproducible debería distribuir pesos aprobados fuera del repositorio (por ejemplo,

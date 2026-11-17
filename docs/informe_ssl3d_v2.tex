@@ -4,7 +4,7 @@
 %  Informe: campaña SSL 3D (v2) en OASIS3
 %  Arquitecturas, hiperparámetros, augmentations, split,
 %  curvas de pérdida y diagnóstico de BYOL
-%  Figuras y tablas: python scripts/build_report_ssl3d_v2.py
+%  Figuras y tablas: python scripts/legacy/build_report_ssl3d_v2.py
 % ============================================================
 
 \usepackage[a4paper,margin=2.2cm]{geometry}
@@ -143,7 +143,7 @@ a una pregunta concreta: ¿por qué BYOL no aprende nada útil aquí?}}
 
 \vfill
 {\small Generado a partir de las corridas de \texttt{campaign\_ssl3d} y \texttt{campaign\_ssl3d\_v2}
-(figuras y tablas: \texttt{scripts/build\_report\_ssl3d\_v2.py}).}\\[4pt]
+(figuras y tablas: \texttt{scripts/legacy/build\_report\_ssl3d\_v2.py}).}\\[4pt]
 {\small 1 de octubre de 2026}
 \end{titlepage}
 
@@ -902,11 +902,11 @@ Probe sobre el mapa de 4$^3$ o probe no lineal & ¿techo del probe? (H4) & minut
 
 \begin{itemize}
 \item Resultados de la campaña (escribe \texttt{campaign\_ssl3d\_v2/RESULTADOS.md}):\\
-  \texttt{python scripts/run\_ssl3d\_v2.py report}
+  \texttt{python scripts/legacy/run\_ssl3d\_v2.py report}
 \item Análisis de identidad, CKA y sensibilidad (reentrenan BYOL y VICReg):\\
-  \texttt{python scripts/analyze\_ssl3d\_encoders.py}\\
-  \texttt{python scripts/analyze\_byol\_sensitivity.py}
-\item Figuras y tablas: \texttt{python scripts/build\_report\_ssl3d\_v2.py}; luego, desde
+  \texttt{python scripts/legacy/analyze\_ssl3d\_encoders.py}\\
+  \texttt{python scripts/legacy/analyze\_byol\_sensitivity.py}
+\item Figuras y tablas: \texttt{python scripts/legacy/build\_report\_ssl3d\_v2.py}; luego, desde
   \texttt{docs/}, dos veces \texttt{pdflatex informe\_ssl3d\_v2.tex}.
 \item Configuraciones, dentro de \texttt{configs/}:
   \begin{itemize}

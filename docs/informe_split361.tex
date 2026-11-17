@@ -2,7 +2,7 @@
 
 % ============================================================
 %  Informe breve: entrenamientos SSL 3D en RunPod, split 361/63/84
-%  Figuras: python scripts/build_report_split361.py
+%  Figuras: python scripts/5_reports/build_report_split361.py
 %  Compilar desde docs/: pdflatex informe_split361.tex (dos veces)
 % ============================================================
 
@@ -1068,22 +1068,22 @@ Puntaje AD -- ruido (parcial) & 0.24 & 0.23 & 0.18 & 0.23 & 0.28 & 0.39 \\
 \section{Reproducir este informe}
 
 \begin{itemize}
-\item Split: \texttt{python} \nolinkurl{scripts/make_split_361_63_84.py}
+\item Split: \texttt{python} \nolinkurl{scripts/2_splits/make_split_361_63_84.py}
   $\rightarrow$ \nolinkurl{campaign_ssl3d_runpod/split_361_63_84/}.
 \item Entrenamiento: \nolinkurl{run_all.py} con \texttt{-{}-set}
   \nolinkurl{data.manifest_path=campaign_ssl3d_runpod/split_361_63_84/manifest.csv};
   resultados en \nolinkurl{campaign_ssl3d_runpod/split361_30/}.
-\item Figuras: \texttt{python scripts/build\_report\_split361.py}; luego, desde \texttt{docs/},
+\item Figuras: \texttt{python scripts/5\_reports/build\_report\_split361.py}; luego, desde \texttt{docs/},
   dos veces \texttt{pdflatex informe\_split361.tex}.
 \item 100 épocas (Sección~\ref{sec:e100}): \nolinkurl{run_all.py} con \texttt{-{}-epochs 100
   -{}-identity -{}-collapse-every 2} y las especificaciones
   \nolinkurl{vicreg:geo:32:campaign_augval}, \nolinkurl{byol:noise:32:gn_dp0.3_dq0_wd0.01} y
   \nolinkurl{dinov2:elastic:multi3}; encoders aleatorios con \nolinkurl{train.py --init-only}
   y \nolinkurl{model.backbone.pretrained=false}; supervisado con
-  \nolinkurl{scripts/train_supervised.py}. Resultados en
+  \nolinkurl{scripts/3_train/train_supervised.py}. Resultados en
   \nolinkurl{campaign_ssl3d_runpod/split361_100/} (\texttt{REPORT.md}).
-\item Figuras de 100 épocas: \nolinkurl{scripts/report_split361_100.py} y
-  \nolinkurl{scripts/analyze_latent_split361.py} con \texttt{-{}-runs split361\_100 -{}-out
+\item Figuras de 100 épocas: \nolinkurl{scripts/5_reports/report_split361_100.py} y
+  \nolinkurl{scripts/5_reports/analyze_latent_split361.py} con \texttt{-{}-runs split361\_100 -{}-out
   latent\_split361\_100 -{}-suffix \_100} y los nombres de VICReg y BYOL en \texttt{-{}-run}.
 \end{itemize}
 

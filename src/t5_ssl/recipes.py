@@ -1,8 +1,8 @@
 """Hydra override recipes for the 3D hippocampal-ROI SSL runs (no torch import).
 
 One place that turns ``(model, variant, epochs, seed)`` into the overrides of
-``configs/train.yaml``, shared by the root ``train.py``, ``run_all.py`` and
-``bench.py``. The ``campaign`` variants reproduce ``scripts/run_ssl3d_v2.py``
+``configs/train.yaml``, shared by the root ``train.py``, ``cloud/run_all.py`` and
+``cloud/bench.py``. The ``campaign`` variants reproduce ``scripts/legacy/run_ssl3d_v2.py``
 (campaign_ssl3d / campaign_ssl3d_v2): balanced split, champion bias-field
 views, LR warmup = epochs / 5, DINOv2 teacher-temperature warmup = 0.3 x epochs,
 EMA 0.996 for BYOL (the ``loss/byol.yaml`` default).
@@ -27,7 +27,7 @@ set, so nothing but the recipe changes between runs), applied with
 ``aug_recipe=`` on top of any model/variant. TorchIO artifact strengths are the
 3D campaign calibration (RMSE 0.080 against the clean cube:
 campaign_roi3d/calibration_s32.json; Spike and Elastic via
-scripts/calibrate_spike_elastic.py).
+scripts/legacy/calibrate_spike_elastic.py).
 """
 
 from __future__ import annotations
@@ -168,7 +168,7 @@ DEFAULT_BACKBONE = {"vicreg": "convnext_tiny", "byol": "resnet18", "dinov2": "vi
 # ROI configurations: cube side (voxels of 2 mm) and cache. "multi3" stacks three
 # bilateral 32-voxel regions as 6 channels: hippocampus, lateral ventricle and
 # posteromedial cortex (posterior/isthmus cingulate + precuneus); see
-# t5_ssl.data.roi3d.REGIONS and scripts/build_roi_caches.py.
+# t5_ssl.data.roi3d.REGIONS and scripts/1_data/build_roi_caches.py.
 ROIS: dict[str, dict] = {
     "32": {"size": 32, "cache": "hippo_s32", "channels": 2},
     "48": {"size": 48, "cache": "hippo_s48", "channels": 2},

@@ -4,7 +4,7 @@
 %  Metodología completa del último entrenamiento (split 361/63/84, 100 épocas):
 %  ingesta de datos, arquitecturas capa por capa, pesos de partida, inflado 2D -> 3D,
 %  resultados esperados y cómo se calcula cada número.
-%  Figuras nuevas: python scripts/build_report_metodologia.py
+%  Figuras nuevas: python scripts/5_reports/build_report_metodologia.py
 %  (las demás vienen de build_report_split361.py, report_split361_100.py y
 %  analyze_latent_split361.py; ver el apéndice).
 %  Compilar desde docs/: pdflatex informe_metodologia_split361.tex (dos veces)
@@ -932,7 +932,7 @@ ViT, que no se usa al evaluar), así que una sola corrida vale para las tres sem
 
 \subsection{El supervisado, en detalle}
 
-\texttt{scripts/train\_supervised.py}. Mismo encoder, mismos pesos iniciales, misma entrada y la
+\texttt{scripts/3\_train/train\_supervised.py}. Mismo encoder, mismos pesos iniciales, misma entrada y la
 primera vista de la misma receta de augmentation.\footnote{Excepción: el supervisado de DINOv2 usó
 la deformación elástica calculada en GPU (\texttt{elastic\_gpu}, desplazamiento 1.50 vóxeles,
 calibrada a la misma RMSE), no la de TorchIO del SSL.}
@@ -1470,14 +1470,14 @@ partida. La identidad del sujeto no basta para separar AD de HC.
 \begin{itemize}
 \item Figuras nuevas (\texttt{ingesta\_3d}, \texttt{volumenes\_3d}, \texttt{architectures\_100},
   \texttt{metricas\_100\_puntos}, \texttt{supervisado\_curvas\_100}):
-  \texttt{python scripts/build\_report\_metodologia.py}.
-\item Figuras del split y de las vistas: \texttt{python scripts/build\_report\_split361.py};
-  métricas, curvas y colapso a 100 épocas: \texttt{python scripts/report\_split361\_100.py}; espacio
-  latente: \texttt{python scripts/analyze\_latent\_split361.py} con \texttt{-{}-runs split361\_100
+  \texttt{python scripts/5\_reports/build\_report\_metodologia.py}.
+\item Figuras del split y de las vistas: \texttt{python scripts/5\_reports/build\_report\_split361.py};
+  métricas, curvas y colapso a 100 épocas: \texttt{python scripts/5\_reports/report\_split361\_100.py}; espacio
+  latente: \texttt{python scripts/5\_reports/analyze\_latent\_split361.py} con \texttt{-{}-runs split361\_100
   -{}-out latent\_split361\_100 -{}-suffix \_100}.
 \item Entrenamiento: \texttt{run\_all.py} con \texttt{-{}-epochs 100 -{}-identity -{}-collapse-every 2}
   y \nolinkurl{vicreg:geo:32:campaign_augval}, \nolinkurl{byol:noise:32:gn_dp0.3_dq0_wd0.01},
-  \nolinkurl{dinov2:elastic:multi3}; supervisado con \texttt{scripts/train\_supervised.py}; encoders
+  \nolinkurl{dinov2:elastic:multi3}; supervisado con \texttt{scripts/3\_train/train\_supervised.py}; encoders
   sin entrenar con \texttt{train.py -{}-init-only}.
 \item Compilar desde \texttt{docs/}: dos veces \texttt{pdflatex informe\_metodologia\_split361.tex}.
 \end{itemize}

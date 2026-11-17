@@ -321,7 +321,7 @@ class PerfMonitor(L.Callback):
 
 
 class StepTimer(L.Callback):
-    """Steady-state throughput over ``steps`` optimizer steps after ``warmup`` (bench.py).
+    """Steady-state throughput over ``steps`` optimizer steps after ``warmup`` (cloud/bench.py).
 
     One CUDA synchronize when the window opens and one when it closes; the gap
     between a batch's end and the next batch's start (host side) is reported as

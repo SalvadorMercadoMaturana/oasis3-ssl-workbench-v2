@@ -2,7 +2,7 @@
 # Hippocampal 3D ROI cubes (see src/t5_ssl/data/roi3d.py): one cube per
 # hemisphere around the population-mean hippocampal centroid, stored as two
 # channels [left, right mirrored]. roi_size 32 -> 64 mm (2 mm voxels);
-# 48 -> 96 mm. Build the cache with `python scripts/run_roi3d.py preprocess`.
+# 48 -> 96 mm. Build the cache with `python scripts/legacy/run_roi3d.py preprocess`.
 source: roi3d
 csv_path: ${oc.env:OASIS3_CSV,data/dementia/mni-dataset.csv}
 manifest_path: campaign_full50_pretrained_balanced/train_sessions_eval_primary_balanced.csv

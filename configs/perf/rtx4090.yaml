@@ -1,6 +1,6 @@
 # @package perf
 # Fast-GPU runtime for an RTX 4090 (24 GB, Ada, native bf16), opt-in with
-# `+perf=rtx4090` (train.py / run_all.py add it). Pair it with
+# `+perf=rtx4090` (train.py / cloud/run_all.py add it). Pair it with
 # trainer.precision=bf16-mixed and DataLoader workers (data.num_workers,
 # data.pin_memory, data.prefetch_factor). Every knob is a no-op without CUDA;
 # see src/t5_ssl/utils/runtime.py.
