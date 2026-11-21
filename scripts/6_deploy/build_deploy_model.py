@@ -14,7 +14,7 @@ method and the encoders without SSL), 3 seeds each, read from ``embeddings.npz``
    AD/HC subjects of train (702 subjects, cohort prevalence 23 % AD and real ages).
    Until 2026-11-07 (ad_mri_v1) it was the AUROC on the age-matched 50/50 subjects only.
 2. Final probe per seed: standardization + class-balanced logistic regression on every
-   labeled train+val subject, C by inner 3-fold CV log-loss over probe_protocol.CS. The
+   labeled train+val subject, C by inner 3-fold CV log-loss over protocol_v2.CS. The
    model is the mean of the seeds' probabilities. Operating thresholds from the
    representative out-of-fold ensemble probabilities: max F1-macro (the default
    decision at the cohort prevalence), Youden and sensitivity >= 0.80.
@@ -74,7 +74,7 @@ class Probe:
     """Standardization + class-balanced logistic regression (numpy parameters)."""
 
     def __init__(self, x: np.ndarray, y: np.ndarray, seed: int = 0) -> None:
-        del seed  # the inner folds are fixed (probe_protocol.make_probe)
+        del seed  # the inner folds are fixed (protocol_v2.make_probe)
         import warnings
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -167,23 +167,8 @@ def fit_set(seeds: list[dict]) -> tuple[list[np.ndarray], np.ndarray, list[str]]
 
 
 def ages_by_subject() -> dict[str, float]:
-    """Age at the evaluated (primary) session, as probe_protocol, plus ADNI."""
+    """Age at the evaluated (primary) session, as protocol_v2, plus ADNI."""
     return pp.session_ages(SPLIT / "manifest.csv", external=SPLIT / "external_adni.csv")
-
-
-def age_matched(subjects: list[str], y: np.ndarray, ages: dict[str, float],
-                per_ad: int = 2, caliper: float = 2.5) -> np.ndarray:
-    """Return the indices of an age-matched subset: each AD with up to ``per_ad`` HC near in age."""
-    ad = sorted((i for i in range(len(y)) if y[i] == 1), key=lambda i: -ages[subjects[i]])
-    free = [i for i in range(len(y)) if y[i] == 0]
-    keep = []
-    for _ in range(per_ad):
-        for i in ad:
-            best = min(free, key=lambda j: abs(ages[subjects[j]] - ages[subjects[i]]), default=None)
-            if best is not None and abs(ages[subjects[best]] - ages[subjects[i]]) <= caliper:
-                keep += [i, best]
-                free.remove(best)
-    return np.array(sorted(set(keep)))
 
 
 # ---------------------------------------------------------------- main
@@ -263,7 +248,7 @@ def main() -> None:
     test_y, test_subjects = seeds[0]["test_y"], list(seeds[0]["test_subjects"])
     p_test = ensemble("test")
     validation["oasis3_test"] = with_ci(test_y, p_test, thresholds)
-    matched = age_matched(test_subjects, test_y, ages)
+    matched = pp.age_matched_subset(test_subjects, test_y, ages)
     validation["oasis3_test_age_matched"] = with_ci(test_y[matched], p_test[matched], thresholds)
     age_p = np.array([ages[s] for s in test_subjects])  # age itself: older = AD
     validation["age_only_test"] = with_ci(test_y, age_p, {})

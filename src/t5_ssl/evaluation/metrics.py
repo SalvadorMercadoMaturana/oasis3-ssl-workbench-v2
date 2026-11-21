@@ -34,6 +34,7 @@ from sklearn.metrics import (
 
 
 def scores(labels: np.ndarray, probs: np.ndarray) -> dict[str, float]:
+    """AUROC, F1-macro at 0.5 and AUPR with sklearn (``mean3`` averages them)."""
     return {"auc": float(roc_auc_score(labels, probs)),
             "f1": float(f1_score(labels, probs >= 0.5, average="macro")),
             "aupr": float(average_precision_score(labels, probs))}
@@ -70,7 +71,6 @@ def fast_mean3(labels: np.ndarray, probs: np.ndarray) -> float:
 
 def fast_auc(labels: np.ndarray, scores: np.ndarray) -> float:
     """AUROC from average ranks (Mann-Whitney), as sklearn with ties."""
-    from scipy.stats import rankdata
     ranks = rankdata(scores)
     pos = labels == 1
     n_pos, n_neg = pos.sum(), (~pos).sum()
@@ -121,7 +121,6 @@ def held_out_metrics(labels: np.ndarray, scores: np.ndarray, subjects: list[str]
 
 def effective_rank(x: np.ndarray) -> float:
     """exp(entropy) of the normalized singular values of the centered embeddings."""
-    import numpy as np
     s = np.linalg.svd(x - x.mean(axis=0), compute_uv=False)
     p = s[s > 0] / s.sum()
     return float(np.exp(-(p * np.log(p)).sum()))

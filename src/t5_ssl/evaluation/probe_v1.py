@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -31,6 +31,7 @@ from sklearn.metrics import (
     log_loss,
     roc_auc_score,
 )
+from sklearn.model_selection import StratifiedKFold
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -43,10 +44,6 @@ if TYPE_CHECKING:
 def cv_probe(x: np.ndarray, y: np.ndarray, variants: dict[str, np.ndarray],
              repeats: int = 5, folds: int = 5) -> dict[str, dict]:
     """Repeated stratified K-fold probe fit on clean `x`, scored on every variant."""
-    from sklearn.linear_model import LogisticRegressionCV
-    from sklearn.model_selection import StratifiedKFold
-    from sklearn.pipeline import make_pipeline
-    from sklearn.preprocessing import StandardScaler
     oof = {name: np.zeros((repeats, len(y))) for name in variants}
     for repeat in range(repeats):
         for train_idx, test_idx in StratifiedKFold(folds, shuffle=True,
@@ -90,13 +87,14 @@ def evaluate(train: tuple, val: tuple, test: tuple,
             best = (val_auc, c, probe)
     assert best is not None
     val_scores = best[2].predict_proba(x_val)[:, 1]
-    scores = best[2].predict_proba(x_test)[:, 1]
+    test_scores = best[2].predict_proba(x_test)[:, 1]
+    # effective rank of the variance spectrum (identity.effective_rank), not of the
+    # singular values (metrics.effective_rank, the top-level "effective_rank" of score)
     centered = x_train - x_train.mean(axis=0, keepdims=True)
-    singular_values = np.linalg.svd(centered, compute_uv=False)
-    spectrum = singular_values ** 2
+    spectrum = np.linalg.svd(centered, compute_uv=False) ** 2
     spectrum = spectrum / max(float(spectrum.sum()), 1e-12)
     positive = spectrum[spectrum > 0]
-    effective_rank = float(np.exp(-np.sum(positive * np.log(positive))))
+    variance_rank = float(np.exp(-np.sum(positive * np.log(positive))))
     extra: dict[str, dict] = {}
     if extra_tests:
         unweighted = make_pipeline(StandardScaler(), LogisticRegression(
@@ -114,25 +112,25 @@ def evaluate(train: tuple, val: tuple, test: tuple,
             "test_subjects": len(y_test), "selected_C": best[1],
             "embedding_dim": int(x_train.shape[1]),
             "embedding_mean_feature_std": float(centered.std(axis=0).mean()),
-            "embedding_effective_rank": effective_rank,
+            "embedding_effective_rank": variance_rank,
             "val_auc": best[0],
             "val_average_precision": float(average_precision_score(y_val, val_scores)),
             "val_f1_macro": float(f1_score(y_val, val_scores >= 0.5, average="macro")),
-            "test_auc": float(roc_auc_score(y_test, scores)),
-            "test_average_precision": float(average_precision_score(y_test, scores)),
-            "test_brier_score": float(brier_score_loss(y_test, scores)),
+            "test_auc": float(roc_auc_score(y_test, test_scores)),
+            "test_average_precision": float(average_precision_score(y_test, test_scores)),
+            "test_brier_score": float(brier_score_loss(y_test, test_scores)),
             "val_log_loss": float(log_loss(y_val, val_scores, labels=[0, 1])),
-            "test_log_loss": float(log_loss(y_test, scores, labels=[0, 1])),
-            "test_accuracy": float(accuracy_score(y_test, scores >= 0.5)),
-            "test_balanced_accuracy": float(balanced_accuracy_score(y_test, scores >= 0.5)),
-            "test_f1_macro": float(f1_score(y_test, scores >= 0.5, average="macro")),
+            "test_log_loss": float(log_loss(y_test, test_scores, labels=[0, 1])),
+            "test_accuracy": float(accuracy_score(y_test, test_scores >= 0.5)),
+            "test_balanced_accuracy": float(balanced_accuracy_score(y_test, test_scores >= 0.5)),
+            "test_f1_macro": float(f1_score(y_test, test_scores >= 0.5, average="macro")),
             "val_predictions": [{"subject": subject, "AD": int(label), "score": float(score)}
                                 for subject, label, score in zip(
                                     val_subjects, y_val, val_scores, strict=True
                                 )],
             "test_predictions": [{"subject": subject, "AD": int(label), "score": float(score)}
                                  for subject, label, score in zip(
-                                     subjects, y_test, scores, strict=True
+                                     subjects, y_test, test_scores, strict=True
                                  )]}
 
 

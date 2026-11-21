@@ -3,7 +3,7 @@
 
     python scripts/4_evaluate/tune_probe.py [--out campaign_ssl3d_runpod/outer5/probe_tuning.json]
 
-Variants of ``probe_protocol.make_probe`` (StandardScaler + class-balanced logistic
+Variants of ``protocol_v2.make_probe`` (StandardScaler + class-balanced logistic
 regression, C by inner 3-fold log-loss), each scored as a 3-seed ensemble on the same fold
 plan: ``pca{n}`` (PCA to n components after standardization, whitening off), ``l1``
 (lasso path, saga), ``enet`` (elastic net 0.5). Selection would be on the CV composite;

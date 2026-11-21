@@ -68,8 +68,6 @@ THRESHOLD_METRICS = ("f1_macro", "f1_macro_05", "balanced_accuracy", "sensitivit
 # ---------------------------------------------------------------- subjects
 def subject_labels(csv_path: Path = CSV) -> dict[str, int]:
     """Unambiguous OASIS3 AD/HC subjects (one group over all sessions), as the datamodule."""
-    import sys
-    sys.path.insert(0, str(ROOT / "src"))
     from t5_ssl.data.oasis3_lmdb_datamodule import clinical_rows
     groups: dict[str, set[str]] = defaultdict(set)
     for row in clinical_rows(csv_path):
@@ -144,6 +142,7 @@ def auc_age(y: np.ndarray, s: np.ndarray, age: np.ndarray, caliper: float = AGE_
 
 
 def at_threshold(y: np.ndarray, s: np.ndarray, t: float) -> dict[str, float]:
+    """Confusion-matrix metrics predicting AD when ``s >= t`` (0 where undefined)."""
     pred = s >= t
     tp, fp = float((pred & (y == 1)).sum()), float((pred & (y == 0)).sum())
     fn, tn = float((~pred & (y == 1)).sum()), float((~pred & (y == 0)).sum())
@@ -173,6 +172,7 @@ def best_f1_threshold(y: np.ndarray, s: np.ndarray) -> float:
 
 
 def rank_metrics(y: np.ndarray, s: np.ndarray, age: np.ndarray | None = None) -> dict:
+    """Threshold-free metrics: AUROC, AUPR and, given ages, ``auc_age``."""
     out = {"n": len(y), "ad": int(y.sum()), "prevalence": float(y.mean()),
            "auc": auc(y, s), "aupr": aupr(y, s)}
     if age is not None:
@@ -231,6 +231,7 @@ def oof_metrics(y: np.ndarray, oof: np.ndarray, plan: np.ndarray, mask: np.ndarr
 
 # ---------------------------------------------------------------- probes
 def make_probe(cs: tuple[float, ...] = CS) -> Any:
+    """Standardization + class-balanced logistic regression, C by inner 3-fold log-loss."""
     from sklearn.linear_model import LogisticRegressionCV
     from sklearn.model_selection import StratifiedKFold
     from sklearn.pipeline import make_pipeline
@@ -324,7 +325,7 @@ def evaluate(lab: tuple, pool: tuple, test: tuple, ages: dict[str, float],
 
 def age_matched_subset(subjects: list[str], y: np.ndarray, ages: dict[str, float],
                        per_ad: int = 2, caliper: float = 2.5) -> np.ndarray:
-    """Each AD with up to ``per_ad`` HC near in age (build_deploy_model.age_matched)."""
+    """Return the indices of an age-matched subset: each AD with up to ``per_ad`` HC near in age."""
     ad = sorted((i for i in range(len(y)) if y[i] == 1), key=lambda i: -ages[subjects[i]])
     free = [i for i in range(len(y)) if y[i] == 0]
     keep = []
@@ -334,7 +335,7 @@ def age_matched_subset(subjects: list[str], y: np.ndarray, ages: dict[str, float
             if best is not None and abs(ages[subjects[best]] - ages[subjects[i]]) <= caliper:
                 keep += [i, best]
                 free.remove(best)
-    return np.array(sorted(set(keep)))
+    return np.array(sorted(set(keep)), dtype=int)
 
 
 def age_reference(y: np.ndarray, subjects: list[str], ages: dict[str, float]) -> dict:

@@ -34,6 +34,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 @torch.no_grad()
 def embed(encoder: torch.nn.Module, volumes: list[torch.Tensor]) -> np.ndarray:
+    """Embeddings of ``volumes`` in batches of 32 (eval mode)."""
     encoder = encoder.to(DEVICE).eval()
     out = [encoder(torch.stack(volumes[i:i + 32]).to(DEVICE)).float().cpu()
            for i in range(0, len(volumes), 32)]
@@ -41,7 +42,10 @@ def embed(encoder: torch.nn.Module, volumes: list[torch.Tensor]) -> np.ndarray:
 
 
 def views(transform, cubes: list[torch.Tensor], seed: int = 0) -> tuple[list, list]:
-    random.seed(seed), np.random.seed(seed), torch.manual_seed(seed)
+    """First and second augmented view of every cube, from a fixed seed."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
     pairs = [transform(cube)[:2] for cube in cubes]
     return [a for a, _ in pairs], [b for _, b in pairs]
 

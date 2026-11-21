@@ -12,7 +12,7 @@ per subject per epoch (AdamW, warmup + cosine over ``--epochs``, bf16 on CUDA).
 The epoch with the best val AUROC (subject score = mean logit over its
 sessions) is kept, with early stopping after ``--patience`` epochs without
 improvement, and scored on test. The CV row (protocol v2, 2026-11-07) trains
-``--folds`` folds (the folds of scripts/probe_protocol.fold_plan, repeat 0); each fold
+``--folds`` folds (the folds of t5_ssl.evaluation.protocol_v2.fold_plan, repeat 0); each fold
 holds out 20 % of its training subjects as an inner validation that picks its epoch
 with the same early stopping, so no fold inherits an epoch chosen on its own held-out
 subjects. Every fold model also scores its share of the SSL-only AD/HC subjects of

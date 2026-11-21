@@ -50,8 +50,8 @@ def qc_range(cache: str) -> dict:
     another intensity normalization, far outside OASIS3; they are not anatomy.
     """
     meta = json.loads((ROOT / "data/roi3d" / f"{cache}.json").read_text(encoding="utf-8"))
-    study = {r["idx"]: r["study_name"].strip().upper() for r in
-             csv.DictReader((ROOT / "data/dementia/mni-dataset.csv").open(encoding="utf-8"))}
+    with (ROOT / "data/dementia/mni-dataset.csv").open(encoding="utf-8") as stream:
+        study = {r["idx"]: r["study_name"].strip().upper() for r in csv.DictReader(stream)}
     values = cache_intensity(cache, [k for k in meta["idx"] if study.get(k) == "OASIS3"])
     return {"statistic": "mean intensity of channel 0 over the evaluated (center) cube",
             "lo": float(values.min() - QC_MARGIN), "hi": float(values.max() + QC_MARGIN),
