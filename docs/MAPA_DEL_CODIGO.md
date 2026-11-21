@@ -2,9 +2,7 @@
 
 La reorganización movió **sólo código y documentación**; los datos y las carpetas de
 resultados (`campaign_*`, `deploy/`, `runs/`, `logs/`, CSV/JSON de la raíz) siguen donde
-estaban. Ningún resultado cambió: antes de mover nada se guardaron salidas de referencia
-con el código original (entrenamientos completos y mínimos, 2D y 3D, el baseline
-supervisado y los 44 comandos de reportes) y se compararon con las del código nuevo.
+estaban. Ningún resultado cambió (ver [Cómo se verificó](#cómo-se-verificó)).
 
 ## La estructura nueva
 
@@ -158,3 +156,26 @@ semilla reproduce la misma corrida que antes):
 | 7 | `dm.setup` + `write_split_records` |
 | 8 | `build_trainer` |
 | 9 | `trainer.fit` + `last.ckpt` |
+
+## Cómo se verificó
+
+Antes de mover nada se guardaron las salidas del código original y después se
+compararon con las del código nuevo, en CPU y con semillas fijas (cada caso se
+repitió para confirmar que es determinista). En las comparaciones se ignoran los tiempos
+de ejecución y la carpeta de salida:
+
+| Qué | Resultado |
+|---|---|
+| 14 `train.py --dry-run` (los cuatro métodos, variantes, recetas, ROI, backbones, `--init-only`) | configuración idéntica, byte a byte |
+| 6 entrenamientos mínimos 3D (VICReg, BYOL ×2 —una con multi3—, DINOv2 ×2, pretexto) | `metrics.csv`, splits y `result.json` idénticos |
+| 3 entrenamientos 2D por Hydra (`python -m t5_ssl.train`) | los 18 archivos de salida idénticos |
+| baseline supervisado (`train_supervised.py`, 2 folds) | `result.json` idéntico |
+| 44 comandos de reportes, splits y despliegue | mismas salidas, figuras PNG byte a byte; sólo cambian las rutas de scripts que citan |
+| una corrida completa de BYOL con todas las evaluaciones (`--identity --spatial-probe --external adni --save-embeddings --export-encoder --collapse-every 1`) | probes v1 y v2, probe espacial, ADNI, curvas, colapso, embeddings y pesos idénticos |
+
+Única diferencia: las métricas de identidad (`--identity`) en el 7.º dígito significativo
+(p. ej. `between_over_within` 2.5272996 → 2.5273005). Los embeddings de los que salen
+son idénticos bit a bit; lo que cambia es el redondeo float32 de las operaciones
+posteriores (normalización, producto de matrices, SVD), que depende del momento en que se
+importa el módulo: el código original, con sólo adelantar ese import, da exactamente los
+números nuevos. No hay cambio de lógica.
