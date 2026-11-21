@@ -415,10 +415,7 @@ def build_transforms(cfg: DictConfig) -> tuple[Any, Any]:
             image_size=image_size, local_size=local_size, n_local_crops=n_local,
             **eval_view_kwargs,
         )
-    elif loss_name == "byol":
-        train_transform = SSLViewTransform(**transform_kwargs)
-        eval_transform = DeterministicSSLViews(image_size=image_size, **eval_view_kwargs)
-    else:
+    else:  # two global views: every other 2D method (VICReg, BYOL, MAE, pretext)
         train_transform = SSLViewTransform(**transform_kwargs)
         eval_transform = DeterministicSSLViews(image_size=image_size, **eval_view_kwargs)
     return train_transform, eval_transform

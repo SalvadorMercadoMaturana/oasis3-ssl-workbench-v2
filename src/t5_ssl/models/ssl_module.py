@@ -17,6 +17,13 @@ from t5_ssl.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _map_views(images: Any, fn: Any) -> Any:
+    """Apply ``fn`` to every tensor of ``batch["image"]`` (a tensor or nested views)."""
+    if isinstance(images, list | tuple):
+        return type(images)(_map_views(view, fn) for view in images)
+    return fn(images) if isinstance(images, torch.Tensor) else images
+
+
 def disable_stochastic_depth(module: nn.Module) -> None:
     """Turn off stochastic depth in an EMA copy (ViT ``DropPath``, torchvision ``StochasticDepth``)."""
     for child in module.modules():
@@ -129,6 +136,21 @@ class SSLLightningModule(L.LightningModule):
         """
         return self.backbone(x)
 
+    @staticmethod
+    def two_views(batch: dict[str, Any]) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return the first two views of ``batch["image"]`` (one tensor counts as both)."""
+        images = batch["image"]
+        if isinstance(images, list | tuple) and len(images) >= 2:
+            return images[0], images[1]
+        return images, images
+
+    def _two_view_loss(self, batch: dict[str, Any]) -> tuple[torch.Tensor, dict[str, Any]]:
+        """Shared encoder and projector on both views, then the SSL loss (VICReg)."""
+        x1, x2 = self.two_views(batch)
+        h1, h2 = self.backbone(x1), self.backbone(x2)
+        z1, z2 = self.projector(h1), self.projector(h2)
+        return self.loss_fn(z1, z2, h1, h2)
+
     def training_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
         """Execute a single SSL training optimization step.
 
@@ -147,24 +169,7 @@ class SSLLightningModule(L.LightningModule):
             Scalar loss tensor for backpropagation.
 
         """
-        images = batch["image"]
-        if isinstance(images, (list, tuple)) and len(images) >= 2:
-            x1, x2 = images[0], images[1]
-        else:
-            x1 = x2 = images
-
-        # Forward passes through backbone
-        h1 = self.backbone(x1)
-        h2 = self.backbone(x2)
-
-        # Forward passes through projection head
-        z1 = self.projector(h1)
-        z2 = self.projector(h2)
-
-        # Compute SSL loss
-        total_loss, metrics = self.loss_fn(z1, z2, h1, h2)
-
-        # Log total loss
+        total_loss, metrics = self._two_view_loss(batch)
         self.log(
             "train/loss",
             total_loss,
@@ -198,19 +203,7 @@ class SSLLightningModule(L.LightningModule):
             Validation loss tensor.
 
         """
-        images = batch["image"]
-        if isinstance(images, (list, tuple)) and len(images) >= 2:
-            x1, x2 = images[0], images[1]
-        else:
-            x1 = x2 = images
-
-        h1 = self.backbone(x1)
-        h2 = self.backbone(x2)
-        z1 = self.projector(h1)
-        z2 = self.projector(h2)
-
-        val_loss, metrics = self.loss_fn(z1, z2, h1, h2)
-
+        val_loss, metrics = self._two_view_loss(batch)
         self.log(
             "val/loss",
             val_loss,
@@ -322,55 +315,37 @@ class SSLLightningModule(L.LightningModule):
         Training views get fresh random deformations; validation views (``augment_val``)
         get the same deformation every epoch.
         """
-        has_image = isinstance(batch, dict) and "image" in batch
-        validating = not self.training
+        if not (isinstance(batch, dict) and "image" in batch):
+            return batch
         generator = None
-        if has_image and validating and self.augment_val and (self.gpu_elastic
-                                                              or self.tio_gpu_elastic):
+        if not self.training and self.augment_val and (self.gpu_elastic or self.tio_gpu_elastic):
             first = batch["image"][0] if isinstance(batch["image"], list | tuple) else batch["image"]
             generator = self._val_generator(first.device, dataloader_idx)
-        if self.gpu_elastic and has_image and (self.training or generator is not None):
+        if self.gpu_elastic and (self.training or generator is not None):
             from t5_ssl.data.gpu_augment import elastic_deform
-
-            def deform(image: Any) -> Any:
-                if isinstance(image, torch.Tensor) and image.ndim == 5:
-                    return elastic_deform(image, **self.gpu_elastic, generator=generator)
-                if isinstance(image, list | tuple):
-                    return type(image)(deform(view) for view in image)
-                return image
-
-            batch["image"] = deform(batch["image"])
-        if self.tio_gpu_elastic and has_image:
+            batch["image"] = _map_views(batch["image"], lambda view: (
+                elastic_deform(view, **self.gpu_elastic, generator=generator)
+                if view.ndim == 5 else view))
+        if self.tio_gpu_elastic:
             from t5_ssl.data.roi3d import finish_deferred_views
-
-            def finish(image: Any) -> Any:
-                if (isinstance(image, torch.Tensor) and image.ndim == 5
-                        and image.shape[-1] != self.crop_size):
-                    return finish_deferred_views(image, self.tio_gpu_elastic, self.crop_size,
-                                                 generator=generator)
-                if isinstance(image, list | tuple):
-                    return type(image)(finish(view) for view in image)
-                return image
-
-            batch["image"] = finish(batch["image"])
-        memory_format = self.input_memory_format
-        if memory_format is None or not isinstance(batch, dict) or "image" not in batch:
-            return batch
-
-        def convert(image: Any) -> Any:
-            if isinstance(image, torch.Tensor) and image.ndim in (4, 5):
-                fmt = memory_format
-                if image.ndim == 5 and fmt is torch.channels_last:
-                    fmt = torch.channels_last_3d
-                elif image.ndim == 4 and fmt is torch.channels_last_3d:
-                    fmt = torch.channels_last
-                return image.contiguous(memory_format=fmt)
-            if isinstance(image, list | tuple):
-                return type(image)(convert(view) for view in image)
-            return image
-
-        batch["image"] = convert(batch["image"])
+            batch["image"] = _map_views(batch["image"], lambda view: (
+                finish_deferred_views(view, self.tio_gpu_elastic, self.crop_size,
+                                      generator=generator)
+                if view.ndim == 5 and view.shape[-1] != self.crop_size else view))
+        if self.input_memory_format is not None:
+            batch["image"] = _map_views(batch["image"], self._to_input_memory_format)
         return batch
+
+    def _to_input_memory_format(self, view: torch.Tensor) -> torch.Tensor:
+        """``input_memory_format`` for a 4-D or 5-D view, in its 2-D or 3-D flavour."""
+        if view.ndim not in (4, 5):
+            return view
+        fmt = self.input_memory_format
+        if view.ndim == 5 and fmt is torch.channels_last:
+            fmt = torch.channels_last_3d
+        elif view.ndim == 4 and fmt is torch.channels_last_3d:
+            fmt = torch.channels_last
+        return view.contiguous(memory_format=fmt)
 
     def _optimizer_stepped(self) -> bool:
         """Return True once per optimizer step, False on gradient-accumulation-only batches.

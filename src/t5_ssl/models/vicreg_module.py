@@ -62,11 +62,7 @@ class VICRegLightningModule(SSLLightningModule):
         self.queue_filled[0] = min(self.queue_size, int(self.queue_filled.item()) + n)
 
     def _step(self, batch: dict[str, Any], stage: str) -> torch.Tensor:
-        images = batch["image"]
-        if isinstance(images, (list, tuple)) and len(images) >= 2:
-            x1, x2 = images[0], images[1]
-        else:
-            x1 = x2 = images
+        x1, x2 = self.two_views(batch)
         h1 = self.backbone(x1)
         h2 = self.backbone(x2)
         z1 = self.projector(h1)
