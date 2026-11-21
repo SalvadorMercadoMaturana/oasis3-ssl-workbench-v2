@@ -242,7 +242,13 @@ def crop_cubes(volume: np.ndarray, starts: dict[str, list[int]], extract: int) -
 
 
 def swap_hemispheres(view: torch.Tensor) -> torch.Tensor:
-    """Anatomical left-right flip: swap the [left, right mirrored] channels of every pair."""
+    """Anatomical left-right flip: swap the [left, right mirrored] channels of every pair.
+
+    One sample ``(C, D, H, W)``; on a batch the reshape would pair samples instead.
+    """
+    if view.ndim != 4 or view.shape[0] % 2:
+        raise ValueError(f"swap_hemispheres expects one (C, D, H, W) sample with "
+                         f"[left, right] channel pairs, got shape {tuple(view.shape)}")
     return view.reshape(-1, 2, *view.shape[1:]).flip(1).reshape(view.shape)
 
 
@@ -557,7 +563,8 @@ class ROI3DDataModule(L.LightningDataModule):
 
     def prepare_data(self) -> None:
         if not Path(self.cache_path).is_file():
-            raise FileNotFoundError(f"{self.cache_path}: run scripts/legacy/run_roi3d.py preprocess first")
+            raise FileNotFoundError(f"{self.cache_path}: build it first with "
+                                    "scripts/1_data/build_roi_caches.py")
 
     def setup(self, stage: str | None = None) -> None:
         del stage
@@ -604,17 +611,24 @@ class ROI3DDataModule(L.LightningDataModule):
                 [first[s] for s in chosen], self.cubes, self.val_transform,
                 view_seed=(self.val_view_seed or 0) + 500_000)
 
-    def _loader(self, dataset: ROI3DDataset | None, shuffle: bool) -> DataLoader:
+    def _loader(self, dataset: ROI3DDataset | None, shuffle: bool,
+                drop_last: bool = False) -> DataLoader:
         if dataset is None:
             raise RuntimeError("Call setup() before requesting a dataloader")
         extra = ({"prefetch_factor": self.prefetch_factor}
                  if self.num_workers > 0 and self.prefetch_factor else {})
         return DataLoader(dataset, batch_size=self.batch_size, shuffle=shuffle,
                           num_workers=self.num_workers, pin_memory=self.pin_memory,
-                          persistent_workers=self.num_workers > 0, **extra)
+                          persistent_workers=self.num_workers > 0, drop_last=drop_last, **extra)
 
     def train_dataloader(self) -> DataLoader:
-        return self._loader(self.train_dataset, True)
+        # A last training batch of one sample crashes the BatchNorm1d of the SSL heads
+        # ("Expected more than 1 value per channel"): e.g. 745 subjects (outer5 folds 1-2)
+        # at batch 8, the size of the first out-of-memory retry. Only that batch is
+        # dropped; every other batch size keeps its last partial batch, as before.
+        dataset = self.train_dataset
+        one_left = dataset is not None and len(dataset) % self.batch_size == 1
+        return self._loader(dataset, True, drop_last=one_left)
 
     def val_dataloader(self) -> DataLoader | list[DataLoader]:
         if self.train_monitor_dataset is not None:
