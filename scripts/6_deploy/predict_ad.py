@@ -16,8 +16,9 @@ treat the prediction as unreliable). A scan whose cube intensity falls outside t
 model's QC range (OASIS3's, see ``qc_intensity``) is rejected: decision ``QC``, no P(AD).
 
 ``--calibrate-site`` stores the embedding mean and SD of an unlabeled batch of a new site
-(tens of scans, any mix of patients); ``--site`` then standardizes that site's embeddings
-with them instead of OASIS3's (the remedy measured on ADNI in the model card).
+(tens of scans, any mix of patients; scans rejected by the input QC are left out);
+``--site`` then standardizes that site's embeddings with them instead of OASIS3's (the
+remedy measured on ADNI in the model card).
 """
 
 from __future__ import annotations
@@ -87,7 +88,6 @@ def embed(model: dict, nets: list, volumes: list[np.ndarray]
     """Return every seed's embeddings and the QC intensity of each scan."""
     import torch
 
-    sys.path.insert(0, str(ROOT / "scripts"))
     from t5_ssl.data.oasis3_datamodule import normalize_volume
     from t5_ssl.data.roi3d import ROIEval3D, crop_cubes
     cube = model["cube"]
@@ -98,6 +98,31 @@ def embed(model: dict, nets: list, volumes: list[np.ndarray]
     with torch.inference_mode():
         return ([net(batch).float().numpy() for net in nets],
                 qc_intensity(cubes, model["roi_size"]))
+
+
+def calibrate_site(path: Path, names: list[str], embeddings: list[np.ndarray],
+                   passed: np.ndarray) -> dict:
+    """Write the embedding mean and SD of a site's scans that pass the input QC.
+
+    QC-rejected scans are never scored, and the model card measured the calibration on
+    the scans that pass (``build_deploy_model.py``: ``adni_qc_site_calibrated``); scans
+    with another intensity normalization would shift the site statistics.
+    """
+    rejected = [n for n, ok in zip(names, passed, strict=True) if not ok]
+    if rejected:
+        print(f"{len(rejected)} scans fail the input QC and are left out of the site "
+              f"statistics: {', '.join(rejected)}")
+    n = int(passed.sum())
+    if n < 2:
+        raise SystemExit(f"{n} scans pass the input QC: too few to calibrate a site")
+    if n < 20:
+        print(f"warning: {n} scans is a small calibration batch (use tens)")
+    stats = {"scans": n, "qc_rejected": len(rejected),
+             "seeds": [{"mean": e[passed].mean(0).tolist(), "sd": (e[passed].std(0) + 1e-6).tolist()}
+                       for e in embeddings]}
+    path.write_text(json.dumps(stats) + "\n", encoding="utf-8")
+    print(f"site statistics of {n} scans -> {path}")
+    return stats
 
 
 def main() -> None:
@@ -120,13 +145,7 @@ def main() -> None:
     passed = (np.ones(len(volumes), bool) if qc is None
               else (intensity >= qc["lo"]) & (intensity <= qc["hi"]))
     if args.calibrate_site:
-        if len(volumes) < 20:
-            print(f"warning: {len(volumes)} scans is a small calibration batch (use tens)")
-        stats = {"scans": len(volumes), "seeds": [{"mean": e.mean(0).tolist(),
-                                                  "sd": (e.std(0) + 1e-6).tolist()}
-                                                 for e in embeddings]}
-        args.calibrate_site.write_text(json.dumps(stats) + "\n", encoding="utf-8")
-        print(f"site statistics of {len(volumes)} scans -> {args.calibrate_site}")
+        calibrate_site(args.calibrate_site, names, embeddings, passed)
         return
     site = json.loads(args.site.read_text(encoding="utf-8")) if args.site else None
     probs, flags = [], []
