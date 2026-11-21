@@ -33,6 +33,7 @@ scripts/legacy/calibrate_spike_elastic.py).
 from __future__ import annotations
 
 import itertools
+import re
 
 MANIFEST = "campaign_full50_pretrained_balanced/train_sessions_eval_primary_balanced.csv"
 MODELS = ("byol", "vicreg", "dinov2", "pretext")
@@ -338,10 +339,21 @@ def overrides(model: str, variant: str = "campaign", *, epochs: int = 30, seed: 
         out += aug_overrides(aug_recipe, ROIS[roi]["size"])
     out += FAST_RUNTIME if fast else CAMPAIGN_RUNTIME
     if log_root:
-        out.append(f"++log_root={log_root}")
+        out.append(f"++log_root={hydra_string(log_root)}")
     if run_name:
-        out.append(f"++run_name={run_name}")
+        out.append(f"++run_name={hydra_string(run_name)}")
     return dedupe(out + list(extra or []))
+
+
+def hydra_string(text: str) -> str:
+    """Return ``text`` as a Hydra override value, unquoted when the grammar takes it.
+
+    Paths with other characters (``~`` of a Windows short name such as ``USER~1``,
+    quotes, brackets) are single-quoted; every value used so far stays unchanged.
+    """
+    if re.fullmatch(r"[A-Za-z0-9_./:\- ]*", text):
+        return text
+    return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
 def dedupe(items: list[str]) -> list[str]:

@@ -97,3 +97,17 @@ def test_dinov2_3d_configs_compose():
     assert list(cfg.augmentation.side_range) == [1.0, 1.0] and cfg.augmentation.affine_degrees == 0
     assert cfg.augmentation.n_local_crops == 0 and multicrop.augmentation.n_local_crops == 4
     assert cfg.model.backbone.in_channels == cfg.data.channels == 2
+
+
+def test_log_root_and_run_name_survive_hydra_special_characters():
+    """A Windows short name (USER~1) or a quote in --out-root used to stop Hydra."""
+    from t5_ssl import recipes
+    plain = recipes.overrides("vicreg", log_root="runs/adhoc", run_name="vicreg_campaign_s1")
+    assert "++log_root=runs/adhoc" in plain and "++run_name=vicreg_campaign_s1" in plain
+    root = "C:/Users/USER~1/AppData/it's here/runs"
+    GlobalHydra.instance().clear()
+    with hydra.initialize_config_dir(config_dir=_CONFIG_PATH, version_base="1.3"):
+        cfg = hydra.compose(config_name="train", overrides=recipes.overrides(
+            "byol", log_root=root, run_name="byol_wide_dproj0.1__noise_s1"))
+    assert cfg.log_root == root
+    assert cfg.run_name == "byol_wide_dproj0.1__noise_s1"
