@@ -49,6 +49,7 @@ Todas las corridas son de `train.py` (directo, con `cloud/run_all.py` o con
 | `dino_fix/`, `deploy/runs/dino_fix*` | Por qué DINOv2 rinde menos (prototipos, lectura del probe, ViT vs CNN, entrada). | `5_reports/report_dino_fix.py` | `REPORT.md` |
 | `top3/` | Los tres mejores de cada método (protocolo v2). | `5_reports/report_top3.py` | `REPORT.md` |
 | `split_study/`, `split_outer5/`, `outer5/` | CV vs test; tareas pretexto (rotación/jigsaw); tuning; validación externa de 5 pliegues (2026-11-16). | `4_evaluate/analyze_cv_vs_test.py`, `2_splits/make_split_outer.py`, `3_train/jobs_outer5.py`, `4_evaluate/tune_probe.py`, `5_reports/report_outer5.py`, `5_reports/present_final.py` (→ `docs/figures_final/`) | `outer5/REPORT.md` |
+| `outer5/baselines/` | Por qué sin SSL y el supervisado se mueven con los SSL: líneas base triviales (volumen hipocampal, estadísticas de intensidad, pesos aleatorios) con el protocolo v2 (2026-11-21). | `4_evaluate/trivial_baselines.py`, `5_reports/report_shared_signal.py` (→ `docs/informe_senal_compartida.pdf`) | `summary.json`, informe PDF |
 | `bench/`, `bench_dinov2/` | Throughput del runtime rápido. | `cloud/bench.py` | `BENCH.md` |
 
 ## Otras carpetas de la raíz

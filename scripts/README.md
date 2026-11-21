@@ -42,6 +42,7 @@ El entrenamiento SSL en sí es `train.py` (raíz); en GPU, `cloud/`.
 | `compare_runs.py` | Comparaciones entre grupos de corridas con bootstrap pareado. |
 | `analyze_cv_vs_test.py` | Por qué el test superaba a la CV en `split_deploy`. |
 | `tune_probe.py` | Variantes del probe lineal sobre la CV representativa (sólo CPU). |
+| `trivial_baselines.py` | Líneas base sin aprendizaje de representación (estadísticas de intensidad del cubo, volúmenes FreeSurfer, ConvNeXt-T aleatorio, ImageNet recalculado) con el protocolo v2 en los 5 pliegues externos. |
 
 La evaluación de cada corrida ocurre dentro de `train.py` (`src/t5_ssl/evaluation/`).
 
@@ -63,6 +64,7 @@ La evaluación de cada corrida ocurre dentro de `train.py` (`src/t5_ssl/evaluati
 | `report_top3.py` | `top3/` |
 | `report_outer5.py` | `outer5/` |
 | `present_final.py` | figuras finales → `docs/figures_final/` |
+| `report_shared_signal.py` | `outer5/baselines/`: por qué sin SSL y el supervisado siguen a los SSL → `docs/informe_senal_compartida.pdf` |
 
 ## `6_deploy/`: el modelo desplegable
 

@@ -146,6 +146,7 @@ Después del entrenamiento:
 | `scripts/4_evaluate/compare_runs.py` | Diferencias entre grupos de corridas con bootstrap pareado. |
 | `scripts/4_evaluate/analyze_cv_vs_test.py` | Por qué el test salía mejor que la CV (respuesta: azar de un único test de 41 AD). |
 | `scripts/4_evaluate/tune_probe.py` | Variantes del probe (PCA, L1, elastic net) sobre la CV representativa. |
+| `scripts/4_evaluate/trivial_baselines.py` | Líneas base sin aprendizaje de representación con el mismo protocolo v2. El volumen hipocampal solo ya iguala a los SSL; ver `docs/informe_senal_compartida.pdf`. |
 
 ## 5. Reportes
 

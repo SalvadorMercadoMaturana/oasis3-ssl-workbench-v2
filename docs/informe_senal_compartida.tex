@@ -1,0 +1,504 @@
+\documentclass[11pt,a4paper]{article}
+
+% ============================================================
+%  Por qué "sin SSL" y el supervisado completo se mueven junto con los SSL
+%  (split externo de 5 pliegues, protocolo v2; 2026-11-21).
+%  Figuras, tablas y números (docs/figures_senal_compartida/):
+%    python scripts/4_evaluate/trivial_baselines.py --check-init
+%    python scripts/5_reports/report_shared_signal.py
+%  Compilar desde docs/: pdflatex informe_senal_compartida.tex (dos veces)
+% ============================================================
+
+\usepackage[a4paper,margin=2.1cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[spanish,es-noshorthands]{babel}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{placeins}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage[most]{tcolorbox}
+
+\definecolor{primaryblue}{HTML}{1B4F72}
+\definecolor{steelblue}{HTML}{2E86AB}
+\definecolor{accentorange}{HTML}{E67E22}
+\definecolor{softgray}{HTML}{85929E}
+\definecolor{panelbg}{HTML}{EAF2F8}
+\definecolor{warnbg}{HTML}{FDEBD0}
+\definecolor{tldrbg}{HTML}{EBF5FB}
+\definecolor{okc}{HTML}{1E8449}
+\definecolor{noc}{HTML}{B03A2E}
+
+\usepackage{xurl}
+\usepackage[colorlinks=true,linkcolor=primaryblue,citecolor=primaryblue,urlcolor=steelblue]{hyperref}
+
+\newtcolorbox{tldrbox}[1][En una frase]{colback=tldrbg,colframe=primaryblue,coltitle=white,
+  colbacktitle=primaryblue,fonttitle=\bfseries,boxrule=0.9pt,arc=3pt,
+  left=8pt,right=8pt,top=5pt,bottom=5pt,title=#1}
+\newtcolorbox{ideabox}[1][Idea clave]{colback=panelbg,colframe=steelblue,coltitle=white,
+  colbacktitle=steelblue,fonttitle=\bfseries,boxrule=0.8pt,arc=2pt,
+  left=8pt,right=8pt,top=5pt,bottom=5pt,title=#1}
+\newtcolorbox{warnbox}[1][Ojo con esto]{colback=warnbg,colframe=accentorange,coltitle=white,
+  colbacktitle=accentorange,fonttitle=\bfseries,boxrule=0.8pt,arc=2pt,
+  left=8pt,right=8pt,top=5pt,bottom=5pt,title=#1}
+
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.5pt}
+\fancyhead[L]{\small\color{softgray}Señal compartida · 5 pliegues externos · protocolo v2}
+\fancyhead[R]{\small\color{softgray}SSL, sin SSL y supervisado}
+\fancyfoot[C]{\small\thepage}
+\setlength{\headheight}{14pt}
+
+\titleformat{\section}{\normalfont\Large\bfseries\color{primaryblue}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalfont\large\bfseries\color{steelblue}}{\thesubsection}{0.6em}{}
+
+\graphicspath{{figures_senal_compartida/}}
+\setlength{\parskip}{4pt}
+\setlength{\parindent}{0pt}
+\setlength{\emergencystretch}{3em}
+\setlist[itemize]{topsep=2pt,itemsep=2pt}
+\setlist[enumerate]{topsep=2pt,itemsep=2pt}
+\captionsetup{font=small,labelfont={bf,color=primaryblue}}
+\renewcommand{\arraystretch}{1.15}
+\newcommand{\si}{\textcolor{okc}{\textbf{sí}}}
+\newcommand{\no}{\textcolor{noc}{\textbf{no}}}
+
+\input{figures_senal_compartida/numeros.tex}
+
+\begin{document}
+
+% ============================================================
+\begin{center}
+{\LARGE\bfseries\color{primaryblue} ¿Por qué \emph{sin SSL} y el supervisado\\[2pt]
+se mueven junto con los SSL?}\\[8pt]
+{\large\color{steelblue} La señal que comparten todos los modelos\\
+cubos hipocampales de OASIS3 · 5 pliegues externos · protocolo v2}\\[6pt]
+{\small 21 de noviembre de 2026}
+\end{center}
+
+\begin{tldrbox}[Respuesta corta]
+Todos los modelos miden, sobre todo, \textbf{cuánto se atrofió el hipocampo}. Esa
+señal es tan fuerte y tan simple que la recoge casi cualquier cosa que mire el cubo.
+\begin{itemize}
+  \item El \textbf{volumen hipocampal de FreeSurfer usado tal cual} (sin red, sin probe,
+        sin entrenar nada) da AUROC de test \nvolTest. BYOL, el mejor SSL, da \nbyolTest.
+  \item \textbf{38 estadísticas de intensidad del cubo}, con el mismo probe, dan \nstatsTest.
+  \item Por eso los modelos suben y bajan juntos de un pliegue a otro: lo que cambia es
+        qué tan separables son los sujetos que cayeron en cada test. Incluso el volumen,
+        que no tiene ningún modelo detrás, sigue a la media de los SSL ($r = \nrVol$).
+  \item \emph{Sin SSL} no es un caso raro: es una medición más ruidosa de la misma
+        atrofia. Con pesos aleatorios la misma red baja a \nrandCV{} en CV, así que
+        ImageNet sí aporta. El SSL suma unos $+0.03$ más y deja los embeddings más
+        alineados con el volumen.
+  \item Su ``mejora'' entre informes (de 0.698 a 0.803 en el pliegue 0) vino del
+        arreglo del probe en el protocolo v2, no del encoder.
+  \item No encontré fugas.
+\end{itemize}
+\end{tldrbox}
+
+% ============================================================
+\section{Qué se observa y qué se preguntó}
+
+En la figura final (\texttt{docs/figures\_final/metricas.png}) quedan todos cerca: los
+cuatro SSL (VICReg, BYOL, DINOv2 y rotación), el supervisado completo y el encoder
+\emph{sin SSL}, que es el mismo ConvNeXt-T 3D con pesos ImageNet inflados, congelado,
+más un probe lineal. El AUROC de test va de \ninitTest{} (sin SSL) a \nbyolTest{} (BYOL),
+y los puntos de cada pliegue suben y bajan juntos. La pregunta es por qué, y sobre todo
+por qué en el caso sin SSL, que nunca vio una resonancia durante su entrenamiento.
+
+``Moverse al unísono'' puede leerse de tres maneras, y las tres tienen la misma causa de
+fondo:
+\begin{enumerate}
+  \item \textbf{Entre pliegues}: un pliegue fácil lo es para todos (sección~\ref{sec:pliegues}).
+  \item \textbf{De la CV al test}: en un mismo pliegue, el test queda por encima o por
+        debajo de la CV en casi todos los modelos a la vez (sección~\ref{sec:pliegues}).
+  \item \textbf{Entre informes}: sin SSL ``mejoró'' de 0.698 a 0.803 en el pliegue 0
+        cuando cambió el protocolo (sección~\ref{sec:sinssl}).
+\end{enumerate}
+
+\section{Qué se comparó}
+
+Todo se evaluó con el \textbf{mismo protocolo v2} (\texttt{t5\_ssl.evaluation.protocol\_v2})
+y sobre los \textbf{mismos sujetos} en cada uno de los 5 pliegues externos:
+\begin{itemize}
+  \item unos 300 sujetos etiquetados y emparejados por edad para entrenar el probe;
+  \item una CV representativa de unos 700 sujetos (23\,\% AD, edades reales);
+  \item un test de unos 176 sujetos.
+\end{itemize}
+Los modelos son ensambles de 3 semillas, salvo sin SSL, que no depende de la semilla.
+
+Además de los seis modelos de la figura final, agregué líneas base que no aprenden
+ninguna representación (\texttt{scripts/4\_evaluate/trivial\_baselines.py}):
+\begin{itemize}
+  \item \textbf{Estadísticas de intensidad del cubo}. Por hemisferio: la media, la
+        desviación, 7 cuantiles y un histograma de 10 tramos de las intensidades
+        normalizadas del cubo $32^3$ que ven las redes. Son 38 números.
+  \item \textbf{Volúmenes FreeSurfer}. Son los vóxeles de la parcelación
+        \texttt{aparc+aseg} que ya trae el LMDB: hipocampo, amígdala, asta temporal,
+        ventrículo lateral, corteza entorrinal y parahipocampal (cada una a ambos lados),
+        más sustancia blanca, corteza y cerebro. Son 15 números. También probé solo los
+        dos volúmenes hipocampales.
+  \item \textbf{ConvNeXt-T con pesos aleatorios} (dos semillas), congelado: la misma
+        arquitectura que sin SSL, pero sin ImageNet.
+  \item \textbf{Un solo número como puntaje, sin probe}: el volumen hipocampal (menor
+        volumen = AD) y la edad (mayor edad = AD).
+\end{itemize}
+
+Ninguna de estas features usa etiquetas. Las 38 estadísticas y los volúmenes pasan por
+el mismo probe que los embeddings de 768 dimensiones: regresión logística balanceada,
+con C elegido por log-loss en la CV interna. De los \nnPooled{} sujetos de test, \nnVol{}
+tienen parcelación FreeSurfer. A los que no la tienen, el probe les imputa la media de
+los etiquetados del pliegue; en los análisis por sujeto se los excluye.
+
+% ============================================================
+\section{Resultado 1: una señal simple alcanza el techo}
+\label{sec:escalera}
+
+\begin{table}[H]
+\centering\footnotesize
+\setlength{\tabcolsep}{4pt}
+\input{figures_senal_compartida/tab_resumen.tex}
+\caption{Media de los 5 pliegues externos.
+\emph{CV}: CV representativa (23\,\% AD, edades reales).
+\emph{CV emp.}: la misma CV restringida a los sujetos etiquetados, que están emparejados
+por edad; ahí la edad sola da \nageMatched.
+\emph{Compuesto}: $(\text{AUROC}+\text{AUPR}+\text{F1-macro})/3$.
+\emph{AUROC $\pm$3 años}: AUROC sobre los pares AD-HC cuya edad difiere en 3 años o menos.
+Los puntajes sin probe no tienen umbral, así que tampoco tienen F1 ni compuesto.}
+\label{tab:resumen}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{escalera.png}
+\caption{Cada fila es un modelo o una línea base. El punto es la media de los 5 pliegues
+y la barra va del peor al mejor pliegue. Los rombos son puntajes sin probe; los círculos
+blancos, líneas base que pasan por el probe.}
+\label{fig:escalera}
+\end{figure}
+
+La tabla~\ref{tab:resumen} y la figura~\ref{fig:escalera} ordenan las señales de menor a
+mayor. En la CV representativa queda así:
+\begin{center}\small
+\begin{tabular}{@{}l c@{}}
+pesos aleatorios & \nrandCV \\
+sin SSL (ImageNet) & \ninitCV \\
+SSL & 0.836--0.851 \\
+estadísticas de intensidad & \nstatsCV \\
+volumen hipocampal solo & \nvolCV \\
+15 volúmenes FreeSurfer & \nasegCV \\
+\end{tabular}
+\end{center}
+En el test, el volumen solo (\nvolTest), las 38 estadísticas (\nstatsTest) y BYOL
+(\nbyolTest) quedan empatados. Tres cosas saltan a la vista:
+
+\begin{enumerate}
+  \item \textbf{El techo es la volumetría.} Un número que FreeSurfer calcula sin ver
+        ninguna etiqueta alcanza al mejor SSL. Donde la edad no ayuda, lo supera: en la
+        CV emparejada, el volumen hipocampal da \nvolMatched{} y los 15 volúmenes
+        \nasegMatched, frente a \nmodelsMatchedMin--\nmodelsMatchedMax{} de los seis
+        modelos. Los 15 volúmenes también tienen el mejor compuesto de test
+        (\nasegComposite, frente a como mucho \nmodelsCompositeMax{} de los modelos).
+  \item \textbf{La señal está en la intensidad misma del cubo.} Cuando el hipocampo se
+        atrofia, el cubo tiene más líquido (oscuro) y menos tejido. 38 números que
+        resumen el histograma de intensidades bastan para llegar al nivel de los SSL.
+        Una red con pesos aleatorios, que solo combina intensidades locales al azar, ya
+        saca \nrandCV. (El probe con los dos volúmenes hipocampales rinde algo menos que
+        el volumen solo, en parte porque a los sujetos sin parcelación les imputa la media.)
+  \item \textbf{Todos los modelos viven en una franja estrecha}: la de una medición
+        más o menos limpia de la atrofia. El piso razonable no es 0.5 sino 0.75 (pesos
+        aleatorios), y el techo está en 0.86--0.87 (volumetría).
+\end{enumerate}
+
+\subsection*{¿Y la edad?}
+En la población real, la edad sola da \nageTest{} de AUROC, porque los AD son mayores.
+Parte de lo que miden los modelos es atrofia por edad. Pero no es lo que los hace
+moverse juntos:
+\begin{itemize}
+  \item Entre pares AD-HC con edades a 3 años o menos, los modelos siguen en
+        \ninitAge--\nbyolAge{} y el volumen en \nvolAge, mientras la edad cae a 0.55.
+  \item Los pliegues en que la edad separa mejor no son los mismos en que los modelos
+        rinden más: la correlación con la media SSL es $r = \nrAge$
+        (tabla~\ref{tab:pliegues}).
+\end{itemize}
+
+% ============================================================
+\section{Resultado 2: por qué suben y bajan juntos entre pliegues}
+\label{sec:pliegues}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{pliegues.png}
+\caption{AUROC por pliegue. La banda azul es el rango de los cuatro SSL y la línea azul,
+su media. La línea negra discontinua es el volumen hipocampal usado tal cual: no tiene
+modelo, ni probe, ni semillas.}
+\label{fig:pliegues}
+\end{figure}
+
+\begin{table}[H]
+\centering\footnotesize
+\setlength{\tabcolsep}{4pt}
+\input{figures_senal_compartida/tab_pliegues.tex}
+\caption{AUROC de test por pliegue y correlación de Pearson de cada fila con la media de
+los cuatro SSL a través de los 5 pliegues. Abajo, la brecha test $-$ CV de cada pliegue.}
+\label{tab:pliegues}
+\end{table}
+
+La figura~\ref{fig:pliegues} es la clave. La línea negra discontinua no es un modelo:
+es el volumen hipocampal de cada sujeto de test, usado tal cual. Aun así sube y baja
+exactamente con los SSL ($r = \nrVol$ a través de los pliegues) y con el supervisado
+($r = \nrSup$ entre supervisado y media SSL). El pliegue 3 es fácil para todos y el 1
+difícil para todos porque \textbf{en el pliegue 3 tocaron sujetos cuya atrofia separa
+mejor a los AD de los HC}: el volumen solo da 0.893 ahí. En el pliegue 1, en cambio, los
+volúmenes de AD y HC se solapan más (0.825). No es algo que hagan los modelos.
+
+Cuantitativamente, entre los seis modelos ConvNeXt-T el pliegue explica el
+\textbf{\nshareFold} de la varianza del AUROC de test; el modelo, el \nshareModel; y la
+interacción, el \nshareInter. El test de cada pliegue tiene unos 176 sujetos (41 AD) y
+su AUROC varía $\pm 0.03$ solo por qué sujetos tocaron. Las diferencias entre SSL
+($\le 0.015$ en la media) son más chicas que eso.
+
+\textbf{La brecha CV $\to$ test tiene la misma causa.} La CV de cada pliegue tiene unos
+700 sujetos y casi no se mueve; el test, con 176, sí. La brecha test $-$ CV de la media
+SSL (+0.010, $-$0.031, +0.009, +0.059, +0.029) sigue a la del volumen sin modelo
+($-$0.001, $-$0.048, $-$0.018, +0.039, +0.028). Cuando un test ``sale alto'' para todos,
+sale alto también para una regla que no se entrenó en nada.
+
+\textbf{Sin SSL es el que menos acompaña} ($r = \nrInit$). Cae a 0.80 en los pliegues 0
+y 4, donde los demás no caen. Es lo esperable de una medición más ruidosa de la misma
+cantidad (sección~\ref{sec:sinssl}).
+
+% ============================================================
+\section{Resultado 3: sujeto a sujeto, ordenan casi igual}
+\label{sec:sujetos}
+
+\begin{table}[H]
+\centering\footnotesize
+\setlength{\tabcolsep}{4pt}
+\input{figures_senal_compartida/tab_sujetos.tex}
+\caption{Test agrupado de los 5 pliegues (\nnVol{} sujetos con volumen FreeSurfer). Cada
+puntaje se pasa a percentil dentro de su pliegue.
+\emph{AUROC con volumen similar}: AUROC sobre los pares AD-HC cuyo volumen hipocampal
+difiere en 0.25 desviaciones estándar o menos; mide lo que el puntaje sabe más allá del
+volumen.
+$R^2$: fracción de la varianza del percentil del puntaje que explica linealmente el
+percentil del volumen; entre paréntesis, la del volumen más la edad.}
+\label{tab:sujetos}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{sujetos.png}
+\caption{Cada punto es un sujeto del test agrupado, con puntajes en percentil dentro de
+su pliegue. Izquierda: el puntaje de BYOL frente al volumen hipocampal (\nnVol{} sujetos
+con volumen). Derecha: frente al puntaje sin SSL (los \nnPooled{} sujetos).}
+\label{fig:sujetos}
+\end{figure}
+
+Si los modelos solo coincidieran en la etiqueta, sus puntajes se parecerían entre clases
+pero no dentro de cada clase. No es lo que pasa:
+\begin{itemize}
+  \item \textbf{Entre modelos.} BYOL ordena a los sujetos casi igual que VICReg (0.95),
+        el supervisado (\nrhoByolSup) y las 38 estadísticas de intensidad (0.93).
+        También casi igual que sin SSL (\nrhoByolInit).
+  \item \textbf{Dentro de cada clase.} Entre los AD solos, BYOL y sin SSL tienen
+        Spearman \nrhoByolInitAD; entre los HC solos, \nrhoByolInitHC. Todos ordenan
+        por la misma cantidad continua, el grado de atrofia, y no solo por la etiqueta.
+  \item \textbf{Frente al volumen.} Con el volumen hipocampal, BYOL tiene Spearman
+        \nrhoByolVolAD{} dentro de los AD y \nrhoByolVolHC{} dentro de los HC.
+        \textbf{El volumen solo explica el \nrTwoByol{} de la varianza del puntaje BYOL}
+        (\nrTwoByolAge{} con la edad); en sin SSL, el \nrTwoInit.
+  \item \textbf{Más allá del volumen.} Entre pares AD-HC de volumen parecido, todos los
+        modelos separan algo más: AUROC 0.62--0.66, \ncondByol{} en BYOL. Ese resto es
+        igual de chico para todos, y las 38 estadísticas de intensidad también lo tienen
+        (\ncondStats). La edad aporta poco ahí (\ncondAge).
+\end{itemize}
+
+% ============================================================
+\section{El caso sin SSL}
+\label{sec:sinssl}
+
+\textbf{Es de verdad el encoder ImageNet congelado.} Recalculé sus embeddings desde cero:
+la arquitectura de \texttt{train.py}, pesos ImageNet de torchvision inflados a 3D, sin
+ningún paso de entrenamiento. Coinciden con los guardados por las corridas sin SSL en
+los 5 pliegues, con un error relativo máximo de $1.4\times10^{-6}$ (redondeo de
+float32). Al pasarlos por el protocolo dan exactamente los números guardados (pliegue 0:
+CV 0.828, test 0.803).
+
+\textbf{Por qué ya rinde 0.82.} El cubo trae la señal a nivel de intensidades. Los
+filtros de ImageNet (bordes, manchas, texturas) inflados a 3D responden a los bordes
+entre líquido y tejido. Sus 768 features contienen la atrofia, mezclada con muchas
+direcciones irrelevantes. El probe lineal, con unos 300 sujetos y una regularización
+fuerte (C entre 0.001 y 0.003 en casi todos los pliegues), la recupera solo en parte:
+\ninitCV{} en CV, contra \nrandCV{} con pesos aleatorios.
+
+\textbf{Qué agrega el SSL.} El SSL no descubre una señal nueva. Reorganiza las features
+para que las direcciones en que más varían los cubos hipocampales queden explícitas, y
+lo que más varía entre esos cubos es justamente la atrofia (edad más enfermedad). Por
+eso:
+\begin{itemize}
+  \item la correlación con el volumen sube de \nrhoInitVol{} (sin SSL) a \nrhoByolVol{} (BYOL);
+  \item el AUROC sube $+0.02$ a $+0.03$ en CV y $+0.02$ a $+0.04$ en test;
+  \item el resto más allá del volumen apenas cambia (\ncondInit{} frente a \ncondByol).
+\end{itemize}
+El SSL le facilita el trabajo al probe, pero no lo lleva más allá del techo volumétrico.
+
+\textbf{La ``mejora'' entre informes fue del probe, no del encoder.} En el pliegue 0, sin
+SSL pasó de 0.698 a 0.803 de AUROC de test entre el protocolo v1 y el v2
+(figura~\ref{fig:historia}). En el mismo cambio los SSL subieron solo $+0.015$ a
+$+0.024$, y el supervisado quedó igual, porque sus predicciones salen de la red y no del
+probe. El protocolo v1 elegía la C del probe de test con 60 sujetos de validación, en
+una grilla de 0.01 a 10 que casi siempre tocaba su borde inferior. Así sobreajustaba, y
+el más perjudicado era el encoder de 768 features más ruidosas: ImageNet. La CV
+emparejada del v1 nunca mostró una ventaja grande del SSL (sin SSL 0.717, SSL
+0.70--0.72; tabla~\ref{tab:historia}). La vieja ventaja de ``+0.12 a +0.16'' del SSL era
+ese artefacto; la real es de unos $+0.03$.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth]{historia.png}
+\caption{Pliegue 0 (\texttt{split\_deploy}), media de las semillas de cada modelo,
+evaluado con el probe del protocolo v1 y con el del v2. El supervisado no usa probe:
+sus predicciones son las mismas en los dos protocolos.}
+\label{fig:historia}
+\end{figure}
+
+\begin{table}[H]
+\centering\small
+\input{figures_senal_compartida/tab_historia.tex}
+\caption{Pliegue 0 con los dos protocolos (media de semillas de corridas individuales,
+no ensambles). En el v1, la CV era la emparejada por edad.}
+\label{tab:historia}
+\end{table}
+
+% ============================================================
+\section{Por qué el supervisado completo no supera al SSL}
+
+El supervisado parte de los mismos pesos ImageNet y ve el mismo cubo. Se entrena de
+punta a punta con unos 240 sujetos etiquetados y elige su época con 60 de validación.
+Con tan pocas etiquetas, la red aprende lo más discriminativo y lo más fácil de aprender,
+que es la atrofia. Llega al mismo techo (test \nsupTest, CV \nsupCV) y ordena a los
+sujetos casi igual que BYOL (Spearman \nrhoByolSup).
+
+Su CV es más baja y más variable (0.796 a 0.859 según el pliegue): cada pliegue de la CV
+entrena una red nueva con unos 190 sujetos. Ningún método pasa el techo volumétrico
+porque lo que queda más allá del volumen es poco (AUROC 0.62--0.66 entre pares de
+volumen parecido) y repartido. Con este número de etiquetas, ni el SSL ni el supervisado
+lo aprovechan mejor que 38 estadísticas de intensidad.
+
+% ============================================================
+\section{Auditoría de fugas}
+
+Que un encoder congelado de ImageNet rinda 0.82 podría sugerir que algo se filtra. Revisé
+cada punto por donde podría hacerlo:
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}X c@{}}
+\toprule
+Comprobación & ¿Sin fuga? \\
+\midrule
+Sujetos de test disjuntos de los de CV y pool en los 5 pliegues (0 en común; los 880
+sujetos de test son todos distintos) & \si \\
+Ninguna sesión de un sujeto de test entra al entrenamiento SSL (los manifiestos no
+comparten sesiones; cada sujeto está en un solo split) & \si \\
+Sin SSL es el encoder ImageNet congelado (embeddings recalculados = guardados, error
+$\le 1.4\times10^{-6}$) & \si \\
+Todos los modelos se evalúan en los mismos sujetos de test por pliegue & \si \\
+Posición del cubo: centroide hipocampal medio de 429 sesiones de entrenamiento del
+split~361, calculado solo con la anatomía (sin diagnóstico), y la misma para todas las
+sesiones & \si \\
+Normalización de intensidad por volumen (percentiles 1--99 de esa misma resonancia),
+sin estadísticas de otros sujetos & \si \\
+C del probe por log-loss en la CV interna; umbral de F1 elegido en la CV representativa,
+nunca en el test & \si \\
+Supervisado: entrena con train, elige época con val y usa el test solo para puntuar & \si \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Sobre la posición del cubo: algunas de esas 429 sesiones caen en el test de algún pliegue
+externo. Pero lo único que se toma de ellas es el promedio de la posición del hipocampo
+en el espacio MNI, sin etiqueta, y es una sola posición fija para todos. No puede llevar
+información de diagnóstico.
+
+El argumento más fuerte, en todo caso, es otro: una regla que no se entrena en nada (el
+volumen hipocampal) alcanza el mismo AUROC. No hace falta ninguna fuga para explicar
+los números.
+
+% ============================================================
+\section{Qué significa para el proyecto}
+
+\begin{ideabox}[Lo que cambia en la lectura de los resultados]
+\begin{enumerate}
+  \item \textbf{La línea base que hay que superar es la volumetría, no sin SSL.} Hoy
+        ningún modelo supera al volumen hipocampal (test \nvolTest; CV emparejada
+        \nvolMatched). Los 15 volúmenes FreeSurfer superan a todos los modelos en la CV
+        emparejada (\nasegMatched) y en el compuesto de test (\nasegComposite). Conviene
+        poner esta fila en cada tabla de resultados.
+  \item \textbf{Las diferencias entre SSL están por debajo del ruido del test.} El test
+        de cada pliegue se mueve $\pm 0.03$ por composición; las diferencias entre los
+        cuatro SSL son de 0.015 o menos. Hay que compararlos con bootstrap pareado
+        sobre los mismos sujetos o en el test agrupado de 880 sujetos, como ya se hace,
+        y no por pliegue.
+  \item \textbf{La tarea AD vs HC con el cubo hipocampal está saturada por la atrofia.}
+        Para saber si el SSL aprende algo más, hacen falta preguntas donde el volumen
+        no baste:
+        \begin{itemize}
+          \item medir lo que se sabe más allá del volumen (el AUROC entre pares de
+                volumen similar de la tabla~\ref{tab:sujetos});
+          \item curvas con menos etiquetas (10\,\%, 25\,\%), donde el SSL suele mostrar
+                su ventaja;
+          \item tareas más finas: CDR~0.5 frente a HC, o progresión;
+          \item cohortes externas.
+        \end{itemize}
+  \item \textbf{Combinar en vez de competir.} Volumen y embedding se pueden juntar en un
+        mismo probe. Para que cuente, la mejora tiene que validarse en la CV, no
+        mirando el test.
+\end{enumerate}
+\end{ideabox}
+
+\begin{warnbox}[Límites de este análisis]
+\begin{itemize}
+  \item Los volúmenes FreeSurfer se cuentan en la grilla MNI de 2\,mm: el registro al
+        atlas ya corrige en buena medida el tamaño de cabeza, y la resolución es gruesa.
+  \item 48 de los 880 sujetos de test no tienen parcelación; quedan fuera de los
+        análisis por sujeto, y en el probe se les imputa la media.
+  \item Las líneas base son una sola corrida por pliegue y los modelos, ensambles de 3
+        semillas. Eso favorece levemente a los modelos.
+  \item Las estadísticas de intensidad podrían recoger diferencias de escáner además de
+        atrofia. Pero el volumen FreeSurfer, que no depende de la intensidad absoluta,
+        da lo mismo, y los puntajes se ordenan como el volumen.
+\end{itemize}
+\end{warnbox}
+
+\appendix
+\section{Cómo se reproduce}
+
+Todo corre en CPU, en unos 15 minutos, y no modifica ninguna corrida existente.
+\begin{enumerate}
+  \item \texttt{python scripts/4\_evaluate/trivial\_baselines.py -{}-check-init}\\
+        Calcula las features de las 2059 sesiones del cache \texttt{data/roi3d/hippo\_s32}:
+        estadísticas, ImageNet, pesos aleatorios y volúmenes del LMDB. Comprueba que los
+        embeddings ImageNet sean los de las corridas sin SSL y evalúa cada conjunto con
+        el protocolo v2 en los 5 pliegues. Escribe en
+        \texttt{campaign\_ssl3d\_runpod/outer5/baselines/} los archivos
+        \texttt{features.npz} y \texttt{protocol\_v2.json}.
+  \item \texttt{python scripts/5\_reports/report\_shared\_signal.py}\\
+        Lee además los ensambles de \texttt{report\_outer5.py} y escribe las figuras, las
+        tablas y \texttt{numeros.tex} en \texttt{docs/figures\_senal\_compartida/}, y
+        \texttt{summary.json} junto a las líneas base.
+  \item Desde \texttt{docs/}: \texttt{pdflatex informe\_senal\_compartida.tex} (dos veces).
+\end{enumerate}
+
+\end{document}
