@@ -35,6 +35,15 @@ class VICRegLoss(BaseSSLLoss):
         Small constant added to variance for numerical stability.
         Default: ``1e-4``.
 
+    Differences from the official implementation (facebookresearch/vicreg), kept
+    because every VICReg run of the campaigns was trained with them:
+
+    - the variance term is the *sum* of the two views' hinges; the official code
+      averages them (``/ 2``), so ``var_coeff = 25`` here weighs like
+      ``std_coeff = 50`` there (the covariance term is a sum in both);
+    - the standard deviation uses the biased variance (``unbiased=False``); the
+      official code uses the unbiased one (a factor sqrt(B / (B - 1)), 1.03 at B = 16).
+
     """
 
     def __init__(

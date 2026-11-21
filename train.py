@@ -186,46 +186,25 @@ def free_cuda() -> None:
 
 # ---------------------------------------------------------------- main
 def run(args: argparse.Namespace) -> int:
+    """Dry run, "sin SSL" scoring, or training (with OOM/compile retries) + evaluation."""
     batch_size, accumulate = args.batch_size, args.accumulate
     compile_on = args.compile == "on"
-    if args.dry_run:  # compose only (validates the overrides), no torch import
-        from omegaconf import OmegaConf
-        overrides = build_overrides(args, batch_size, accumulate, compile_on)
-        cfg = compose(overrides)
-        print("\n".join(overrides))
-        print(OmegaConf.to_yaml({k: cfg[k] for k in ("model", "augmentation", "optimizer",
-                                                     "loss") if k in cfg}))
-        print(OmegaConf.to_yaml({"perf": cfg.get("perf"), "precision": cfg.trainer.precision,
-                                 "num_workers": cfg.data.num_workers,
-                                 "log_root": cfg.get("log_root"),
-                                 "run_name": cfg.get("run_name")}))
-        return 0
+    if args.dry_run:
+        return dry_run(build_overrides(args, batch_size, accumulate, compile_on))
+    started = time.time()
+    if args.init_only:
+        return score_init(args, build_overrides(args, batch_size, accumulate, compile_on),
+                          started)
     import torch
 
     from t5_ssl.evaluation.identity import identity_scores
     from t5_ssl.evaluation.run_scoring import evaluate_encoders
-    from t5_ssl.train import build_backbone, build_datamodule, train
+    from t5_ssl.train import train
     from t5_ssl.utils.runtime import StepTimer
-    started = time.time()
     attempts: list[dict[str, Any]] = []
     for attempt in range(args.oom_retries + 2):
         overrides = build_overrides(args, batch_size, accumulate, compile_on)
         cfg = compose(overrides)
-        if args.init_only:
-            from t5_ssl.data.roi3d import ROIEval3D
-            torch.manual_seed(args.seed)
-            clean = ROIEval3D(int(cfg.data.roi_size))
-            dm = build_datamodule(cfg, clean, clean)
-            dm.setup()
-            attach_externals(dm, args, cfg)
-            encoder = build_backbone(cfg)
-            scored = evaluate_encoders(args.model, {"main": encoder}, dm, cfg,
-                                       args.spatial_probe, args.save_embeddings)
-            exp_dir = Path(cfg.log_root) / cfg.run_name
-            exp_dir.mkdir(parents=True, exist_ok=True)
-            save_artifacts(exp_dir, args, overrides, scored, encoder, "backbone")
-            write_result(exp_dir, args, overrides, scored, None, started, attempts, init=True)
-            return 0
         callbacks = []
         if args.collapse_every:
             from t5_ssl.callbacks.collapse_monitor import CollapseMonitor
@@ -288,6 +267,43 @@ def run(args: argparse.Namespace) -> int:
     identity = identity_scores(encoders["main"], dm, cfg) if args.identity else None
     write_result(exp_dir, args, overrides, scored, result.get("runtime"), started, attempts,
                  identity=identity)
+    return 0
+
+
+def dry_run(overrides: list[str]) -> int:
+    """Print the overrides and the composed nodes (validates them); no torch import."""
+    from omegaconf import OmegaConf
+    cfg = compose(overrides)
+    print("\n".join(overrides))
+    print(OmegaConf.to_yaml({k: cfg[k] for k in ("model", "augmentation", "optimizer",
+                                                 "loss") if k in cfg}))
+    print(OmegaConf.to_yaml({"perf": cfg.get("perf"), "precision": cfg.trainer.precision,
+                             "num_workers": cfg.data.num_workers,
+                             "log_root": cfg.get("log_root"),
+                             "run_name": cfg.get("run_name")}))
+    return 0
+
+
+def score_init(args: argparse.Namespace, overrides: list[str], started: float) -> int:
+    """``--init-only``: score the encoder SSL would start from ("sin SSL"), no training."""
+    import torch
+
+    from t5_ssl.data.roi3d import ROIEval3D
+    from t5_ssl.evaluation.run_scoring import evaluate_encoders
+    from t5_ssl.train import build_backbone, build_datamodule
+    cfg = compose(overrides)
+    torch.manual_seed(args.seed)
+    clean = ROIEval3D(int(cfg.data.roi_size))
+    dm = build_datamodule(cfg, clean, clean)
+    dm.setup()
+    attach_externals(dm, args, cfg)
+    encoder = build_backbone(cfg)
+    scored = evaluate_encoders(args.model, {"main": encoder}, dm, cfg,
+                               args.spatial_probe, args.save_embeddings)
+    exp_dir = Path(cfg.log_root) / cfg.run_name
+    exp_dir.mkdir(parents=True, exist_ok=True)
+    save_artifacts(exp_dir, args, overrides, scored, encoder, "backbone")
+    write_result(exp_dir, args, overrides, scored, None, started, [], init=True)
     return 0
 
 
