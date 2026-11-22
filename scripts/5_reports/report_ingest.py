@@ -4,13 +4,15 @@
     python scripts/5_reports/report_ingest.py [--final cnx2d_sag_x2]
 
 Reads the downloaded runs in ``campaign_ssl3d_runpod/ingest/runs`` (scripts/3_train/
-jobs_ingest.py: tags ing_init_f<k>, ing_f<k>, ing_sup_f<k>) and the outer-fold references
+jobs_ingest.py: tags ing_init_f<k>, ing_f<k>, ing_<variant>_f<k>, ing_sup_f<k>) and the outer-fold references
 of the 2026-11-16 campaign (scripts/5_reports/report_outer5.py); writes
 ``campaign_ssl3d_runpod/ingest/REPORT.md`` and ``summary.json``.
 
 1. Frozen starts (sin SSL) of every ingestion on fold 0 (split_deploy).
 2. SSL screen on fold 0: the four methods (VICReg, BYOL, DINOv2, rotation pretext) on
-   each ingestion, against the current one (convnext_tiny, same seed, same run).
+   each ingestion, against the current one (convnext_tiny, same seed, same run); the
+   variants ``ing_<v>_f0`` (learning rates x f: ``lr<f>``; frozen backbone BatchNorm:
+   ``fbn``) are rows of their own (``<backbone> <v>``).
 3. ``--final``: the chosen ingestion on the five outer folds (3-seed ensembles) against
    the outer-fold results of the current ingestion: the test numbers of the report.
 
@@ -52,6 +54,27 @@ def run_name(base: str, bb: str) -> str:
     return f"{base}__bb{bb}__roi32"
 
 
+def backbone_of(dirname: str) -> str:
+    """``<method>__bb<backbone>__roi<roi>_s<seed>`` -> backbone (+ ``@<roi>`` if not 32)."""
+    bb, roi = dirname.split("__bb", 1)[1].rsplit("__roi", 1)
+    roi = roi.rsplit("_s", 1)[0]
+    return bb if roi == "32" else f"{bb}@{roi}"
+
+
+def variant_tags(k: int = 0) -> list[tuple[str, str]]:
+    """(tag, row suffix) of the SSL runs of fold k.
+
+    ``ing_f<k>`` and its variants ``ing_<v>_f<k>`` (``lr0.1``: learning rates x 0.1;
+    ``fbn``: backbone BatchNorm frozen after a calibration on the training views).
+    """
+    tags = [(f"ing_f{k}", "")]
+    for p in sorted(RUNS.glob(f"ing_*_f{k}")):
+        v = p.name[len("ing_"):].rsplit("_f", 1)[0]
+        if v not in ("init", "sup"):
+            tags.append((p.name, f" {v}"))
+    return tags
+
+
 def ens(tag: str, name: str, k: int = 0, root: Path = RUNS) -> dict | None:
     docs = pp.load_runs(root, tag, name)
     if not docs:
@@ -88,7 +111,7 @@ def test_delta(a: dict, b: dict) -> dict:
 def frozen_table() -> tuple[list[str], dict]:
     tag = "ing_init_f0"
     names = sorted({p.name.rsplit("_s", 1)[0] for p in (RUNS / tag).glob("vicreg_init__bb*_s*")})
-    rows = {n.split("__bb")[1].rsplit("__roi", 1)[0]: ens(tag, n) for n in names}
+    rows = {backbone_of(n + "_s1"): ens(tag, n) for n in names}
     rows = {k: v for k, v in rows.items() if v is not None}
     ref = rows.get(REF_BB)
     lines = ["| Ingesta / backbone | CV AUROC | CV AUPR | CV F1 | **CV comp.** | Test AUROC | "
@@ -102,17 +125,15 @@ def frozen_table() -> tuple[list[str], dict]:
 
 
 # ---------------------------------------------------------------- 2. SSL screen
-def screen_table(seed_tag: str = "ing_f0") -> tuple[list[str], dict]:
+def screen_table() -> tuple[list[str], dict]:
     found: dict[str, dict[str, dict]] = {}
-    for key, (_, base, _) in METHODS.items():
-        for p in (RUNS / seed_tag).glob(f"{base}__bb*_s*"):
-            bb = p.name.split("__bb")[1].rsplit("__roi", 1)[0]
-            found.setdefault(bb, {})
-    for bb in found:
+    for tag, suffix in variant_tags(0):
         for key, (_, base, _) in METHODS.items():
-            e = ens(seed_tag, run_name(base, bb))
-            if e is not None:
-                found[bb][key] = e
+            for p in (RUNS / tag).glob(f"{base}__bb*__roi32_s*"):
+                bb = backbone_of(p.name)
+                e = ens(tag, run_name(base, bb))
+                if e is not None:
+                    found.setdefault(bb + suffix, {})[key] = e
     ref = found.get(REF_BB, {})
     head = " | ".join(f"{METHODS[k][0]} CV / test" for k in METHODS)
     lines = [f"| Ingesta / backbone | {head} | media CV comp. | media test comp. | "
@@ -156,13 +177,13 @@ def screen_table(seed_tag: str = "ing_f0") -> tuple[list[str], dict]:
 
 
 # ---------------------------------------------------------------- 3. outer folds
-def outer_new(base: str, bb: str) -> dict | None:
+def outer_new(base: str, bb: str, prefix: str = "ing") -> dict | None:
     folds = {}
     for k in r5.FOLDS:
-        e = ens(f"ing_f{k}", run_name(base, bb), k)
+        e = ens(f"{prefix}_f{k}", run_name(base, bb), k)
         if e is None:
             return None
-        e["docs"] = pp.load_runs(RUNS, f"ing_f{k}", run_name(base, bb))
+        e["docs"] = pp.load_runs(RUNS, f"{prefix}_f{k}", run_name(base, bb))
         folds[k] = e
     return folds
 
@@ -182,13 +203,13 @@ def fold_mean(folds: dict, where: str, metric: str) -> tuple[float, float]:
     return float(np.mean(v)), float(np.std(v, ddof=1))
 
 
-def outer_table(bb: str) -> tuple[list[str], dict]:
+def outer_table(bb: str, prefix: str = "ing") -> tuple[list[str], dict]:
     lines = ["| Método | Ingesta | CV comp. (media ± DE) | Test AUROC | Test AUPR | Test F1 | "
              "**Test comp.** | Test agrupado AUROC / AUPR / F1 | Δ test comp. vs actual [IC 95 %] |",
              "|---|---|---|---|---|---|---|---|---|"]
     summary = {}
     for key, (label, base, ref_key) in METHODS.items():
-        new = outer_new(base, bb)
+        new = outer_new(base, bb, prefix)
         old_outer = r5.outer(ref_key, PRETEXT_REF if ref_key == "pretext" else None)
         for name, folds in ((bb, new), (REF_BB, old_outer["folds"] if old_outer else None)):
             if folds is None:
@@ -211,6 +232,8 @@ def outer_table(bb: str) -> tuple[list[str], dict]:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--final", default=None, help="ingestion run on the five outer folds")
+    ap.add_argument("--final-tag", default="ing",
+                    help="tag prefix of its runs (ing, or ing_lr0.1 for scaled learning rates)")
     args = ap.parse_args()
     md = ["# Tuning de ingesta y backbone (2026-11-22)", "",
           "Protocolo v2. CV = CV representativa del pliegue 0 (702 sujetos AD/HC, 23 % AD); "
@@ -226,7 +249,7 @@ def main() -> None:
         md += ["## 2. Los cuatro métodos SSL sobre cada ingesta, pliegue 0 (semilla 1)", "",
                *lines, ""]
     if args.final:
-        lines, summary["outer"] = outer_table(args.final)
+        lines, summary["outer"] = outer_table(args.final, args.final_tag)
         md += [f"## 3. `{args.final}` en los 5 pliegues externos (ensambles de 3 semillas)", "",
                *lines, ""]
     OUT.mkdir(parents=True, exist_ok=True)

@@ -79,6 +79,9 @@ def evaluate_encoders(model_name: str, encoders: dict[str, Any], dm: Any, cfg: A
             out[role]["protocol_v2"] = score_protocol_v2(encoder, dm, cfg, out[role]["_embeddings"])
             if not keep_embeddings:
                 out[role].pop("_embeddings")
+            shift = int(cfg.get("eval_tta_shift", 0) or 0)
+            if shift:  # the same encoder on the central and six shifted cubes (evaluation/tta.py)
+                out[role]["tta"] = score_tta(encoder, dm, cfg, shift)
         if spatial:
             spatial_scores = score(spatial_encoder(encoder), dm, clean)
             out[role]["spatial"] = {k: v for k, v in spatial_scores.items()
@@ -91,11 +94,26 @@ def evaluate_encoders(model_name: str, encoders: dict[str, Any], dm: Any, cfg: A
     return out
 
 
-def score_protocol_v2(encoder: Any, dm: Any, cfg: Any, embeddings: dict) -> dict[str, Any]:
+def score_tta(encoder: Any, dm: Any, cfg: Any, shift: int) -> dict[str, Any]:
+    """Protocol v2 of ``encoder`` on test-time shifted cubes (``t5_ssl.evaluation.tta``)."""
+    from t5_ssl.evaluation.probe_v1 import score
+    from t5_ssl.evaluation.tta import ShiftTTA, tta_transform
+    size = int(cfg.data.roi_size)
+    wrapped, wide = ShiftTTA(encoder, size, shift), tta_transform(size, shift)
+    start = time.time()
+    scored = score(wrapped, dm, wide, True)
+    doc = score_protocol_v2(wrapped, dm, cfg, scored["_embeddings"], clean=wide)
+    return {"shift": shift, "protocol_v2": doc, "cv": scored["cv"], "test": scored["test"],
+            "eval_minutes": (time.time() - start) / 60}
+
+
+def score_protocol_v2(encoder: Any, dm: Any, cfg: Any, embeddings: dict,
+                      clean: Any = None) -> dict[str, Any]:
     """Score the encoder with probe protocol v2 (``t5_ssl.evaluation.protocol_v2``).
 
     Representative CV with the SSL-only AD/HC subjects of train, out-of-sample F1
-    thresholds, AUPR/F1 at the cohort prevalence.
+    thresholds, AUPR/F1 at the cohort prevalence. ``clean``: the probe input transform
+    (default the central ``roi_size`` cube).
 
     Adds the pool embeddings to ``embeddings`` (saved as ``pool_*`` with --save-embeddings).
     """
@@ -108,7 +126,7 @@ def score_protocol_v2(encoder: Any, dm: Any, cfg: Any, embeddings: dict) -> dict
     records = pp.pool_records(manifest)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     encoder = encoder.to(device).eval()
-    clean = ROIEval3D(int(cfg.data.roi_size))
+    clean = clean or ROIEval3D(int(cfg.data.roi_size))
     chunks = []
     with torch.inference_mode():
         for start in range(0, len(records), 64):
