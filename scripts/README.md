@@ -41,6 +41,7 @@ El entrenamiento SSL en sí es `train.py` (raíz); en GPU, `cloud/`.
 | Script | Qué hace |
 |---|---|
 | `reeval_deploy.py` | Re-puntúa corridas de `split_deploy` con el protocolo v2 (`protocol_v2.json`). |
+| `reeval_brain2d.py` | Re-puntúa corridas multiplano (`--roi brain2d`, con `encoder.pt`) con otro conjunto de cortes en el probe (`multislice_<nombre>.json`). |
 | `compare_runs.py` | Comparaciones entre grupos de corridas con bootstrap pareado. |
 | `analyze_cv_vs_test.py` | Por qué el test superaba a la CV en `split_deploy`. |
 | `tune_probe.py` | Variantes del probe lineal sobre la CV representativa (sólo CPU). |

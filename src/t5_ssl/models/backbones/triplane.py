@@ -10,7 +10,9 @@ three RGB inputs of the shared 2D encoder (ImageNet ConvNeXt-T in the campaigns)
 
 ``norm``: ``none`` (the z-scored intensities as they are) or ``imagenet`` (the ImageNet
 per-channel statistics on top). Without gradients the planes go through the encoder in
-chunks of ``EVAL_CHUNK`` images (probe embeddings).
+chunks of ``EVAL_CHUNK`` images (probe embeddings); ``chunk`` > 0 runs training in chunks
+of that many images under activation checkpointing (same result, a fraction of the
+memory: multi-slice views of DINOv2 at batch 64 are 1152 images per step).
 """
 
 from __future__ import annotations
@@ -30,13 +32,14 @@ class TriPlaneBackbone(BaseBackbone):
     """``(B, P, H, W)`` planes -> ``(B, out_dim)`` through one shared 2D encoder."""
 
     def __init__(self, encoder: nn.Module, planes: int = 3, reduce: str = "concat",
-                 norm: str = "none") -> None:
+                 norm: str = "none", chunk: int = 0) -> None:
         super().__init__()
         if reduce not in REDUCES:
             raise ValueError(f"triplane reduce must be one of {REDUCES}, got {reduce!r}")
         if norm not in NORMS:
             raise ValueError(f"triplane norm must be one of {NORMS}, got {norm!r}")
         self.encoder, self.planes, self.reduce, self.norm = encoder, int(planes), reduce, norm
+        self.chunk = max(0, int(chunk))
         width = int(encoder.out_dim)
         self._out_dim = width * self.planes if reduce == "concat" else width
         self.register_buffer("mean", torch.tensor(IMAGENET_MEAN).view(1, 3, 1, 1), persistent=False)
@@ -64,7 +67,11 @@ class TriPlaneBackbone(BaseBackbone):
         if self.norm == "imagenet":
             images = (images - self.mean.to(images.dtype)) / self.std.to(images.dtype)
         images = images.contiguous(memory_format=torch.channels_last)
-        if torch.is_grad_enabled():
+        if torch.is_grad_enabled() and self.chunk and self.training:
+            from torch.utils.checkpoint import checkpoint
+            features = torch.cat([checkpoint(self.encoder, part, use_reentrant=False)
+                                  for part in images.split(self.chunk)])
+        elif torch.is_grad_enabled():
             features = self.encoder(images)
         else:  # probe embeddings: bounded memory, same result
             features = torch.cat([self.encoder(part) for part in images.split(EVAL_CHUNK)])

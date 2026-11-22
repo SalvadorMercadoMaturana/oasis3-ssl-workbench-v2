@@ -320,9 +320,15 @@ class TriPlaneEvalViews(TriPlaneEval):
 
 
 class TriPlaneViews:
-    """Two SSL views (plus ``n_local_crops`` smaller ones) of a whole-brain canvas."""
+    """Two SSL views (plus ``n_local_crops`` smaller ones) of a whole-brain canvas.
+
+    ``slices`` (``data.train_slices``) > 1: each view holds that many plane triples, at
+    distinct slices of the ``+-offset`` window when there are enough, ``(3 k, size, size)``;
+    the backbone averages their embeddings, as the multi-slice probe does.
+    """
 
     def __init__(self, size: int = 224, *, offset: int = 5, min_tissue: float = 0.15,
+                 slices: int = 1,
                  side_range: tuple[float, float] = (1 / 1.2, 1 / 1.2),
                  centered_crop: bool = True, eval_side: float = 1 / 1.2,
                  degrees: float = 0.0, lr_swap_p: float = 0.5,
@@ -333,6 +339,7 @@ class TriPlaneViews:
                  n_local_crops: int = 0, local_size: int = 96,
                  local_side_range: tuple[float, float] = (0.4, 0.6)) -> None:
         self.size, self.offset, self.min_tissue = int(size), int(offset), float(min_tissue)
+        self.slices = max(1, int(slices))
         self.side_range, self.centered_crop = tuple(side_range), bool(centered_crop)
         self.eval_side, self.degrees, self.lr_swap_p = float(eval_side), float(degrees), lr_swap_p
         self.elastic = elastic
@@ -348,19 +355,23 @@ class TriPlaneViews:
         side = random.uniform(*side_range)
         zoom = side / self.eval_side
         reach = 0.0 if self.centered_crop else max(0.0, (1.0 - side) / self.eval_side)
+        indices = []
+        for axis in PLANE_AXES:
+            window = eligible_slices(geo["tissue_fraction"][axis], round(geo["com"][axis]),
+                                     self.offset, self.min_tissue)
+            indices.append(random.sample(window, self.slices) if len(window) >= self.slices
+                           else random.choices(window, k=self.slices))
         out = []
-        for p, axis in enumerate(PLANE_AXES):
-            center = round(geo["com"][axis])
-            index = random.choice(eligible_slices(geo["tissue_fraction"][axis], center,
-                                                  self.offset, self.min_tissue))
-            image = plane(volume, geo["shape"], axis, index)
-            h, w = image.shape
-            shift = (random.uniform(-reach, reach), random.uniform(-reach, reach))
-            theta = _theta(h, w, zoom=zoom, shift=shift,
-                           degrees=random.uniform(-self.degrees, self.degrees),
-                           flip=flip and p < 2)  # the sagittal plane has no left-right axis
-            field = (elastic_field(size, h, w, **self.elastic) if self.elastic else None)
-            out.append(sample(image, geo["background"], size, theta, field))
+        for k in range(self.slices):
+            for p, axis in enumerate(PLANE_AXES):
+                image = plane(volume, geo["shape"], axis, indices[p][k])
+                h, w = image.shape
+                shift = (random.uniform(-reach, reach), random.uniform(-reach, reach))
+                theta = _theta(h, w, zoom=zoom, shift=shift,
+                               degrees=random.uniform(-self.degrees, self.degrees),
+                               flip=flip and p < 2)  # the sagittal plane has no left-right axis
+                field = (elastic_field(size, h, w, **self.elastic) if self.elastic else None)
+                out.append(sample(image, geo["background"], size, theta, field))
         return self._photometric(torch.stack(out), geo["background"])
 
     def _photometric(self, view: torch.Tensor, background: float) -> torch.Tensor:
@@ -424,6 +435,7 @@ def build_brain2d_transforms(cfg: Any) -> tuple[TriPlaneViews, TriPlaneEvalViews
     min_tissue = float(cfg.data.get("min_tissue", 0.15))
     train = TriPlaneViews(
         size, offset=int(cfg.data.get("slice_offset", 5)), min_tissue=min_tissue,
+        slices=int(cfg.data.get("train_slices", 1)),
         side_range=tuple(aug.get("side_range", (eval_side, eval_side))),
         centered_crop=bool(aug.get("centered_crop", True)), eval_side=eval_side,
         degrees=float(aug.get("affine_degrees", 0.0)), lr_swap_p=float(aug.get("lr_swap_p", 0.5)),

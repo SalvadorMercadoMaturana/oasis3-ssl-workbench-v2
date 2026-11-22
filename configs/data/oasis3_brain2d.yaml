@@ -13,6 +13,9 @@ cache_path: data/brain2d/brain_mni2.npy
 channels: 3
 slice_offset: 5
 min_tissue: 0.15
+# plane triples per SSL view (distinct slices of the +-slice_offset window); the backbone
+# averages their embeddings like the multi-slice probe (++eval_slice_offsets)
+train_slices: 1
 one_session_per_subject_train: true
 batch_size: 16
 num_workers: 0

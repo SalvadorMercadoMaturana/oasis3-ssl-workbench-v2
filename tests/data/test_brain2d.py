@@ -235,3 +235,41 @@ def test_multislice_probe_input_and_backbone_average() -> None:
     x = multi[None]
     expected = torch.stack([backbone(x[:, 3 * k:3 * k + 3]) for k in range(3)]).mean(dim=0)
     torch.testing.assert_close(backbone(x), expected)
+
+
+def test_multi_slice_views_take_distinct_slices_of_the_window() -> None:
+    idx = torch.zeros(20, 24, 22)
+    for k in range(22):
+        idx[:, :, k] = 1.0 + k
+    centre = round(geometry(idx)["com"][2])
+    view = TriPlaneViews(8, offset=5, slices=4, lr_swap_p=0.0)(idx)[0]
+    assert view.shape == (12, 8, 8)
+    axial = [round(float(view[3 * k].mean())) - 1 for k in range(4)]  # slice index of each triple
+    assert len(set(axial)) == 4 and all(abs(a - centre) <= 5 for a in axial)
+
+
+class TinyConv(nn.Module):
+    out_dim = 4
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.net = nn.Sequential(nn.Conv2d(3, 4, 3), nn.AdaptiveAvgPool2d(1), nn.Flatten())
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
+
+
+def test_chunked_training_matches_the_plain_backbone() -> None:
+    torch.manual_seed(0)
+    encoder = TinyConv()
+    plain, chunked = TriPlaneBackbone(encoder, 3), TriPlaneBackbone(encoder, 3, chunk=4)
+    x = torch.rand(3, 9, 12, 12)  # three samples of three plane triples: 27 images
+    grads = []
+    for backbone in (plain, chunked):
+        backbone.train()
+        encoder.zero_grad()
+        out = backbone(x)
+        out.square().sum().backward()
+        grads.append((out.detach(), encoder.net[0].weight.grad.clone()))
+    torch.testing.assert_close(grads[0][0], grads[1][0])
+    torch.testing.assert_close(grads[0][1], grads[1][1])
