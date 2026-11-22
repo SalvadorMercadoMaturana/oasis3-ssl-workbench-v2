@@ -235,6 +235,7 @@ def main() -> None:
     ap.add_argument("--final-tag", default="ing",
                     help="tag prefix of its runs (ing, or ing_lr0.1 for scaled learning rates)")
     args = ap.parse_args()
+    sys.stdout.reconfigure(encoding="utf-8")  # the tables carry Greek deltas
     md = ["# Tuning de ingesta y backbone (2026-11-22)", "",
           "Protocolo v2. CV = CV representativa del pliegue 0 (702 sujetos AD/HC, 23 % AD); "
           "test = test representativo (178 sujetos del pliegue 0; 880 en los 5 pliegues). "
