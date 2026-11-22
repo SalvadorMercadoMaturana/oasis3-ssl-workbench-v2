@@ -14,7 +14,8 @@ encoders) are tuned for the four methods together, since all four share one back
   (no training): it ranks what the pretrained weights already read from each ingestion.
 - ``ssl``: the four methods with their tuned recipes (the final models of the outer-fold
   campaign: VICReg campaign_augval geo, BYOL wide_dproj0.1 noise, DINOv2 b64_k256
-  elastic_tio_gpu at batch 64, rotation pretext rot24_h2048 geo), 50 epochs.
+  elastic_tio_gpu at batch 64, rotation pretext rot24_h2048 geo), 50 epochs;
+  ``--lr-scale`` multiplies the four learning rates (a backbone may need its own).
 - ``sup``: the fully supervised baseline on the same backbone (train_supervised.py).
 
 Fold 0 is split_deploy; folds 1-4 are split_outer5/fold<k> (every AD/HC subject is test
@@ -27,12 +28,12 @@ import argparse
 
 OUT = "/root/runs"
 COMMON = "--epochs 50 --out-root {out} --no-checkpoints --workers {workers}"
-# key: (model, variant, aug recipe, batch size)
+# key: (model, variant, aug recipe, batch size, learning rate of the recipe)
 METHODS = {
-    "vicreg": ("vicreg", "campaign_augval", "geo", 16),
-    "byol": ("byol", "wide_dproj0.1", "noise", 16),
-    "dino": ("dinov2", "b64_k256", "elastic_tio_gpu", 64),
-    "pretext": ("pretext", "rot24_h2048", "geo", 16),
+    "vicreg": ("vicreg", "campaign_augval", "geo", 16, 1e-4),
+    "byol": ("byol", "wide_dproj0.1", "noise", 16, 1e-4),
+    "dino": ("dinov2", "b64_k256", "elastic_tio_gpu", 64, 2e-4),
+    "pretext": ("pretext", "rot24_h2048", "geo", 16, 1e-4),
 }
 
 
@@ -58,12 +59,17 @@ def ssl_lines(args: argparse.Namespace) -> list[str]:
         for k in args.folds:
             for bb in args.backbones:
                 for key in args.methods:
-                    model, variant, aug, batch = METHODS[key]
+                    model, variant, aug, batch, lr = METHODS[key]
+                    # --lr-scale: the same factor on every method's tuned learning rate
+                    scaled = (f" --set optimizer.lr={lr * args.lr_scale:g}"
+                              if args.lr_scale != 1 else "")
+                    lr_tag = f"_lr{args.lr_scale:g}" if args.lr_scale != 1 else ""
                     out.append(
-                        f"{key}_{bb}_f{k}_s{s} --model {model} --variant {variant} "
+                        f"{key}_{bb}{lr_tag}_f{k}_s{s} --model {model} --variant {variant} "
                         f"--aug-recipe {aug} --backbone {bb} --batch-size {batch} --roi {args.roi} "
-                        f"--seed {s} --tag {args.tag or 'ing'}_f{k} {common(args)} {args.extra} "
-                        f"--set data.manifest_path={manifest(k)}".replace("  ", " "))
+                        f"--seed {s} --tag {args.tag or 'ing'}{lr_tag}_f{k} {common(args)} "
+                        f"{args.extra} --set data.manifest_path={manifest(k)}{scaled}"
+                        .replace("  ", " "))
     return out
 
 
@@ -85,6 +91,8 @@ def main() -> None:
     ap.add_argument("--methods", nargs="+", default=list(METHODS), choices=list(METHODS))
     ap.add_argument("--roi", default="32")
     ap.add_argument("--tag", default=None, help="ssl tag prefix (default ing)")
+    ap.add_argument("--lr-scale", type=float, default=1.0,
+                    help="ssl: factor on every method's learning rate (tag ing_lr<f>_f<k>)")
     ap.add_argument("--out", default=OUT)
     ap.add_argument("--workers", type=int, default=3)
     ap.add_argument("--extra", default="", help="more train.py arguments for every line")
