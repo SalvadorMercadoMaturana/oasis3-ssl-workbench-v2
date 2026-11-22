@@ -155,13 +155,48 @@ def _sanitize_environment(accelerator: str | None = None) -> None:
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 
-def build_backbone(cfg: DictConfig) -> ConvNeXtBackbone | ResNetBackbone | ViTBackbone:
-    """Instantiate the backbone encoder based on configuration."""
+def build_backbone(cfg: DictConfig) -> nn.Module:
+    """Instantiate the backbone encoder based on configuration.
+
+    ``model.backbone.ingest`` (a dict, t5_ssl.models.backbones.ingest) wraps the encoder
+    in the ingestion settings: how the ROI volume is normalized, split into hemispheres
+    or regions, resampled, or sliced for a 2D encoder. Without it the encoder is
+    returned as before.
+    """
+    ingest = cfg.model.backbone.get("ingest")
+    if not ingest:
+        return build_encoder(cfg)
+    from t5_ssl.models.backbones.ingest import IngestBackbone, encoder_in_channels
+    spec = dict(OmegaConf.to_container(ingest, resolve=True))
+    in_channels = int(cfg.model.backbone.get("in_channels", 1))
+    variant = str(cfg.model.backbone.get("variant", "convnext_tiny"))
+    two_d = not (variant.endswith("_3d") or variant.startswith("medicalnet"))
+    encoder = build_encoder(cfg, in_channels=encoder_in_channels(spec, in_channels, two_d))
+    if two_d:
+        import torch
+        encoder = encoder.to(memory_format=torch.channels_last)
+    spec.pop("in_channels", None)
+    if "axes" in spec:
+        spec["axes"] = tuple(spec["axes"])
+    backbone = IngestBackbone(encoder, in_channels, two_d=two_d, **spec)
+    logger.info("Ingestion: %r", backbone)
+    return backbone
+
+
+def build_encoder(cfg: DictConfig, in_channels: int | None = None
+                  ) -> ConvNeXtBackbone | ResNetBackbone | ViTBackbone:
+    """The encoder of ``model.backbone`` (``in_channels`` overrides its input channels)."""
     variant = cfg.model.backbone.get("variant", "convnext_tiny")
-    in_channels = cfg.model.backbone.get("in_channels", 1)
+    if in_channels is None:
+        in_channels = cfg.model.backbone.get("in_channels", 1)
     pretrained = cfg.model.backbone.get("pretrained", False)
 
     logger.info("Initializing backbone: %s (in_channels=%d)", variant, in_channels)
+    if str(variant).startswith("medicalnet"):
+        from t5_ssl.models.backbones.medicalnet import MedicalNetBackbone
+        depth = int(str(variant).removeprefix("medicalnet").removeprefix("_") or 18)
+        return MedicalNetBackbone(depth=depth, in_channels=in_channels,
+                                  pretrained=pretrained in (True, "medicalnet"))
     if variant == "vit_small_3d":
         from t5_ssl.models.backbones.vit3d import ViT3DBackbone
         return ViT3DBackbone(

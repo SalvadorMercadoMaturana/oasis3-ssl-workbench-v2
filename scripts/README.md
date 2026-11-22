@@ -30,6 +30,7 @@ vecinos de la misma carpeta o al paquete `t5_ssl` (lo comprueba
 |---|---|
 | `train_supervised.py` | Baseline totalmente supervisado: el mismo encoder entrenado de punta a punta con las etiquetas. |
 | `jobs_outer5.py` | Genera las líneas de trabajo de la campaña outer5 para `cloud/queue_runner.py`. |
+| `jobs_ingest.py` | Líneas de trabajo del tuning de ingesta y backbone (2026-11-22): inicio congelado, los 4 métodos y el supervisado sobre cada forma de pasar el ROI al encoder. |
 | `bench_augment_cost.py` | Costo de CPU de las vistas de entrenamiento por receta y ROI. |
 
 El entrenamiento SSL en sí es `train.py` (raíz); en GPU, `cloud/`.

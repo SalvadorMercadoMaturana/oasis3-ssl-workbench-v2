@@ -165,6 +165,57 @@ DEFAULT_BACKBONE = {"vicreg": "convnext_tiny", "byol": "resnet18", "dinov2": "vi
                     "pretext": "convnext_tiny"}
 
 
+# ---------------------------------------------------------------- ingestion (2026-11-22)
+# How the ROI volume reaches the encoder (t5_ssl.models.backbones.ingest): input
+# normalization, hemispheres / regions as separate passes of the shared encoder,
+# resampling, and 2D encoders on slice sequences. Names list what differs from the plain
+# encoder; the all-default combination is the plain encoder itself (``convnext_tiny``,
+# ``resnet18``), so it is not repeated.
+def _ingest(**spec: object) -> str:
+    def fmt(v: object) -> str:
+        if isinstance(v, list | tuple):
+            return "[" + ",".join(fmt(x) for x in v) + "]"
+        return str(v)
+    return "++model.backbone.ingest={" + ",".join(f"{k}:{fmt(v)}" for k, v in spec.items()) + "}"
+
+
+_SCALES_3D = {"": 1, "_x1.5": 1.5, "_x2": 2}
+_GROUPS = {"": (0, "concat"), "_hemi": (1, "concat"), "_hemimean": (1, "mean"),
+           "_pairs": (2, "concat")}
+_NORMS_3D = {"": "none", "_inorm": "imagenet", "_z": "zscore"}
+for _prefix, _base in (("cnx3d", "convnext_tiny"), ("rn18_3d", "resnet18")):
+    for (_s, _sv), (_g, (_gv, _rv)), (_n, _nv) in itertools.product(
+            _SCALES_3D.items(), _GROUPS.items(), _NORMS_3D.items()):
+        if _s or _g or _n:
+            BACKBONES[f"{_prefix}{_s}{_g}{_n}"] = BACKBONES[_base] + [
+                _ingest(norm=_nv, groups=_gv, reduce=_rv, scale=_sv)]
+# MedicalNet 3D ResNets (medical pretraining, t5_ssl.models.backbones.medicalnet): one
+# hemisphere per pass and z-scored inputs as MedicalNet was trained; ``_pair`` feeds the
+# 2-channel pair to a stem shared by both channels.
+for _depth in (10, 18, 50):
+    _mn = [f"model.backbone.variant=medicalnet{_depth}", "model.backbone.pretrained=medicalnet"]
+    for (_s, _sv), (_g, (_gv, _rv)), (_n, _nv) in itertools.product(
+            _SCALES_3D.items(), {"": (1, "concat"), "_hemimean": (1, "mean"),
+                                 "_pair": (0, "concat")}.items(),
+            {"": "zscore", "_raw": "none"}.items()):
+        BACKBONES[f"mednet{_depth}{_s}{_g}{_n}"] = _mn + [
+            _ingest(norm=_nv, groups=_gv, reduce=_rv, scale=_sv)]
+# 2D ImageNet encoders (native weights, no inflation) on the slices of each hemisphere:
+# sag / cor / ax = slices along one axis, tri = all three; x<k> = in-plane resampling
+# (32-voxel slices -> 32k pixels); c1 = grey slice instead of slices k-1, k, k+1 as RGB;
+# s2 = every second slice; mm = mean + max over slices; raw = no ImageNet normalization.
+_AXES = {"sag": [0], "cor": [1], "ax": [2], "tri": [0, 1, 2]}
+for _prefix, _variant in (("cnx2d", "convnext_tiny"), ("rn18_2d", "resnet18"),
+                          ("rn50_2d", "resnet50")):
+    for (_a, _av), _k, _c, _st, _m, _n in itertools.product(
+            _AXES.items(), (1, 2, 3, 4), ("", "_c1"), ("", "_s2"), ("", "_mm"), ("", "_raw")):
+        BACKBONES[f"{_prefix}_{_a}_x{_k}{_c}{_st}{_m}{_n}"] = [
+            f"model.backbone.variant={_variant}", "model.backbone.pretrained=true",
+            _ingest(norm="none" if _n else "imagenet", groups=1, reduce="concat", scale=_k,
+                    axes=_av, context=1 if _c else 3, stride=2 if _st else 1,
+                    slice_reduce="meanmax" if _m else "mean")]
+
+
 # ---------------------------------------------------------------- regions of interest
 # ROI configurations: cube side (voxels of 2 mm) and cache. "multi3" stacks three
 # bilateral 32-voxel regions as 6 channels: hippocampus, lateral ventricle and
