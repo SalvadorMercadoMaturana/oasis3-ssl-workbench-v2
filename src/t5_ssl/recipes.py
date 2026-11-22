@@ -216,6 +216,18 @@ for _prefix, _variant in (("cnx2d", "convnext_tiny"), ("rn18_2d", "resnet18"),
                     slice_reduce="meanmax" if _m else "mean")]
 
 
+# Whole-brain planes (``--roi brain2d``, t5_ssl.models.backbones.triplane): the axial,
+# coronal and sagittal planes through the same ImageNet 2D encoder, embeddings
+# concatenated (``tri2d_cnx``) or averaged (``_mean``); ``_inorm`` adds the ImageNet
+# statistics on top of the z-scored intensities.
+for _prefix, _variant in (("tri2d_cnx", "convnext_tiny"), ("tri2d_rn50", "resnet50")):
+    for (_r, _rv), (_n, _nv) in itertools.product({"": "concat", "_mean": "mean"}.items(),
+                                                  {"": "none", "_inorm": "imagenet"}.items()):
+        BACKBONES[f"{_prefix}{_r}{_n}"] = [
+            f"model.backbone.variant={_variant}", "model.backbone.pretrained=true",
+            f"++model.backbone.triplane={{reduce:{_rv},norm:{_nv}}}"]
+
+
 # ---------------------------------------------------------------- regions of interest
 # ROI configurations: cube side (voxels of 2 mm) and cache. "multi3" stacks three
 # bilateral 32-voxel regions as 6 channels: hippocampus, lateral ventricle and
@@ -229,12 +241,18 @@ ROIS: dict[str, dict] = {
     # multi3 + lateral temporal (inferior/middle temporal gyri) and inferior parietal
     # (+ supramarginal) cortex: 5 bilateral regions of the usual AD atrophy, 10 channels.
     "atrophy5": {"size": 32, "cache": "atrophy5_s32", "channels": 10},
+    # The whole brain as three 224 x 224 planes (axial, coronal, sagittal) through the
+    # centre of mass of the tissue box, z-scored over tissue (t5_ssl.data.brain2d); needs
+    # a ``tri2d_*`` backbone. Cache: scripts/1_data/build_brain2d_cache.py.
+    "brain2d": {"size": 224, "cache": "brain_mni2", "channels": 3, "data": "oasis3_brain2d",
+                "dir": "data/brain2d"},
 }
 
 
 def roi_overrides(roi: str) -> list[str]:
     spec = ROIS[roi]
-    return [f"data.roi_size={spec['size']}", f"data.cache_path=data/roi3d/{spec['cache']}.npy",
+    cache = f"{spec.get('dir', 'data/roi3d')}/{spec['cache']}.npy"
+    return [f"data.roi_size={spec['size']}", f"data.cache_path={cache}",
             f"data.channels={spec['channels']}", f"model.backbone.in_channels={spec['channels']}",
             f"++model.backbone.image_size={spec['size']}"]
 
@@ -374,7 +392,12 @@ def overrides(model: str, variant: str = "campaign", *, epochs: int = 30, seed: 
         raise ValueError(f"Unknown ROI '{roi}'. Choose from {list(ROIS)}.")
     if backbone is not None and backbone not in BACKBONES:
         raise ValueError(f"Unknown backbone '{backbone}'. Choose from {list(BACKBONES)}.")
-    out = ["data=oasis3_roi3d", *roi_overrides(roi), f"data.manifest_path={MANIFEST}",
+    planar_roi, planar_bb = roi == "brain2d", bool(backbone and backbone.startswith("tri2d"))
+    if planar_roi != planar_bb:
+        raise ValueError("--roi brain2d (whole-brain planes) goes with a tri2d_* backbone and "
+                         "tri2d_* backbones need --roi brain2d")
+    data = ROIS[roi].get("data", "oasis3_roi3d")
+    out = [f"data={data}", *roi_overrides(roi), f"data.manifest_path={MANIFEST}",
            *AUGMENTED_VALIDATION,
            "trainer=full50", f"trainer.accelerator={accelerator}", "trainer.deterministic=false",
            "trainer.enable_progress_bar=false", "trainer.early_stopping_patience=null",

@@ -60,13 +60,13 @@ def evaluate_encoders(model_name: str, encoders: dict[str, Any], dm: Any, cfg: A
 
     import torch
 
-    from t5_ssl.data.roi3d import ROIEval3D
+    from t5_ssl.data.roi3d import probe_transform
     from t5_ssl.evaluation.probe_v1 import score
     warnings.filterwarnings("ignore", category=FutureWarning, module="sklearn")
     # Probe features in full fp32, as the campaigns computed them.
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
-    clean = ROIEval3D(int(cfg.data.roi_size))
+    clean = probe_transform(cfg)
     out: dict[str, Any] = {}
     for role, encoder in encoders.items():
         for attr in ("forward", "forward_tokens"):  # compiled entry points -> eager again
@@ -82,6 +82,9 @@ def evaluate_encoders(model_name: str, encoders: dict[str, Any], dm: Any, cfg: A
             shift = int(cfg.get("eval_tta_shift", 0) or 0)
             if shift:  # the same encoder on the central and six shifted cubes (evaluation/tta.py)
                 out[role]["tta"] = score_tta(encoder, dm, cfg, shift)
+            offsets = cfg.get("eval_slice_offsets")
+            if offsets and str(cfg.data.get("source", "")) == "brain2d":
+                out[role]["multislice"] = score_multislice(encoder, dm, cfg, list(offsets))
         if spatial:
             spatial_scores = score(spatial_encoder(encoder), dm, clean)
             out[role]["spatial"] = {k: v for k, v in spatial_scores.items()
@@ -107,6 +110,24 @@ def score_tta(encoder: Any, dm: Any, cfg: Any, shift: int) -> dict[str, Any]:
             "eval_minutes": (time.time() - start) / 60}
 
 
+def score_multislice(encoder: Any, dm: Any, cfg: Any, offsets: list[int]) -> dict[str, Any]:
+    """Protocol v2 with the brain planes at several offsets from the centre of mass, averaged.
+
+    ``++eval_slice_offsets=[-4,-2,0,2,4]`` on a ``data.source=brain2d`` run: every
+    session is embedded at each offset (t5_ssl.data.brain2d.TriPlaneEval) and the
+    embeddings are averaged by the backbone; stored under ``main.multislice``.
+    """
+    from t5_ssl.data.brain2d import TriPlaneEval
+    from t5_ssl.evaluation.probe_v1 import score
+    clean = TriPlaneEval(int(cfg.data.roi_size), float(cfg.data.get("min_tissue", 0.15)),
+                         tuple(int(o) for o in offsets))
+    start = time.time()
+    scored = score(encoder, dm, clean, True)
+    doc = score_protocol_v2(encoder, dm, cfg, scored["_embeddings"], clean=clean)
+    return {"offsets": [int(o) for o in offsets], "protocol_v2": doc, "cv": scored["cv"],
+            "test": scored["test"], "eval_minutes": (time.time() - start) / 60}
+
+
 def score_protocol_v2(encoder: Any, dm: Any, cfg: Any, embeddings: dict,
                       clean: Any = None) -> dict[str, Any]:
     """Score the encoder with probe protocol v2 (``t5_ssl.evaluation.protocol_v2``).
@@ -120,13 +141,13 @@ def score_protocol_v2(encoder: Any, dm: Any, cfg: Any, embeddings: dict,
     import numpy as np
     import torch
 
-    from t5_ssl.data.roi3d import ROIEval3D
+    from t5_ssl.data.roi3d import probe_transform
     from t5_ssl.evaluation import protocol_v2 as pp
     manifest = Path(cfg.data.manifest_path)
     records = pp.pool_records(manifest)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     encoder = encoder.to(device).eval()
-    clean = clean or ROIEval3D(int(cfg.data.roi_size))
+    clean = clean or probe_transform(cfg)
     chunks = []
     with torch.inference_mode():
         for start in range(0, len(records), 64):

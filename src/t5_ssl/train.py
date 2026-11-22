@@ -163,6 +163,17 @@ def build_backbone(cfg: DictConfig) -> nn.Module:
     or regions, resampled, or sliced for a 2D encoder. Without it the encoder is
     returned as before.
     """
+    triplane = cfg.model.backbone.get("triplane")
+    if triplane:  # whole-brain planes (data.source=brain2d): t5_ssl.models.backbones.triplane
+        import torch
+
+        from t5_ssl.models.backbones.triplane import TriPlaneBackbone
+        spec = dict(OmegaConf.to_container(triplane, resolve=True))
+        encoder = build_encoder(cfg, in_channels=3).to(memory_format=torch.channels_last)
+        backbone = TriPlaneBackbone(encoder, planes=int(cfg.model.backbone.get("in_channels", 3)),
+                                    **spec)
+        logger.info("Ingestion: %r", backbone)
+        return backbone
     ingest = cfg.model.backbone.get("ingest")
     if not ingest:
         return build_encoder(cfg)
@@ -278,7 +289,9 @@ def build_datamodule(cfg: DictConfig, train_transform: Any,
     data_cfg = cfg.data
     if int(cfg.model.backbone.in_channels) != int(data_cfg.get("channels", 1)):
         raise ValueError("model.backbone.in_channels must match data.channels.")
-    if str(data_cfg.get("source", "")) == "roi3d":
+    if str(data_cfg.get("source", "")) in ("roi3d", "brain2d"):
+        # brain2d: the same subject-safe datamodule over whole-brain canvases
+        # (t5_ssl.data.brain2d); the transforms turn each canvas into its planes.
         from t5_ssl.data.roi3d import ROI3DDataModule
         # augmentation.val_views=train: the SSL validation loss sees the training
         # augmentations (fixed per session), not the clean cube and its mirror;
@@ -438,6 +451,9 @@ def build_transforms(cfg: DictConfig) -> tuple[Any, Any]:
     if str(cfg.data.get("source", "")) == "roi3d":
         from t5_ssl.data.roi3d import build_roi3d_transforms
         train_transform, eval_transform = build_roi3d_transforms(cfg)
+    elif str(cfg.data.get("source", "")) == "brain2d":
+        from t5_ssl.data.brain2d import build_brain2d_transforms
+        train_transform, eval_transform = build_brain2d_transforms(cfg)
     elif loss_name == "dinov2":
         local_size = tuple(aug_cfg.get("local_size", (32, 32)))
         n_local = aug_cfg.get("n_local_crops", 2)
@@ -704,11 +720,12 @@ def build_trainer(cfg: DictConfig, model: L.LightningModule, dm: Any, exp_dir: P
     precision = resolve_precision(trainer_cfg.get("precision", "32-true"),
                                   trainer_cfg.get("accelerator", "auto"))
     example = None
-    if str(cfg.data.get("source", "")) == "roi3d":
+    if str(cfg.data.get("source", "")) in ("roi3d", "brain2d"):
         import torch
         side = int(cfg.data.roi_size)
+        dims = (side,) * (3 if str(cfg.data.source) == "roi3d" else 2)
         example = torch.rand(int(cfg.data.get("batch_size", 16)),
-                             int(cfg.model.backbone.get("in_channels", 1)), side, side, side)
+                             int(cfg.model.backbone.get("in_channels", 1)), *dims)
     runtime = apply_runtime(cfg, model, precision, example)
     if perf_settings(cfg)["monitor"]:
         callbacks.append(PerfMonitor(exp_dir / "perf.json", extra={

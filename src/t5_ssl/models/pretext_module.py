@@ -83,6 +83,19 @@ def rotate_batch(x: torch.Tensor, labels: torch.Tensor,
     return out
 
 
+def rotate_planes(x: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    """Turn every plane of 2D views ``(B, P, S, S)`` by ``labels`` quarter turns in its plane.
+
+    The views are t5_ssl.data.brain2d planes; the three planes of a sample get the same
+    turn (Gidaris et al. 2018, 4 classes).
+    """
+    out = torch.empty_like(x, memory_format=torch.contiguous_format)
+    for c in torch.unique(labels).tolist():
+        idx = (labels == c).nonzero(as_tuple=True)[0]
+        out[idx] = torch.rot90(x[idx], int(c), (2, 3))
+    return out
+
+
 # ---------------------------------------------------------------- jigsaw
 def hamming_permutations(count: int, n: int = 8, seed: int = 0) -> np.ndarray:
     """``count`` permutations of ``n`` items chosen greedily for maximal min Hamming distance."""
@@ -165,12 +178,16 @@ class PretextLightningModule(SSLLightningModule):
         labels = torch.randint(0, classes, (n,), generator=generator,
                                device=generator.device if generator is not None else "cpu")
         labels = labels.to(x.device)
+        planar = x.ndim == 4
+        if planar and (name != "rot" or classes != 4):
+            raise ValueError("2D plane views support the rotation task with rotation_classes=4")
         if name == "rot":
-            xt = rotate_batch(x, labels, self._rot_ops)
+            xt = rotate_planes(x, labels) if planar else rotate_batch(x, labels, self._rot_ops)
         else:
             xt = shuffle_octants(x, labels, self.perms, self.jigsaw_gap, generator)
         if self.input_memory_format is not None:
-            xt = xt.contiguous(memory_format=torch.channels_last_3d)
+            xt = xt.contiguous(memory_format=torch.channels_last if planar
+                               else torch.channels_last_3d)
         head = self.rotation_head if name == "rot" else self.jigsaw_head
         logits = head(self.backbone(xt)).float()
         return F.cross_entropy(logits, labels, label_smoothing=self.label_smoothing), \

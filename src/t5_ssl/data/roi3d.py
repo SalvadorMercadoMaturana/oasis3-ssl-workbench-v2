@@ -387,6 +387,14 @@ class ROIEval3D:
         return center_crop(cube, self.size).clamp(0.0, 1.0)
 
 
+def probe_transform(cfg: Any) -> Any:
+    """Return the probe input of a run: the central ROI cube, or the brain planes (brain2d)."""
+    if str(cfg.data.get("source", "")) == "brain2d":
+        from t5_ssl.data.brain2d import TriPlaneEval
+        return TriPlaneEval(int(cfg.data.roi_size), float(cfg.data.get("min_tissue", 0.15)))
+    return ROIEval3D(int(cfg.data.roi_size))
+
+
 class ROIEvalViews3D(ROIEval3D):
     """Fixed validation pair for the SSL loss: the cube and its left-right flip."""
 

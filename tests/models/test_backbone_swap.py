@@ -24,12 +24,16 @@ def test_backbone_overrides_come_after_the_method_and_name_the_run():
         "byol_campaign__noise__bbvit_small__roi32_s2"
     # every method's own encoder is a swappable backbone; the extra ones are the ViT-S
     # starting from Meta's DINOv2 weights (2026-11-07) and the ingestion settings
-    # (2026-11-22: t5_ssl.models.backbones.ingest, MedicalNet, 2D slice encoders)
+    # (2026-11-22: t5_ssl.models.backbones.ingest, MedicalNet, 2D slice encoders) and the
+    # whole-brain plane encoders (tri2d_*, t5_ssl.models.backbones.triplane)
     extra = set(recipes.BACKBONES) - set(recipes.DEFAULT_BACKBONE.values())
+    planar = {b for b in extra if b.startswith("tri2d_")}
     ingest_prefixes = ("cnx3d", "rn18_3d", "mednet", "cnx2d_", "rn18_2d_", "rn50_2d_")
-    assert {b for b in extra if not b.startswith(ingest_prefixes)} == {"vit_small_dv2"}
+    assert {b for b in extra - planar if not b.startswith(ingest_prefixes)} == {"vit_small_dv2"}
     assert all(any("model.backbone.ingest=" in o for o in recipes.BACKBONES[b])
-               for b in extra - {"vit_small_dv2"})
+               for b in extra - planar - {"vit_small_dv2"})
+    assert planar and all(any("model.backbone.triplane=" in o for o in recipes.BACKBONES[b])
+                          for b in planar)
 
 
 def test_dinov2_on_a_cnn_distills_the_pooled_embedding_without_ibot():

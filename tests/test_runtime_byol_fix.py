@@ -266,7 +266,9 @@ def test_swap_hemispheres_swaps_each_pair():
 @pytest.mark.parametrize("roi", sorted(recipes.ROIS))
 @pytest.mark.parametrize("model", recipes.MODELS)
 def test_every_roi_composes(model, roi):
-    cfg = compose(recipes.overrides(model, aug_recipe="noise", roi=roi, epochs=50))
+    backbone = "tri2d_cnx" if roi == "brain2d" else None  # whole-brain planes need a 2D encoder
+    cfg = compose(recipes.overrides(model, aug_recipe="noise", roi=roi, epochs=50,
+                                    backbone=backbone))
     spec = recipes.ROIS[roi]
     assert cfg.data.roi_size == spec["size"] and cfg.data.channels == spec["channels"]
     assert cfg.model.backbone.in_channels == spec["channels"]

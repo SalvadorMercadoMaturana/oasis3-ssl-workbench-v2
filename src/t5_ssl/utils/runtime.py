@@ -219,9 +219,12 @@ def apply_runtime(cfg: Any, model: nn.Module, precision: str,
     channels_last = bool(settings["channels_last"]) and cuda and is_convolutional(model.backbone)
     if channels_last:
         to_channels_last_3d(model)
+        # 5-D views take the 3-D format; 4-D views (whole-brain planes) are converted to the
+        # 2-D one by SSLLightningModule._to_input_memory_format.
         model.input_memory_format = torch.channels_last_3d
         if example is not None:
-            example = example.contiguous(memory_format=torch.channels_last_3d)
+            example = example.contiguous(memory_format=torch.channels_last_3d
+                                         if example.ndim == 5 else torch.channels_last)
     report["channels_last"] = channels_last
     report["compile_mode"] = None
     if settings["compile"] and cuda:

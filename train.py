@@ -288,12 +288,12 @@ def score_init(args: argparse.Namespace, overrides: list[str], started: float) -
     """``--init-only``: score the encoder SSL would start from ("sin SSL"), no training."""
     import torch
 
-    from t5_ssl.data.roi3d import ROIEval3D
+    from t5_ssl.data.roi3d import probe_transform
     from t5_ssl.evaluation.run_scoring import evaluate_encoders
     from t5_ssl.train import build_backbone, build_datamodule
     cfg = compose(overrides)
     torch.manual_seed(args.seed)
-    clean = ROIEval3D(int(cfg.data.roi_size))
+    clean = probe_transform(cfg)
     dm = build_datamodule(cfg, clean, clean)
     dm.setup()
     attach_externals(dm, args, cfg)

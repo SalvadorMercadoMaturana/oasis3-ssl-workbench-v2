@@ -35,6 +35,9 @@ METHODS = {
     "dino": ("dinov2", "b64_k256", "elastic_tio_gpu", 64, 2e-4),
     "pretext": ("pretext", "rot24_h2048", "geo", 16, 1e-4),
 }
+# Whole-brain planes (--roi brain2d): the 24 cube rotations have no 2D counterpart, the
+# rotation pretext predicts the 4 in-plane quarter turns (same head width).
+PLANAR_VARIANT = {"pretext": "rot4_h2048"}
 
 
 def manifest(k: int) -> str:
@@ -60,6 +63,8 @@ def ssl_lines(args: argparse.Namespace) -> list[str]:
             for bb in args.backbones:
                 for key in args.methods:
                     model, variant, aug, batch, lr = METHODS[key]
+                    if args.roi == "brain2d":
+                        variant = PLANAR_VARIANT.get(key, variant)
                     # --lr-scale: the same factor on every method's tuned learning rate
                     scaled = (f" --set optimizer.lr={lr * args.lr_scale:g}"
                               if args.lr_scale != 1 else "")

@@ -14,6 +14,7 @@ vecinos de la misma carpeta o al paquete `t5_ssl` (lo comprueba
 | `build_roi_caches.py` | Construye caches de cubos (`hippo_s64`, `multi3_s32`, `atrophy5_s32`, ...) en `data/roi3d/`. |
 | `extend_roi_caches.py` | Añade sesiones a un cache con sus mismas posiciones de cubo, o crea el de otra cohorte (`--into adni_`). |
 | `audit_oasis3_labels.py` | Disponibilidad de etiquetas y desbalance demográfico de OASIS3. |
+| `build_brain2d_cache.py` | Cerebro completo para la ingesta 2D multiplano (`data/brain2d/brain_mni2`): caja mínima del tejido, z-score sobre el tejido. |
 
 ## `2_splits/`: manifiestos de split (`campaign_ssl3d_runpod/split_*/`)
 
@@ -67,6 +68,7 @@ La evaluación de cada corrida ocurre dentro de `train.py` (`src/t5_ssl/evaluati
 | `present_final.py` | figuras finales → `docs/figures_final/` |
 | `report_shared_signal.py` | `outer5/baselines/`: por qué sin SSL y el supervisado siguen a los SSL → `docs/informe_senal_compartida.pdf` |
 | `report_ingest.py` | `ingest/`: tuning de ingesta y backbone (inicio congelado, los 4 métodos por ingesta, pliegues externos de la elegida) |
+| `report_brain2d.py` | `brain2d/`: ingesta 2D multiplano del cerebro completo (axial, coronal, sagital) contra las ingestas del hipocampo |
 
 ## `6_deploy/`: el modelo desplegable
 

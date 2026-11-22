@@ -1,0 +1,20 @@
+# @package data
+# Whole-brain multiplanar 2D ingestion (see src/t5_ssl/data/brain2d.py): every session's
+# MNI 2 mm volume cropped to its minimal tissue box (voxels > 0), z-scored over the tissue
+# voxels, stored on a shared canvas. Each sample is the axial, coronal and sagittal plane
+# through the centre of mass, resized to roi_size x roi_size (channels = planes); SSL
+# views shift each plane by up to slice_offset slices among those with at least
+# min_tissue of tissue. Build the cache with `python scripts/1_data/build_brain2d_cache.py`.
+source: brain2d
+csv_path: ${oc.env:OASIS3_CSV,data/dementia/mni-dataset.csv}
+manifest_path: campaign_full50_pretrained_balanced/train_sessions_eval_primary_balanced.csv
+roi_size: 224
+cache_path: data/brain2d/brain_mni2.npy
+channels: 3
+slice_offset: 5
+min_tissue: 0.15
+one_session_per_subject_train: true
+batch_size: 16
+num_workers: 0
+pin_memory: false
+seed: 42
