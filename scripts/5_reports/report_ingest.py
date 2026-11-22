@@ -177,15 +177,27 @@ def screen_table() -> tuple[list[str], dict]:
 
 
 # ---------------------------------------------------------------- 3. outer folds
-def outer_new(base: str, bb: str, prefix: str = "ing") -> dict | None:
+def fold_ens(root: Path, tag: str, name: str, k: int, seeds: set[int] | None) -> dict | None:
+    """Seed ensemble of one fold (only ``seeds`` when given), as report_outer5 scores it."""
+    docs = pp.load_runs(root, tag, name)
+    if seeds:
+        docs = [d for d in docs if d.get("seed") in seeds]
+    if not docs:
+        return None
+    out = pp.ensemble(docs, r5.AGES[k])
+    out["n_seeds"] = len(docs)
+    return out
+
+
+def outer_folds(source, seeds: set[int] | None) -> dict | None:
+    """``{"folds": {k: ensemble}}`` over the five folds; ``source(k)`` = (root, tag, name)."""
     folds = {}
     for k in r5.FOLDS:
-        e = ens(f"{prefix}_f{k}", run_name(base, bb), k)
+        e = fold_ens(*source(k), k, seeds)
         if e is None:
             return None
-        e["docs"] = pp.load_runs(RUNS, f"{prefix}_f{k}", run_name(base, bb))
         folds[k] = e
-    return folds
+    return {"folds": folds}
 
 
 def pooled(folds: dict) -> dict:
@@ -203,28 +215,47 @@ def fold_mean(folds: dict, where: str, metric: str) -> tuple[float, float]:
     return float(np.mean(v)), float(np.std(v, ddof=1))
 
 
-def outer_table(bb: str, prefix: str = "ing") -> tuple[list[str], dict]:
-    lines = ["| Método | Ingesta | CV comp. (media ± DE) | Test AUROC | Test AUPR | Test F1 | "
-             "**Test comp.** | Test agrupado AUROC / AUPR / F1 | Δ test comp. vs actual [IC 95 %] |",
-             "|---|---|---|---|---|---|---|---|---|"]
+def outer_table(bb: str, prefix: str = "ing", seeds: set[int] | None = None
+                ) -> tuple[list[str], dict]:
+    """Compare the chosen ingestion ``bb`` with the current one on the five outer folds.
+
+    New runs: ``<prefix>_f<k>`` (SSL) and ``ing_init_f<k>`` (sin SSL) of this campaign;
+    current ingestion: the outer-fold runs of report_outer5 (fold 0 of the earlier
+    campaigns). ``seeds`` keeps the same seeds on both sides (e.g. {1}).
+    """
+    lines = ["| Modelo | Ingesta | Semillas | CV comp. (media ± DE) | Test AUROC | Test AUPR | "
+             "Test F1 | **Test comp.** | Test agrupado AUROC / AUPR / F1 / comp. | "
+             "Δ test comp. vs actual [IC 95 %] |",
+             "|---|---|---:|---|---|---|---|---|---|---|"]
     summary = {}
-    for key, (label, base, ref_key) in METHODS.items():
-        new = outer_new(base, bb, prefix)
-        old_outer = r5.outer(ref_key, PRETEXT_REF if ref_key == "pretext" else None)
-        for name, folds in ((bb, new), (REF_BB, old_outer["folds"] if old_outer else None)):
-            if folds is None:
+    rows = [(key, label, lambda k, base=base: (RUNS, f"{prefix}_f{k}", run_name(base, bb)),
+             lambda k, ref_key=ref_key: r5.fold_source(
+                 ref_key, k, PRETEXT_REF if ref_key == "pretext" else None))
+            for key, (label, base, ref_key) in METHODS.items()]
+    rows.append(("init", "sin SSL", lambda k: (RUNS, f"ing_init_f{k}", f"vicreg_init__bb{bb}__roi32"),
+                 lambda k: r5.fold_source("init_cnx", k)))
+    for key, label, new_source, ref_source in rows:
+        new = outer_folds(new_source, seeds)
+        ref = outer_folds(ref_source, seeds)
+        for name, side in ((bb, new), (REF_BB, ref)):
+            if side is None:
                 continue
+            folds = side["folds"]
             pool = pooled(folds)
             fm = {m: fold_mean(folds, "test", m) for m in ("auc", "aupr", "f1_macro", "mean3")}
             cv = fold_mean(folds, "cv_rep", "mean3")
+            n_seeds = "/".join(str(folds[k]["n_seeds"]) for k in r5.FOLDS)
             delta = "—"
-            if name == bb and old_outer:
-                delta = fmt_delta(r5.fold_delta(folds, old_outer["folds"])["mean3"])
-            lines.append(f"| {label} | `{name}` | {cv[0]:.3f} ± {cv[1]:.3f} | "
+            if name == bb and ref is not None:
+                d = r5.fold_delta(new, ref)
+                delta = fmt_delta(d["mean3"])
+                summary.setdefault(key, {})["delta"] = d
+            lines.append(f"| {label} | `{name}` | {n_seeds} | {cv[0]:.3f} ± {cv[1]:.3f} | "
                          + " | ".join(f"{fm[m][0]:.3f} ± {fm[m][1]:.3f}"
                                       for m in ("auc", "aupr", "f1_macro"))
                          + f" | **{fm['mean3'][0]:.3f} ± {fm['mean3'][1]:.3f}** | "
-                         f"{pool['auc']:.3f} / {pool['aupr']:.3f} / {pool['f1_macro']:.3f} | {delta} |")
+                         f"{pool['auc']:.3f} / {pool['aupr']:.3f} / {pool['f1_macro']:.3f} / "
+                         f"{pool['mean3']:.3f} | {delta} |")
             summary.setdefault(key, {})[name] = {"test": fm, "cv_mean3": cv, "pooled": pool}
     return lines, summary
 
@@ -234,6 +265,8 @@ def main() -> None:
     ap.add_argument("--final", default=None, help="ingestion run on the five outer folds")
     ap.add_argument("--final-tag", default="ing",
                     help="tag prefix of its runs (ing, or ing_lr0.1 for scaled learning rates)")
+    ap.add_argument("--seeds", nargs="+", type=int, default=None,
+                    help="outer folds: only these seeds on both sides (default all)")
     args = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")  # the tables carry Greek deltas
     md = ["# Tuning de ingesta y backbone (2026-11-22)", "",
@@ -250,9 +283,12 @@ def main() -> None:
         md += ["## 2. Los cuatro métodos SSL sobre cada ingesta, pliegue 0 (semilla 1)", "",
                *lines, ""]
     if args.final:
-        lines, summary["outer"] = outer_table(args.final, args.final_tag)
-        md += [f"## 3. `{args.final}` en los 5 pliegues externos (ensambles de 3 semillas)", "",
-               *lines, ""]
+        seeds = set(args.seeds) if args.seeds else None
+        lines, summary["outer"] = outer_table(args.final, args.final_tag, seeds)
+        which = ("semillas " + ", ".join(map(str, sorted(seeds)))) if seeds else "todas las semillas"
+        md += [f"## 3. `{args.final}` en los 5 pliegues externos ({which}, ambos lados)", "",
+               "Test agrupado = los 880 sujetos de test de los 5 pliegues juntos; Δ = media "
+               "sobre pliegues de la diferencia pareada en cada test.", "", *lines, ""]
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "REPORT.md").write_text("\n".join(md) + "\n", encoding="utf-8")
     (OUT / "summary.json").write_text(json.dumps(summary, indent=1, default=float) + "\n")
