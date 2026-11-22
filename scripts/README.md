@@ -66,6 +66,7 @@ La evaluación de cada corrida ocurre dentro de `train.py` (`src/t5_ssl/evaluati
 | `report_outer5.py` | `outer5/` |
 | `present_final.py` | figuras finales → `docs/figures_final/` |
 | `report_shared_signal.py` | `outer5/baselines/`: por qué sin SSL y el supervisado siguen a los SSL → `docs/informe_senal_compartida.pdf` |
+| `report_ingest.py` | `ingest/`: tuning de ingesta y backbone (inicio congelado, los 4 métodos por ingesta, pliegues externos de la elegida) |
 
 ## `6_deploy/`: el modelo desplegable
 

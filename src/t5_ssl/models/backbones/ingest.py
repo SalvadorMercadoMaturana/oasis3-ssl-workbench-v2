@@ -47,6 +47,9 @@ IMAGENET_STD = (0.229, 0.224, 0.225)
 NORMS = ("none", "imagenet", "zscore")
 REDUCES = ("concat", "mean")
 SLICE_REDUCES = ("mean", "meanmax")
+# Slices per encoder call without gradients (probe embeddings: 64 sessions x 2 hemispheres x
+# 96 slices would be 12288 images in one call).
+EVAL_CHUNK = 1024
 
 
 def encoder_in_channels(spec: dict[str, Any], in_channels: int, two_d: bool) -> int:
@@ -143,6 +146,8 @@ class IngestBackbone(BaseBackbone):
                 from torch.utils.checkpoint import checkpoint
                 out = torch.cat([checkpoint(self.encoder, part, use_reentrant=False)
                                  for part in images.split(self.chunk)])
+            elif not torch.is_grad_enabled():  # embeddings: bounded memory, same result
+                out = torch.cat([self.encoder(part) for part in images.split(EVAL_CHUNK)])
             else:
                 out = self.encoder(images)
             features.append(out.reshape(n, s, -1))

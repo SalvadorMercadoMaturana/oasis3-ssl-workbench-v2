@@ -45,6 +45,10 @@ PREFERENCE = [
     ("NVIDIA GeForce RTX 3090", "COMMUNITY"),
     ("NVIDIA RTX A6000", "COMMUNITY"),
     ("NVIDIA GeForce RTX 3090", "SECURE"),
+    # 2026-11-22: the only types with stock under 0.7 USD/h that day
+    ("NVIDIA RTX PRO 4500 Blackwell", "COMMUNITY"),
+    ("NVIDIA A40", "COMMUNITY"),
+    ("NVIDIA A40", "SECURE"),
 ]
 VCPU_STEPS = (32, 24, 16, 12, 8)
 
@@ -128,7 +132,7 @@ def create(args: argparse.Namespace) -> None:
                        "minVcpuCount": vcpu, "minMemoryInGb": args.min_ram,
                        "supportPublicIp": True, "startSsh": True,
                        "allowedCudaVersions": ["12.4", "12.5", "12.6", "12.7", "12.8", "12.9",
-                                               "13.0"],
+                                               "13.0", "13.1", "13.2"],
                        "env": [{"key": "PUBLIC_KEY", "value": pubkey}]}
             try:
                 pod = gql(mutation, {"input": payload})["podFindAndDeployOnDemand"]
