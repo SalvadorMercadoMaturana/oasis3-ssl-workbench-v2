@@ -161,6 +161,16 @@ BACKBONES: dict[str, list[str]] = {
 # ViT-S starting from Meta's DINOv2 ViT-S/14 (LVD-142M) instead of DeiT-S, same inflation.
 BACKBONES["vit_small_dv2"] = [o.replace("deit_small_in1k", "dinov2_vits14")
                               for o in BACKBONES["vit_small"]]
+# ConvNeXt-T starting from the ImageNet-22k checkpoints of the original ConvNeXt release
+# (2026-11-23, t5_ssl.models.backbones.convnext_weights) instead of torchvision's
+# ImageNet-1k one, same inflation: ``_in22k`` as pretrained on 22k, ``_in22k_ft1k`` after
+# its ImageNet-1k fine-tuning.
+BACKBONES["convnext_tiny_in22k"] = [o.replace("pretrained=true", "pretrained=in22k")
+                                    for o in BACKBONES["convnext_tiny"]]
+BACKBONES["convnext_tiny_in22k_ft1k"] = [o.replace("pretrained=true", "pretrained=in22k_ft_in1k")
+                                         for o in BACKBONES["convnext_tiny"]]
+# Backbones that only change the starting weights of a method's own encoder.
+WEIGHT_SWAPS = ("vit_small_dv2", "convnext_tiny_in22k", "convnext_tiny_in22k_ft1k")
 DEFAULT_BACKBONE = {"vicreg": "convnext_tiny", "byol": "resnet18", "dinov2": "vit_small",
                     "pretext": "convnext_tiny"}
 
@@ -187,8 +197,8 @@ for _prefix, _base in (("cnx3d", "convnext_tiny"), ("rn18_3d", "resnet18")):
     for (_s, _sv), (_g, (_gv, _rv)), (_n, _nv) in itertools.product(
             _SCALES_3D.items(), _GROUPS.items(), _NORMS_3D.items()):
         if _s or _g or _n:
-            BACKBONES[f"{_prefix}{_s}{_g}{_n}"] = BACKBONES[_base] + [
-                _ingest(norm=_nv, groups=_gv, reduce=_rv, scale=_sv)]
+            BACKBONES[f"{_prefix}{_s}{_g}{_n}"] = [
+                *BACKBONES[_base], _ingest(norm=_nv, groups=_gv, reduce=_rv, scale=_sv)]
 # MedicalNet 3D ResNets (medical pretraining, t5_ssl.models.backbones.medicalnet): one
 # hemisphere per pass and z-scored inputs as MedicalNet was trained; ``_pair`` feeds the
 # 2-channel pair to a stem shared by both channels.
@@ -198,8 +208,8 @@ for _depth in (10, 18, 50):
             _SCALES_3D.items(), {"": (1, "concat"), "_hemimean": (1, "mean"),
                                  "_pair": (0, "concat")}.items(),
             {"": "zscore", "_raw": "none"}.items()):
-        BACKBONES[f"mednet{_depth}{_s}{_g}{_n}"] = _mn + [
-            _ingest(norm=_nv, groups=_gv, reduce=_rv, scale=_sv)]
+        BACKBONES[f"mednet{_depth}{_s}{_g}{_n}"] = [
+            *_mn, _ingest(norm=_nv, groups=_gv, reduce=_rv, scale=_sv)]
 # 2D ImageNet encoders (native weights, no inflation) on the slices of each hemisphere:
 # sag / cor / ax = slices along one axis, tri = all three; x<k> = in-plane resampling
 # (32-voxel slices -> 32k pixels); c1 = grey slice instead of slices k-1, k, k+1 as RGB;

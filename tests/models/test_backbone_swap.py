@@ -22,16 +22,20 @@ def test_backbone_overrides_come_after_the_method_and_name_the_run():
     assert recipes.overrides("vicreg") == recipes.overrides("vicreg", backbone=None)
     assert recipes.run_name("byol", "campaign", 2, "noise", "32", "vit_small") == \
         "byol_campaign__noise__bbvit_small__roi32_s2"
-    # every method's own encoder is a swappable backbone; the extra ones are the ViT-S
-    # starting from Meta's DINOv2 weights (2026-11-07) and the ingestion settings
-    # (2026-11-22: t5_ssl.models.backbones.ingest, MedicalNet, 2D slice encoders) and the
-    # whole-brain plane encoders (tri2d_*, t5_ssl.models.backbones.triplane)
+    # every method's own encoder is a swappable backbone; the extra ones are other starting
+    # weights (ViT-S from Meta's DINOv2, 2026-11-07; ConvNeXt-T from ImageNet-22k,
+    # 2026-11-23), the ingestion settings (2026-11-22: t5_ssl.models.backbones.ingest,
+    # MedicalNet, 2D slice encoders) and the whole-brain plane encoders (tri2d_*,
+    # t5_ssl.models.backbones.triplane)
     extra = set(recipes.BACKBONES) - set(recipes.DEFAULT_BACKBONE.values())
     planar = {b for b in extra if b.startswith("tri2d_")}
+    weights = set(recipes.WEIGHT_SWAPS)
     ingest_prefixes = ("cnx3d", "rn18_3d", "mednet", "cnx2d_", "rn18_2d_", "rn50_2d_")
-    assert {b for b in extra - planar if not b.startswith(ingest_prefixes)} == {"vit_small_dv2"}
+    assert {b for b in extra - planar if not b.startswith(ingest_prefixes)} == weights
     assert all(any("model.backbone.ingest=" in o for o in recipes.BACKBONES[b])
-               for b in extra - planar - {"vit_small_dv2"})
+               for b in extra - planar - weights)
+    assert recipes.BACKBONES["convnext_tiny_in22k"] == [
+        "model.backbone.variant=convnext_tiny_3d", "model.backbone.pretrained=in22k"]
     assert planar and all(any("model.backbone.triplane=" in o for o in recipes.BACKBONES[b])
                           for b in planar)
 

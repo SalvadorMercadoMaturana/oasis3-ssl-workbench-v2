@@ -1,7 +1,11 @@
-"""3D ResNet and ConvNeXt backbones inflated from torchvision's 2D ImageNet weights.
+"""3D ResNet and ConvNeXt backbones inflated from 2D ImageNet weights.
 
 See ``inflate3d`` for the inflation rule. The ResNet stem max-pool is dropped
 because the hippocampal ROI cubes are small (32-48 voxels per side).
+
+Weights (``pretrained``): ``True`` = torchvision's ImageNet-1k checkpoint; the ConvNeXt
+also takes ``"in22k"`` / ``"in22k_ft_in1k"``, the ImageNet-22k checkpoints of the original
+ConvNeXt release (t5_ssl.models.backbones.convnext_weights), inflated the same way.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ from torch import nn
 from torchvision import models
 
 from t5_ssl.models.backbones.base import BaseBackbone
+from t5_ssl.models.backbones.convnext_weights import RELEASE_WEIGHTS, load_release_features
 from t5_ssl.models.backbones.inflate3d import inflate_conv, inflate_module, inflate_norm
 
 
@@ -57,14 +62,21 @@ class ConvNeXt3DBackbone(BaseBackbone):
     _DIMS: ClassVar[dict[str, int]] = {"convnext_tiny": 768, "convnext_small": 768}
 
     def __init__(self, variant: str = "convnext_tiny", in_channels: int = 1,
-                 pretrained: bool = False) -> None:
+                 pretrained: bool | str = False) -> None:
         super().__init__()
         variant = variant.lower().removesuffix("_3d")
         if variant not in self._DIMS:
             raise ValueError(f"Unknown 3D ConvNeXt variant '{variant}'. "
                              f"Choose from {[v + '_3d' for v in self._DIMS]}.")
+        if isinstance(pretrained, str) and pretrained not in RELEASE_WEIGHTS:
+            raise ValueError(f"ConvNeXt pretrained must be a bool or one of {RELEASE_WEIGHTS}, "
+                             f"got {pretrained!r}")
         self.variant, self.in_channels, self._out_dim = variant, in_channels, self._DIMS[variant]
-        base = getattr(models, variant)(weights="DEFAULT" if pretrained else None)
+        self.weights = pretrained if isinstance(pretrained, str) else (
+            "in1k" if pretrained else None)
+        base = getattr(models, variant)(weights="DEFAULT" if self.weights == "in1k" else None)
+        if self.weights in RELEASE_WEIGHTS:
+            load_release_features(base.features, variant, self.weights)
         base.features[0][0] = inflate_conv(base.features[0][0], in_channels)
         inflate_module(base.features)
         self.features = base.features
