@@ -8,7 +8,9 @@
 
 How the ROI reaches the encoder and the encoder itself (``--backbone`` names of
 t5_ssl.recipes.BACKBONES: t5_ssl.models.backbones.ingest settings, MedicalNet, 2D slice
-encoders) are tuned for the four methods together, since all four share one backbone:
+encoders, other starting weights such as ``convnext_tiny_in22k``, and with ``--roi brain2d``
+the whole-brain planes ``tri2d_*``) are tuned for the four methods together, since all four
+share one backbone:
 
 - ``init``: the frozen start of each backbone ("sin SSL"), protocol v2 probe. Cheap
   (no training): it ranks what the pretrained weights already read from each ingestion.

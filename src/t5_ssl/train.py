@@ -5,9 +5,12 @@
 
 1. ``make_experiment_dir``: ``<log_root>/<run_name>/`` with the resolved ``config.yaml``.
 2. ``build_transforms``: the training views and the deterministic evaluation views
-   (3D ROI cubes: ``t5_ssl.data.roi3d``; 2D slices: ``t5_ssl.data.augmentations``).
-3. ``build_datamodule``: ROI cubes (``roi3d``), LMDB slices or NIfTI slices.
-4. ``build_backbone``: the encoder (ResNet / ConvNeXt / ViT, 2D or 3D).
+   (3D ROI cubes: ``t5_ssl.data.roi3d``; whole-brain planes: ``t5_ssl.data.brain2d``;
+   2D slices: ``t5_ssl.data.augmentations``).
+3. ``build_datamodule``: cached ROI cubes or brain canvases (``CACHE_SOURCES``), LMDB
+   slices or NIfTI slices.
+4. ``build_backbone``: the encoder (ResNet / ConvNeXt / ViT / MedicalNet, 2D or 3D) and
+   how the input reaches it (``t5_ssl.models.backbones.factory``).
 5. ``build_ssl_module``: projector + loss + the method's LightningModule
    (VICReg, BYOL, DINOv2, pretext, MAE, MAE+VICReg).
 6. ``build_callbacks``: early stopping and checkpoints.
@@ -59,9 +62,7 @@ from t5_ssl.losses.byol import BYOLLoss
 from t5_ssl.losses.dinov2 import DINOv2Loss
 from t5_ssl.losses.mae import SimMIMLoss
 from t5_ssl.losses.vicreg import VICRegLoss
-from t5_ssl.models.backbones.convnext import ConvNeXtBackbone
-from t5_ssl.models.backbones.resnet import ResNetBackbone
-from t5_ssl.models.backbones.vit import ViTBackbone
+from t5_ssl.models.backbones.factory import build_backbone
 from t5_ssl.models.byol_module import BYOLLightningModule
 from t5_ssl.models.dinov2_module import DINOv2LightningModule
 from t5_ssl.models.heads.dino_head import DINOHead
@@ -74,6 +75,9 @@ from t5_ssl.utils.logging import get_logger
 from t5_ssl.utils.runtime import PerfMonitor, apply_runtime, perf_settings, resolve_precision
 
 logger = get_logger(__name__)
+# Sources read by ROI3DDataModule from a .npy cache, with the spatial dimensions of one view:
+# ROI cubes (t5_ssl.data.roi3d) and whole-brain planes (t5_ssl.data.brain2d, 2026-11-22).
+CACHE_SOURCES = {"roi3d": 3, "brain2d": 2}
 
 
 def get_experiment_dir_name(cfg: DictConfig) -> str:
@@ -155,100 +159,6 @@ def _sanitize_environment(accelerator: str | None = None) -> None:
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 
-def build_backbone(cfg: DictConfig) -> nn.Module:
-    """Instantiate the backbone encoder based on configuration.
-
-    ``model.backbone.ingest`` (a dict, t5_ssl.models.backbones.ingest) wraps the encoder
-    in the ingestion settings: how the ROI volume is normalized, split into hemispheres
-    or regions, resampled, or sliced for a 2D encoder. Without it the encoder is
-    returned as before.
-    """
-    triplane = cfg.model.backbone.get("triplane")
-    if triplane:  # whole-brain planes (data.source=brain2d): t5_ssl.models.backbones.triplane
-        import torch
-
-        from t5_ssl.models.backbones.triplane import TriPlaneBackbone
-        spec = dict(OmegaConf.to_container(triplane, resolve=True))
-        encoder = build_encoder(cfg, in_channels=3).to(memory_format=torch.channels_last)
-        backbone = TriPlaneBackbone(encoder, planes=int(cfg.model.backbone.get("in_channels", 3)),
-                                    **spec)
-        logger.info("Ingestion: %r", backbone)
-        return backbone
-    ingest = cfg.model.backbone.get("ingest")
-    if not ingest:
-        return build_encoder(cfg)
-    from t5_ssl.models.backbones.ingest import IngestBackbone, encoder_in_channels
-    spec = dict(OmegaConf.to_container(ingest, resolve=True))
-    in_channels = int(cfg.model.backbone.get("in_channels", 1))
-    variant = str(cfg.model.backbone.get("variant", "convnext_tiny"))
-    two_d = not (variant.endswith("_3d") or variant.startswith("medicalnet"))
-    encoder = build_encoder(cfg, in_channels=encoder_in_channels(spec, in_channels, two_d))
-    if two_d:
-        import torch
-        encoder = encoder.to(memory_format=torch.channels_last)
-    spec.pop("in_channels", None)
-    if "axes" in spec:
-        spec["axes"] = tuple(spec["axes"])
-    backbone = IngestBackbone(encoder, in_channels, two_d=two_d, **spec)
-    logger.info("Ingestion: %r", backbone)
-    return backbone
-
-
-def build_encoder(cfg: DictConfig, in_channels: int | None = None
-                  ) -> ConvNeXtBackbone | ResNetBackbone | ViTBackbone:
-    """The encoder of ``model.backbone`` (``in_channels`` overrides its input channels)."""
-    variant = cfg.model.backbone.get("variant", "convnext_tiny")
-    if in_channels is None:
-        in_channels = cfg.model.backbone.get("in_channels", 1)
-    pretrained = cfg.model.backbone.get("pretrained", False)
-
-    logger.info("Initializing backbone: %s (in_channels=%d)", variant, in_channels)
-    if str(variant).startswith("medicalnet"):
-        from t5_ssl.models.backbones.medicalnet import MedicalNetBackbone
-        depth = int(str(variant).removeprefix("medicalnet").removeprefix("_") or 18)
-        return MedicalNetBackbone(depth=depth, in_channels=in_channels,
-                                  pretrained=pretrained in (True, "medicalnet"))
-    if variant == "vit_small_3d":
-        from t5_ssl.models.backbones.vit3d import ViT3DBackbone
-        return ViT3DBackbone(
-            in_channels=in_channels, image_size=cfg.model.backbone.get("image_size", 32),
-            patch_size=cfg.model.backbone.get("patch_size", 8),
-            embed_dim=cfg.model.backbone.get("embed_dim", 384),
-            depth=cfg.model.backbone.get("depth", 12),
-            num_heads=cfg.model.backbone.get("num_heads", 6),
-            mlp_ratio=cfg.model.backbone.get("mlp_ratio", 4.0),
-            pool=cfg.model.backbone.get("pool", "cls"),
-            pretrained=pretrained or None,
-            drop_path=cfg.model.backbone.get("drop_path", 0.0),
-            layer_scale=cfg.model.backbone.get("layer_scale", None),
-        )
-    if variant.endswith("_3d"):
-        from t5_ssl.models.backbones.resnet3d import ConvNeXt3DBackbone, ResNet3DBackbone
-        backbone_3d = ConvNeXt3DBackbone if variant.startswith("convnext") else ResNet3DBackbone
-        return backbone_3d(variant=variant, in_channels=in_channels, pretrained=pretrained)
-    if variant == "vit_small":
-        return ViTBackbone(
-            in_channels=in_channels,
-            image_size=cfg.model.backbone.get("image_size", 64),
-            patch_size=cfg.model.backbone.get("patch_size", 8),
-            embed_dim=cfg.model.backbone.get("embed_dim", 192),
-            depth=cfg.model.backbone.get("depth", 4),
-            num_heads=cfg.model.backbone.get("num_heads", 3),
-            pool=cfg.model.backbone.get("pool", "cls"),
-        )
-    if variant.startswith("resnet"):
-        return ResNetBackbone(
-            variant=variant,
-            in_channels=in_channels,
-            pretrained=pretrained,
-        )
-    return ConvNeXtBackbone(
-        variant=variant,
-        in_channels=in_channels,
-        pretrained=pretrained,
-    )
-
-
 def build_loss(cfg: DictConfig) -> VICRegLoss | BYOLLoss | DINOv2Loss | SimMIMLoss:
     """Instantiate the SSL loss criterion based on configuration.
 
@@ -289,9 +199,9 @@ def build_datamodule(cfg: DictConfig, train_transform: Any,
     data_cfg = cfg.data
     if int(cfg.model.backbone.in_channels) != int(data_cfg.get("channels", 1)):
         raise ValueError("model.backbone.in_channels must match data.channels.")
-    if str(data_cfg.get("source", "")) in ("roi3d", "brain2d"):
-        # brain2d: the same subject-safe datamodule over whole-brain canvases
-        # (t5_ssl.data.brain2d); the transforms turn each canvas into its planes.
+    if str(data_cfg.get("source", "")) in CACHE_SOURCES:
+        # brain2d: the same subject-safe datamodule over whole-brain canvases; the
+        # transforms (t5_ssl.data.brain2d) turn each canvas into its planes.
         from t5_ssl.data.roi3d import ROI3DDataModule
         # augmentation.val_views=train: the SSL validation loss sees the training
         # augmentations (fixed per session), not the clean cube and its mirror;
@@ -720,12 +630,13 @@ def build_trainer(cfg: DictConfig, model: L.LightningModule, dm: Any, exp_dir: P
     precision = resolve_precision(trainer_cfg.get("precision", "32-true"),
                                   trainer_cfg.get("accelerator", "auto"))
     example = None
-    if str(cfg.data.get("source", "")) in ("roi3d", "brain2d"):
+    source = str(cfg.data.get("source", ""))
+    if source in CACHE_SOURCES:
         import torch
         side = int(cfg.data.roi_size)
-        dims = (side,) * (3 if str(cfg.data.source) == "roi3d" else 2)
         example = torch.rand(int(cfg.data.get("batch_size", 16)),
-                             int(cfg.model.backbone.get("in_channels", 1)), *dims)
+                             int(cfg.model.backbone.get("in_channels", 1)),
+                             *(side,) * CACHE_SOURCES[source])
     runtime = apply_runtime(cfg, model, precision, example)
     if perf_settings(cfg)["monitor"]:
         callbacks.append(PerfMonitor(exp_dir / "perf.json", extra={

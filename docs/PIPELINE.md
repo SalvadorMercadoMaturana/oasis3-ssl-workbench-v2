@@ -96,8 +96,10 @@ Lo que pasa adentro, paso a paso:
    arma la configuración.
 2. **Entrenamiento.** `t5_ssl.train.train(cfg)` (`src/t5_ssl/train.py`), en este orden:
    carpeta del experimento → vistas (`t5_ssl.data.roi3d.build_roi3d_transforms`) →
-   datamodule (`ROI3DDataModule`) → encoder (`build_backbone`: ResNet-18, ConvNeXt-T o
-   ViT-S en 3D, con pesos ImageNet/DeiT inflados) → módulo del método
+   datamodule (`ROI3DDataModule`) → encoder (`build_backbone`, en
+   `t5_ssl.models.backbones.factory`: ResNet-18, ConvNeXt-T o ViT-S en 3D con pesos
+   ImageNet/DeiT inflados, y la forma de pasarle la ROI; ver
+   [Encoders e ingesta](#encoders-e-ingesta)) → módulo del método
    (`build_ssl_module`: `t5_ssl.models.*_module` + `t5_ssl.losses.*`) → callbacks →
    `Trainer.fit`. Si la GPU se queda sin memoria, `train.py:run` reintenta con la mitad del
    batch y el doble de acumulación (mismo batch efectivo).
@@ -110,6 +112,23 @@ Controles: `--init-only` evalúa el encoder **antes** del SSL (el "sin SSL" de l
 los mismos pesos ImageNet/DeiT, congelados). El baseline totalmente supervisado es
 `scripts/3_train/train_supervised.py` (el mismo encoder entrenado de punta a punta con las
 etiquetas, por folds).
+
+### Encoders e ingesta
+
+`--backbone <nombre>` elige una entrada de `recipes.BACKBONES`: overrides de
+`model.backbone` que `build_backbone` convierte en el módulo. Hay tres familias:
+
+| Familia | Nombres | Qué cambia | Código |
+|---|---|---|---|
+| Encoder de cada método | `convnext_tiny`, `resnet18`, `vit_small` | — (lo de siempre) | `resnet3d.py`, `vit3d.py`, `inflate3d.py` |
+| Otros pesos de partida | `vit_small_dv2` (DINOv2), `convnext_tiny_in22k`, `convnext_tiny_in22k_ft1k` (ImageNet-22k, 2026-11-23) | sólo los pesos 2D que se inflan | `vit3d.py`, `convnext_weights.py` |
+| Ingesta (2026-11-22) | `cnx3d_*`, `rn18_3d_*`, `mednet*`, `cnx2d_*`, `rn18_2d_*`, `rn50_2d_*` | normalización, hemisferios por separado, remuestreo, cortes 2D, MedicalNet | `ingest.py`, `medicalnet.py` |
+| Cerebro completo en 3 planos | `tri2d_*` (sólo con `--roi brain2d`) | axial, coronal y sagital por el centro de masa | `triplane.py`, `t5_ssl/data/brain2d.py` |
+
+Todo el código está en `src/t5_ssl/models/backbones/`. Líneas de cola de estas
+comparaciones: `scripts/3_train/jobs_ingest.py`; informes: `scripts/5_reports/report_ingest.py`
+(→ `campaign_ssl3d_runpod/ingest/REPORT.md`) y `report_brain2d.py` (→ `brain2d/REPORT.md`).
+El multiplano de cerebro completo quedó descartado (ver `docs/CAMPANAS.md`).
 
 ### En GPU (RunPod)
 

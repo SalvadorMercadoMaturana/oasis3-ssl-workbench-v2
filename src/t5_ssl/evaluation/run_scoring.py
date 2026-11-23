@@ -7,7 +7,11 @@ before SSL when it is scored too):
 2. for ``main``, the probe protocol v2 (``score_protocol_v2`` -> ``protocol_v2.evaluate``):
    representative CV with the SSL-only AD/HC subjects, out-of-fold thresholds, auc_age;
 3. with ``--spatial-probe``, the same probes on the pre-pooling feature map
-   (``spatial_encoder``).
+   (``spatial_encoder``);
+4. for ``main``, both protocols again on another probe input (``score_probe_input``):
+   ``++eval_tta_shift=k``, the central and six shifted cubes (``score_tta``, under
+   ``main.tta``); ``++eval_slice_offsets=[...]`` on a ``data.source=brain2d`` run, the
+   brain planes at several slice offsets (``score_multislice``, under ``main.multislice``).
 
 ``mean3_cv`` / ``mean3_test`` are the one-number summaries printed in the logs.
 
@@ -97,35 +101,36 @@ def evaluate_encoders(model_name: str, encoders: dict[str, Any], dm: Any, cfg: A
     return out
 
 
-def score_tta(encoder: Any, dm: Any, cfg: Any, shift: int) -> dict[str, Any]:
-    """Protocol v2 of ``encoder`` on test-time shifted cubes (``t5_ssl.evaluation.tta``)."""
+def score_probe_input(encoder: Any, dm: Any, cfg: Any, clean: Any) -> dict[str, Any]:
+    """Probe v1 and protocol v2 of ``encoder`` with ``clean`` as the probe input transform."""
     from t5_ssl.evaluation.probe_v1 import score
-    from t5_ssl.evaluation.tta import ShiftTTA, tta_transform
-    size = int(cfg.data.roi_size)
-    wrapped, wide = ShiftTTA(encoder, size, shift), tta_transform(size, shift)
-    start = time.time()
-    scored = score(wrapped, dm, wide, True)
-    doc = score_protocol_v2(wrapped, dm, cfg, scored["_embeddings"], clean=wide)
-    return {"shift": shift, "protocol_v2": doc, "cv": scored["cv"], "test": scored["test"],
-            "eval_minutes": (time.time() - start) / 60}
-
-
-def score_multislice(encoder: Any, dm: Any, cfg: Any, offsets: list[int]) -> dict[str, Any]:
-    """Protocol v2 with the brain planes at several offsets from the centre of mass, averaged.
-
-    ``++eval_slice_offsets=[-4,-2,0,2,4]`` on a ``data.source=brain2d`` run: every
-    session is embedded at each offset (t5_ssl.data.brain2d.TriPlaneEval) and the
-    embeddings are averaged by the backbone; stored under ``main.multislice``.
-    """
-    from t5_ssl.data.brain2d import TriPlaneEval
-    from t5_ssl.evaluation.probe_v1 import score
-    clean = TriPlaneEval(int(cfg.data.roi_size), float(cfg.data.get("min_tissue", 0.15)),
-                         tuple(int(o) for o in offsets))
     start = time.time()
     scored = score(encoder, dm, clean, True)
     doc = score_protocol_v2(encoder, dm, cfg, scored["_embeddings"], clean=clean)
-    return {"offsets": [int(o) for o in offsets], "protocol_v2": doc, "cv": scored["cv"],
-            "test": scored["test"], "eval_minutes": (time.time() - start) / 60}
+    return {"protocol_v2": doc, "cv": scored["cv"], "test": scored["test"],
+            "eval_minutes": (time.time() - start) / 60}
+
+
+def score_tta(encoder: Any, dm: Any, cfg: Any, shift: int) -> dict[str, Any]:
+    """Both protocols with the embeddings averaged over shifted cubes (``evaluation.tta``)."""
+    from t5_ssl.evaluation.tta import ShiftTTA, tta_transform
+    size = int(cfg.data.roi_size)
+    return {"shift": shift, **score_probe_input(ShiftTTA(encoder, size, shift), dm, cfg,
+                                                tta_transform(size, shift))}
+
+
+def score_multislice(encoder: Any, dm: Any, cfg: Any, offsets: list[int]) -> dict[str, Any]:
+    """Both protocols with the brain planes at several offsets from the centre of mass.
+
+    ``++eval_slice_offsets=[-4,-2,0,2,4]`` on a ``data.source=brain2d`` run: every
+    session is embedded at each offset (t5_ssl.data.brain2d.TriPlaneEval) and the
+    backbone averages the embeddings.
+    """
+    from t5_ssl.data.brain2d import TriPlaneEval
+    offsets = [int(o) for o in offsets]
+    clean = TriPlaneEval(int(cfg.data.roi_size), float(cfg.data.get("min_tissue", 0.15)),
+                         tuple(offsets))
+    return {"offsets": offsets, **score_probe_input(encoder, dm, cfg, clean)}
 
 
 def score_protocol_v2(encoder: Any, dm: Any, cfg: Any, embeddings: dict,

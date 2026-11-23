@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Report of the ingestion / backbone tuning of 2026-11-22.
+"""Report of the ingestion / backbone tuning of 2026-11-22/23 (incl. ImageNet-22k weights).
 
     python scripts/5_reports/report_ingest.py [--final cnx2d_sag_x2]
 

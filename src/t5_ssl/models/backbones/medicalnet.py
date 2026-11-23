@@ -53,6 +53,8 @@ class ShortcutA(nn.Module):
 
 
 class BasicBlock(nn.Module):
+    """Two 3x3x3 convolutions with a residual (MedicalNet ResNet-10/18/34)."""
+
     expansion = 1
 
     def __init__(self, inplanes: int, planes: int, stride: int = 1, dilation: int = 1,
@@ -73,6 +75,8 @@ class BasicBlock(nn.Module):
 
 
 class Bottleneck(nn.Module):
+    """1x1x1, 3x3x3, 1x1x1 convolutions with a residual (MedicalNet ResNet-50+)."""
+
     expansion = 4
 
     def __init__(self, inplanes: int, planes: int, stride: int = 1, dilation: int = 1,

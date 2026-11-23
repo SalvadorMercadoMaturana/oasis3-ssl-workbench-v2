@@ -8,6 +8,7 @@ oasis3-ssl-workbench/
 │   ├── train.py              datos → encoder → módulo SSL → Trainer (también `python -m t5_ssl.train`)
 │   ├── data/                 datamodules (LMDB 2D, NIfTI, cubos ROI 3D), vistas, rutas
 │   ├── models/               encoders, cabezas y LightningModules de cada método
+│   │   └── backbones/        encoders 2D/3D, pesos, ingesta; factory.py arma el de cada corrida
 │   ├── losses/               VICReg, BYOL, DINOv2, MAE (el pretexto la calcula en su módulo)
 │   ├── evaluation/           probe v1 y v2, métricas, embeddings, identidad, QC de entrada
 │   ├── callbacks/            salud de la representación y monitor de colapso
