@@ -16,7 +16,7 @@ share one backbone:
   (no training): it ranks what the pretrained weights already read from each ingestion.
 - ``ssl``: the four methods with their tuned recipes (the final models of the outer-fold
   campaign: VICReg campaign_augval geo, BYOL wide_dproj0.1 noise, DINOv2 b64_k256
-  elastic_tio_gpu at batch 64, rotation pretext rot24_h2048 geo), 50 epochs;
+  elastic_tio_gpu at batch 64, rotation pretext rot24_h2048 geo), 50 epochs (``--epochs``);
   ``--lr-scale`` multiplies the four learning rates (a backbone may need its own).
 - ``sup``: the fully supervised baseline on the same backbone (train_supervised.py).
 
@@ -29,7 +29,7 @@ from __future__ import annotations
 import argparse
 
 OUT = "/root/runs"
-COMMON = "--epochs 50 --out-root {out} --no-checkpoints --workers {workers}"
+COMMON = "--epochs {epochs} --out-root {out} --no-checkpoints --workers {workers}"
 # key: (model, variant, aug recipe, batch size, learning rate of the recipe)
 METHODS = {
     "vicreg": ("vicreg", "campaign_augval", "geo", 16, 1e-4),
@@ -48,7 +48,7 @@ def manifest(k: int) -> str:
 
 
 def common(args: argparse.Namespace) -> str:
-    return COMMON.format(out=args.out, workers=args.workers)
+    return COMMON.format(epochs=args.epochs, out=args.out, workers=args.workers)
 
 
 def init_lines(args: argparse.Namespace) -> list[str]:
@@ -100,6 +100,7 @@ def main() -> None:
     ap.add_argument("--tag", default=None, help="ssl tag prefix (default ing)")
     ap.add_argument("--lr-scale", type=float, default=1.0,
                     help="ssl: factor on every method's learning rate (tag ing_lr<f>_f<k>)")
+    ap.add_argument("--epochs", type=int, default=50, help="training epochs of every line")
     ap.add_argument("--out", default=OUT)
     ap.add_argument("--workers", type=int, default=3)
     ap.add_argument("--extra", default="", help="more train.py arguments for every line")

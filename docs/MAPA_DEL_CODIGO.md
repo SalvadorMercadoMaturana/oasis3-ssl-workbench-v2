@@ -170,11 +170,12 @@ Módulos nuevos y dónde se enchufan a lo anterior. Ningún valor por defecto ca
 | ConvNeXt con pesos ImageNet-22k (checkpoints originales renombrados a torchvision) | `models/backbones/convnext_weights.py`; `ConvNeXt3DBackbone(pretrained="in22k")` en `resnet3d.py` | `convnext_tiny_in22k`, `convnext_tiny_in22k_ft1k` |
 | Cerebro completo en 3 planos (descartado) | `data/brain2d.py` (cache, planos, vistas), `models/backbones/triplane.py`, `configs/data/oasis3_brain2d.yaml`, `recipes.ROIS["brain2d"]` | `--roi brain2d --backbone tri2d_*`; `CACHE_SOURCES` de `t5_ssl.train`; `roi3d.probe_transform` |
 | Otra entrada del probe sobre el mismo encoder | `evaluation/run_scoring.py`: `score_probe_input`, `score_tta` (`evaluation/tta.py`, `++eval_tta_shift`), `score_multislice` (`++eval_slice_offsets`) | `result.json` → `main.tta`, `main.multislice` |
+| Evaluación del encoder cada N épocas durante el entrenamiento | `callbacks/periodic_probe.py` (`PeriodicProbe`) | `train.py --probe-every N` → `probe_epoch<NNN>.json` |
 | Rotación en el plano para vistas 2D | `models/pretext_module.py`: `rotate_planes` | pretexto `rot4_h2048` con `--roi brain2d` |
 | Colas e informes | `scripts/3_train/jobs_ingest.py`, `scripts/5_reports/report_ingest.py`, `report_brain2d.py`, `scripts/4_evaluate/reeval_brain2d.py`, `scripts/1_data/build_brain2d_cache.py` | `campaign_ssl3d_runpod/ingest/`, `brain2d/` |
 
 Pruebas: `tests/models/test_ingest.py`, `tests/models/test_convnext_weights.py`,
-`tests/data/test_brain2d.py`, `tests/evaluation/test_tta.py`.
+`tests/callbacks/test_periodic_probe.py`, `tests/data/test_brain2d.py`, `tests/evaluation/test_tta.py`.
 
 ## Cómo se verificó
 

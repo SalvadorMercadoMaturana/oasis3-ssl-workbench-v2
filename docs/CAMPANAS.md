@@ -52,6 +52,7 @@ Todas las corridas son de `train.py` (directo, con `cloud/run_all.py` o con
 | `outer5/baselines/` | Por qué sin SSL y el supervisado se mueven con los SSL: líneas base triviales (volumen hipocampal, estadísticas de intensidad, pesos aleatorios) con el protocolo v2 (2026-11-21). | `4_evaluate/trivial_baselines.py`, `5_reports/report_shared_signal.py` (→ `docs/informe_senal_compartida.pdf`) | `summary.json`, informe PDF |
 | `ingest/` | Tuning de ingesta y backbone para los 4 métodos (2026-11-22/23): normalización, hemisferios por separado, remuestreo, MedicalNet, cortes 2D del hipocampo, ConvNeXt-T con pesos ImageNet-22k; pliegue 0 de `split_deploy`. | `3_train/jobs_ingest.py`, `5_reports/report_ingest.py` | `REPORT.md`, `summary.json` |
 | `brain2d/` | Cerebro completo como 3 planos 2D (axial, coronal, sagital) por el centro de masa, z-score sobre el tejido; probe de varios cortes, vistas de 3 cortes, lr ×0.1 (2026-11-22). **Descartado**: el SSL queda bajo el encoder congelado y bajo el 3D. | `1_data/build_brain2d_cache.py`, `3_train/jobs_ingest.py --roi brain2d`, `4_evaluate/reeval_brain2d.py`, `5_reports/report_brain2d.py` | `REPORT.md`, `summary.json` |
+| `epochs200/` | Los 4 métodos (ConvNeXt-T 3D, recetas de siempre) a 200 épocas, evaluados cada 50 (2026-11-23). | `3_train/jobs_ingest.py --epochs 200 --tag ep200 --extra "--probe-every 50"`, `5_reports/report_epochs.py` | `REPORT.md`, `summary.json` |
 | `bench/`, `bench_dinov2/` | Throughput del runtime rápido. | `cloud/bench.py` | `BENCH.md` |
 
 ## Otras carpetas de la raíz

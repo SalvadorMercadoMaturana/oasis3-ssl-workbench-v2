@@ -31,7 +31,7 @@ vecinos de la misma carpeta o al paquete `t5_ssl` (lo comprueba
 |---|---|
 | `train_supervised.py` | Baseline totalmente supervisado: el mismo encoder entrenado de punta a punta con las etiquetas. |
 | `jobs_outer5.py` | Genera las líneas de trabajo de la campaña outer5 para `cloud/queue_runner.py`. |
-| `jobs_ingest.py` | Líneas de trabajo del tuning de ingesta y backbone (2026-11-22): inicio congelado, los 4 métodos y el supervisado sobre cada forma de pasar el ROI al encoder. |
+| `jobs_ingest.py` | Líneas de trabajo del tuning de ingesta y backbone (2026-11-22): inicio congelado, los 4 métodos y el supervisado sobre cada forma de pasar el ROI al encoder (`--epochs`, `--tag`, `--extra` para otras campañas con las mismas recetas). |
 | `bench_augment_cost.py` | Costo de CPU de las vistas de entrenamiento por receta y ROI. |
 
 El entrenamiento SSL en sí es `train.py` (raíz); en GPU, `cloud/`.
@@ -70,6 +70,7 @@ La evaluación de cada corrida ocurre dentro de `train.py` (`src/t5_ssl/evaluati
 | `report_shared_signal.py` | `outer5/baselines/`: por qué sin SSL y el supervisado siguen a los SSL → `docs/informe_senal_compartida.pdf` |
 | `report_ingest.py` | `ingest/`: tuning de ingesta y backbone (inicio congelado, los 4 métodos por ingesta, pliegues externos de la elegida) |
 | `report_brain2d.py` | `brain2d/`: ingesta 2D multiplano del cerebro completo (axial, coronal, sagital) contra las ingestas del hipocampo |
+| `report_epochs.py` | `epochs200/`: los 4 métodos a 200 épocas, evaluados cada 50 (`--probe-every 50`), contra sus corridas de 50 épocas |
 
 ## `6_deploy/`: el modelo desplegable
 

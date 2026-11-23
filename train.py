@@ -19,7 +19,9 @@ What one call does (``run``):
    (DINOv2: the EMA teacher, plus the student) and fits the linear AD-vs-HC probes of
    protocol v1 and v2; ``--external NAME=CSV`` adds other cohorts (ADNI), ``--identity``
    identity/collapse scores on held-out subjects, ``--spatial-probe`` a second probe on the
-   feature map before global pooling (pooled to 2x2x2).
+   feature map before global pooling (pooled to 2x2x2). ``--probe-every N`` scores the
+   same encoder every N epochs during training (``probe_epoch<NNN>.json``,
+   t5_ssl.callbacks.periodic_probe).
 4. Outputs. ``save_artifacts`` and ``write_result`` write, in
    ``<out-root>/<tag>/<run name>/`` (``recipes.run_name``, e.g.
    ``byol_wide_dproj0.1__noise__roi32_s1``), next to the Lightning logs and rotated
@@ -104,6 +106,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="swap the method's encoder (t5_ssl.recipes.BACKBONES)")
     parser.add_argument("--collapse-every", type=int, default=0,
                         help="collapse metrics on held-out subjects every N epochs (0 = off)")
+    parser.add_argument("--probe-every", type=int, default=0,
+                        help="frozen probes (v1 + protocol v2) of the evaluated encoder every N "
+                             "epochs -> probe_epoch<NNN>.json (0 = off; the last epoch is "
+                             "result.json)")
     parser.add_argument("--identity", action="store_true",
                         help="identity/collapse metrics on the 142 held-out subjects")
     parser.add_argument("--init-only", action="store_true",
@@ -209,6 +215,10 @@ def run(args: argparse.Namespace) -> int:
         if args.collapse_every:
             from t5_ssl.callbacks.collapse_monitor import CollapseMonitor
             callbacks.append(CollapseMonitor(cfg, args.collapse_every))
+        if args.probe_every:
+            from t5_ssl.callbacks.periodic_probe import PeriodicProbe
+            callbacks.append(PeriodicProbe(cfg, args.model, args.probe_every,
+                                           evaluated_encoder(args.model)))
         timer = None
         if args.bench_steps:
             out = args.bench_out or str(Path(args.out_root) / "bench" / "bench_step.json")
@@ -246,9 +256,9 @@ def run(args: argparse.Namespace) -> int:
     if timer is not None:
         print(f"[bench] {json.dumps(timer.result)}", flush=True)
         return 0 if timer.result else 1
-    encoders = {"main": model.backbone}
-    if args.model == "dinov2":  # DINO/DINOv2 evaluate the EMA teacher
-        encoders = {"main": model.teacher_backbone, "student": model.backbone}
+    encoders = {"main": getattr(model, evaluated_encoder(args.model))}
+    if args.model == "dinov2":  # DINO/DINOv2 evaluate the EMA teacher, the student too
+        encoders["student"] = model.backbone
     if args.export_encoders:
         from t5_ssl.utils.runtime import uncompile
         uncompile(model)
@@ -263,11 +273,16 @@ def run(args: argparse.Namespace) -> int:
         scored = evaluate_encoders(args.model, encoders, dm, cfg, args.spatial_probe,
                                    args.save_embeddings)
     save_artifacts(exp_dir, args, overrides, scored, encoders["main"],
-                   "teacher_backbone" if args.model == "dinov2" else "backbone")
+                   evaluated_encoder(args.model))
     identity = identity_scores(encoders["main"], dm, cfg) if args.identity else None
     write_result(exp_dir, args, overrides, scored, result.get("runtime"), started, attempts,
                  identity=identity)
     return 0
+
+
+def evaluated_encoder(model: str) -> str:
+    """Attribute of the SSL module that is scored: DINO/DINOv2 evaluate the EMA teacher."""
+    return "teacher_backbone" if model == "dinov2" else "backbone"
 
 
 def dry_run(overrides: list[str]) -> int:
